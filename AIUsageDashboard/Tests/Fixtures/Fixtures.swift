@@ -132,6 +132,15 @@ enum CodexFixtures {
     ].joined(separator: "\n")
   }
 
+  /// A `turn_context` model-configuration line (as emitted once per turn by the Codex
+  /// CLI) followed by `twoTokenCountEvents()`, so `detectLatestModel` finds `model`.
+  static func sessionWithModel(model: String) -> String {
+    """
+    {"timestamp":"2026-07-06T09:00:00.000Z","type":"turn_context","payload":{"turn_id":"turn-1","model":"\(model)"}}
+    \(twoTokenCountEvents())
+    """
+  }
+
   static func nullRateLimitFields() -> String {
     """
     {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":null,"output_tokens":5,"reasoning_output_tokens":null,"total_tokens":15},"last_token_usage":{"input_tokens":10,"cached_input_tokens":null,"output_tokens":5,"reasoning_output_tokens":null,"total_tokens":15}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":null,"window_minutes":null,"resets_at":null},"secondary":null,"credits":null,"plan_type":null,"rate_limit_reached_type":null}}}
