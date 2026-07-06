@@ -29,6 +29,7 @@ public actor SyncEngine {
     public func refreshAll() async -> [ProviderSnapshot] {
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
+        await NotificationEngine.shared.evaluateThresholds(for: snapshots)
         updatesContinuation?.yield(snapshots)
         return snapshots
     }
