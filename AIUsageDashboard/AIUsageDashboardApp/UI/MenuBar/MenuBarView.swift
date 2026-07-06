@@ -13,29 +13,39 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            EditorialKicker(number: "01", title: "CLAUDE CODE")
+            EditorialKicker(number: "01", title: "PROVIDERS")
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("TODAY")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                    Spacer()
-                    let todayTokens = viewModel.claudeSnapshot?.todayUsage.totalTokens
-                    Text(TokenFormatter.format(todayTokens))
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.ink)
+                let activeSnapshots = ProviderID.allCases.compactMap { providerID -> ProviderSnapshot? in
+                    guard viewModel.isAvailable(providerID), let snapshot = viewModel.snapshot(for: providerID) else { return nil }
+                    return snapshot
                 }
 
-                HStack {
-                    Text("7D ROLLING")
+                if activeSnapshots.isEmpty {
+                    Text("NO ACTIVE PROVIDERS")
                         .font(.mono(size: 11))
                         .foregroundColor(PadzyTheme.muted)
-                    Spacer()
-                    let weekTokens = viewModel.claudeSnapshot?.weekUsage.totalTokens
-                    Text(TokenFormatter.format(weekTokens))
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.ink)
+                } else {
+                    ForEach(activeSnapshots) { snapshot in
+                        HStack {
+                            Text(snapshot.displayName.uppercased())
+                                .font(.mono(size: 11))
+                                .foregroundColor(PadzyTheme.muted)
+                            Spacer()
+                            HStack(spacing: 8) {
+                                if snapshot.providerID == .codex,
+                                   let sessionWindow = snapshot.quotaWindows.first(where: { $0.type == .session }),
+                                   let used = sessionWindow.used {
+                                    Text("S \(Int(round(used)))%")
+                                        .font(.mono(size: 10))
+                                        .foregroundColor(PadzyTheme.muted)
+                                }
+                                Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
+                                    .font(.mono(size: 11))
+                                    .foregroundColor(PadzyTheme.ink)
+                            }
+                        }
+                    }
                 }
             }
             .padding(10)
