@@ -74,3 +74,13 @@ Known limitations (accepted for MVP):
 - SyncEngine stopAutoSync→startAutoSync cycle dead (AsyncStream terminates on cancel); app starts auto-sync once at launch
 - updates stream single-consumer (the shared view model)
 - Padzy theme "aitracker" still pending Abhay confirmation
+
+## Leg 3 — Antigravity UI (current session)
+- [x] Add selectedProvider & selection logic to DashboardViewModel
+- [x] Implement available providers checks & keyboard navigation helpers
+- [x] Generalize DashboardView to selected provider
+- [x] Add Codex Quota Gauges with countdown & warning markers
+- [x] Display Cline lifetime cost
+- [x] Update menu bar sum and list all active providers in panel
+- [x] Validate with build & test suite
+
