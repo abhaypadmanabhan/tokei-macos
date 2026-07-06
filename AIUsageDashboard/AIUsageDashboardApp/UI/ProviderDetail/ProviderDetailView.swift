@@ -7,62 +7,28 @@ struct ProviderDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text(snapshot.displayName)
-                        .font(.largeTitle)
-                    Spacer()
-                    ConfidenceBadge(confidence: snapshot.todayUsage.confidence)
+                EditorialKicker(number: "02", title: "DETAIL")
+                
+                Text(snapshot.displayName.uppercased())
+                    .font(.display(size: 20, weight: .black))
+                    .foregroundColor(PadzyTheme.ink)
+                
+                HairlineDivider()
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("TODAY")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.muted)
+                    Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
+                        .font(.mono(size: 18))
+                        .foregroundColor(PadzyTheme.ink)
                 }
-
-                Text("Auth status: \(snapshot.authStatus.rawValue)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                if !snapshot.quotaWindows.isEmpty {
-                    Section(header: Text("Quota Windows").font(.headline)) {
-                        ForEach(snapshot.quotaWindows) { window in
-                            QuotaWindowRow(window: window)
-                        }
-                    }
-                }
-
-                Section(header: Text("Usage").font(.headline)) {
-                    UsageRow(title: "Today", usage: snapshot.todayUsage)
-                    UsageRow(title: "This Week", usage: snapshot.weekUsage)
-                    if let month = snapshot.monthUsage { UsageRow(title: "This Month", usage: month) }
-                    if let lifetime = snapshot.lifetimeUsage { UsageRow(title: "Lifetime", usage: lifetime) }
-                }
-
-                if !snapshot.warnings.isEmpty {
-                    Section(header: Text("Warnings").font(.headline)) {
-                        ForEach(snapshot.warnings) { warning in
-                            Text(warning.message)
-                                .font(.caption)
-                                .foregroundStyle(warning.level == .error ? .red : .orange)
-                        }
-                    }
-                }
-
-                Spacer()
+                .padding(12)
+                .background(PadzyTheme.surface)
+                .border(PadzyTheme.muted.opacity(0.3), width: 1)
             }
-            .padding()
+            .padding(20)
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .background(PadzyTheme.ground)
     }
 }
-
-private struct UsageRow: View {
-    let title: String
-    let usage: TokenUsage
-
-    var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text("\(usage.totalTokens ?? 0) tokens")
-                .monospacedDigit()
-            ConfidenceBadge(confidence: usage.confidence)
-        }
-    }
-}
-
