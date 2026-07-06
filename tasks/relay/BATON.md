@@ -63,3 +63,10 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Stubbed/skipped: Cline credits quota and auth (no cline.bot API); Cursor metrics/SQLite; `~/.cline/db/` ignored.
 - Tests: 47 passing
 - Watch out: Cline real-log smoke printed 13 files, 131,011,355 lifetime tokens, $22.74 total cost; `CostUsage` is lifetime-only (no period fields on model).
+
+### Leg 3 — Antigravity — 2026-07-06
+- Merged: 67017b0 ("Merge relay/03-antigravity: multi-provider UI, quota gauges, cost")
+- Done: Replaced static Claude-only dashboard/sidebar with dynamic multi-provider selection driven by `selectedProvider` in `DashboardViewModel`. Implemented Codex quota gauges with visual hairline meters, live-updated countdown timers, >90% warning indicators (using only `PadzyTheme.accent` per theme guidelines), and custom VoiceOver labels. Integrated Cline lifetime cost display in today breakdown and the lifetime metric block corner. Updated the menu bar to show summed today total, and populated the menu bar panel with dynamic dense rows for all active providers.
+- Stubbed/skipped: Left Cursor and Antigravity snapshots unavailable/non-interactive per leg requirements.
+- Tests: 48 passing
+- Watch out: Sidebar selection via ↑/↓ keys requires focus to be active on the dashboard.
