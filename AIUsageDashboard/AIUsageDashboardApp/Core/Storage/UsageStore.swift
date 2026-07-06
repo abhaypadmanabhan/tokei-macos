@@ -57,9 +57,12 @@ public actor UsageStore {
     }
 
     private func upsertDailyUsage(from snapshot: ProviderSnapshot) {
+        // Per-day usage, NOT lifetime cumulative: lifetime shrinks when old logs
+        // rotate away, which would corrupt the history this exists to preserve.
+        let usage = snapshot.todayUsage
+        guard usage.totalTokens != nil else { return }
         let today = DateHelpers.startOfToday()
         let key = DailyUsageKey(providerID: snapshot.providerID, day: today)
-        let usage = snapshot.lifetimeUsage ?? snapshot.todayUsage
         dailyUsages[key] = DailyUsage(
             date: today,
             providerID: snapshot.providerID,

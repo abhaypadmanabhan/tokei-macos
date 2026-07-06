@@ -85,9 +85,11 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let projectsDir = home.appendingPathComponent(".claude/projects", isDirectory: true)
         var sources: [LogSource] = []
 
-        let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: nil)
+        let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.isDirectoryKey])
 
         for projectDir in projectDirs {
+            // Skip stray files like .DS_Store — only project directories hold session logs.
+            guard (try? projectDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
             let files = try fileManager.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey])
             for file in files where file.pathExtension == "jsonl" {
                 let sessionID = file.deletingPathExtension().lastPathComponent

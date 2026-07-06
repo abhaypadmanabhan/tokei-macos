@@ -77,40 +77,39 @@ final class UsageStoreTests: XCTestCase {
 
     func testDailyRollupUpsert() async {
         let store = UsageStore(directory: tempDirectory)
-        await store.save(snapshot: makeSnapshot(lifetimeInput: 1000))
+        await store.save(snapshot: makeSnapshot(todayInput: 1000, lifetimeInput: 9999))
 
         let history1 = await store.dailyHistory(providerID: .claudeCode)
         XCTAssertEqual(history1.count, 1)
         XCTAssertEqual(history1.first?.tokenUsage.inputTokens, 1000)
         XCTAssertEqual(history1.first?.providerID, .claudeCode)
 
-        await store.save(snapshot: makeSnapshot(lifetimeInput: 2000))
+        await store.save(snapshot: makeSnapshot(todayInput: 2000, lifetimeInput: 9999))
 
         let history2 = await store.dailyHistory(providerID: .claudeCode)
         XCTAssertEqual(history2.count, 1)
         XCTAssertEqual(history2.first?.tokenUsage.inputTokens, 2000)
     }
 
-    func testDailyRollupFallsBackToTodayUsage() async {
+    func testDailyRollupSkipsUnavailableUsage() async {
         let store = UsageStore(directory: tempDirectory)
         let snapshot = ProviderSnapshot(
             providerID: .codex,
             displayName: "Codex",
-            authStatus: .authenticated,
-            todayUsage: TokenUsage(inputTokens: 42, confidence: .providerReported),
-            weekUsage: TokenUsage(inputTokens: 42, confidence: .providerReported)
+            authStatus: .unknown,
+            todayUsage: .unavailable,
+            weekUsage: .unavailable
         )
         await store.save(snapshot: snapshot)
 
         let history = await store.dailyHistory(providerID: .codex)
-        XCTAssertEqual(history.first?.tokenUsage.inputTokens, 42)
-        XCTAssertEqual(history.first?.tokenUsage.confidence, .providerReported)
+        XCTAssertTrue(history.isEmpty)
     }
 
     func testMultipleProvidersIsolated() async {
         let store = UsageStore(directory: tempDirectory)
-        await store.save(snapshot: makeSnapshot(providerID: .claudeCode, lifetimeInput: 100))
-        await store.save(snapshot: makeSnapshot(providerID: .codex, lifetimeInput: 200))
+        await store.save(snapshot: makeSnapshot(providerID: .claudeCode, todayInput: 100))
+        await store.save(snapshot: makeSnapshot(providerID: .codex, todayInput: 200))
 
         let claudeHistory = await store.dailyHistory(providerID: .claudeCode)
         let codexHistory = await store.dailyHistory(providerID: .codex)

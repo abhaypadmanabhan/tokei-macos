@@ -9,9 +9,14 @@ public final class DashboardViewModel: ObservableObject {
     @Published public var lastSyncedAt: Date?
 
     private let syncEngine: SyncEngine
+    private var updatesTask: Task<Void, Never>?
 
     public init(syncEngine: SyncEngine = .shared) {
         self.syncEngine = syncEngine
+    }
+
+    deinit {
+        updatesTask?.cancel()
     }
 
     public func refresh() async {
@@ -20,6 +25,23 @@ public final class DashboardViewModel: ObservableObject {
         snapshots = await syncEngine.refreshAll()
         lastSyncedAt = Date()
         isLoading = false
+    }
+
+    /// Starts the file watcher and subscribes to sync results so auto-refreshes
+    /// (and refreshes triggered elsewhere) update this view model. Idempotent.
+    public func beginAutoSync() {
+        guard updatesTask == nil else { return }
+        updatesTask = Task { [syncEngine, weak self] in
+            let stream = await syncEngine.updates
+            await syncEngine.startAutoSync()
+            for await snapshots in stream {
+                guard let self else { return }
+                await MainActor.run {
+                    self.snapshots = snapshots
+                    self.lastSyncedAt = Date()
+                }
+            }
+        }
     }
 
     public var claudeSnapshot: ProviderSnapshot? {

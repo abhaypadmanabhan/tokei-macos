@@ -201,6 +201,7 @@ struct DashboardView: View {
         .background(PadzyTheme.ground)
         .frame(minWidth: 760, minHeight: 480)
         .task {
+            viewModel.beginAutoSync()
             await viewModel.refresh()
         }
     }
