@@ -25,7 +25,7 @@ AIUsageDashboard/
 │   │   ├── Parsing/             # Claude JSONL parser
 │   │   ├── Sync/                # SyncEngine, DashboardViewModel
 │   │   ├── Storage/             # JSON-file persistence (UsageStore + daily rollups)
-│   │   ├── Notifications/       # Notification engine skeleton
+│   │   ├── Notifications/       # Notification engine
 │   │   ├── Security/            # Keychain wrapper
 │   │   └── Utilities/           # Date helpers
 │   └── Resources/               # Assets and Info.plist
@@ -61,34 +61,30 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 
 ## What Works (MVP, verified 2026-07-06)
 
-- Claude Code tracking end-to-end from local JSONL (`~/.claude/projects`): real schema,
-  dedupe by `message.id`/`requestId`/`uuid`, fractional-second ISO8601 timestamps,
-  malformed-line warnings. Verified against an independent baseline (<0.1% divergence).
-- Padzy OS dashboard (theme "aitracker"): Today / 7D / 30D / Lifetime token splits,
-  confidence chips, warnings region, providers-unavailable states.
-- Menu bar extra with live compact today total and Dense-tier panel.
-- Auto-refresh: FSEvents watcher on `~/.claude/projects`, 2 s debounce → SyncEngine →
-  AsyncStream → shared view model. Manual refresh via ⌘R.
-- Persistence: `~/Library/Application Support/AIUsageDashboard/usage-store.json`
-  (snapshots + per-day rollups that survive log rotation).
-- 27 unit tests green, incl. real-logs smoke test (skips on machines without logs).
+- **Claude Code** tracking end-to-end from local JSONL (`~/.claude/projects`): real schema, dedupe by `message.id`/`requestId`/`uuid`, fractional-second ISO8601 timestamps, malformed-line warnings. Verified against an independent baseline (<0.1% divergence).
+- **OpenAI Codex** adapter reads `~/.codex/sessions/**/*.jsonl` and reports real token windows plus session/weekly quota windows with reset times.
+- **Cline / Cline Pass** adapter reads `~/.cline/data/sessions/*/*.messages.json`, reports lifetime tokens and dollar cost.
+- **Multi-provider dashboard** with dynamic provider selection, quota gauges, visual hairline meters, >90% warning indicators, and live countdown timers.
+- **Menu bar extra** with summed today total and dense per-provider rows.
+- **Auto-refresh**: FSEvents watcher on provider log directories, 2 s debounce → SyncEngine → AsyncStream → shared view model. Manual refresh via ⌘R.
+- **Persistence**: `~/Library/Application Support/AIUsageDashboard/usage-store.json` (snapshots + per-day rollups that survive log rotation).
+- **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
+- 48+ unit tests green, incl. real-logs smoke tests (skip on machines without logs).
 
 ## What Is Stubbed (post-MVP)
 
-- Codex, Cursor, Cline, and Antigravity providers return `unavailable` metrics.
-- Quota windows (session/weekly limits) unavailable from local logs.
-- Notification threshold engine not implemented.
-- WidgetKit target deferred (source exists, not in project.yml).
-- App icon and settings functionality minimal.
+- **Cursor** detection (`state.vscdb` presence) is implemented; metrics and quota remain unavailable.
+- **Antigravity** remains a non-interactive skeleton pending data-source research.
+- WidgetKit target deferred (source exists, not in `project.yml`).
+- App icon and additional settings functionality minimal.
 
 ## Post-MVP Roadmap
 
-1. Codex adapter: `~/.codex/sessions/**/*.jsonl` (`token_count` events carry rate limits + token splits — all local).
-2. Cline adapter: `~/.cline/data/sessions/**` messages carry tokens + real cost — all local.
-3. Cursor local detection + dashboard API research.
-4. Antigravity data source research.
-5. WidgetKit target via App Group reading the persisted JSON store.
-6. Notification thresholds, app icon, settings.
+1. Cursor local metrics and monthly-budget quota model.
+2. Antigravity data source research and adapter.
+3. WidgetKit target via App Group reading the persisted JSON store.
+4. App icon and extended settings (e.g., per-provider threshold override).
+5. Export/reporting features.
 
 ## Documentation
 

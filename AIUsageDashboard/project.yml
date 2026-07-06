@@ -23,6 +23,8 @@ targets:
     platform: macOS
     sources:
       - path: AIUsageDashboardApp/Core
+    dependencies:
+      - sdk: UserNotifications.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.Core

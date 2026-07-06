@@ -14,15 +14,37 @@ struct SettingsView: View {
                 }
         }
         .padding(20)
-        .frame(width: 420, height: 260)
+        .frame(width: 420, height: 320)
         .background(PadzyTheme.ground)
     }
 }
 
 private struct GeneralSettingsTab: View {
+    @AppStorage("notificationsEnabled") private var notificationsEnabled = true
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            EditorialKicker(number: "01", title: "REFRESH INTERVAL")
+            EditorialKicker(number: "01", title: "QUOTA ALERTS")
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("QUOTA ALERTS", isOn: $notificationsEnabled)
+                    .font(.display(size: 12, weight: .bold))
+                    .foregroundColor(PadzyTheme.ink)
+                
+                Text("ALERTS AT 80% / 95%")
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                
+                Text("Tokei posts a notification when any provider quota window crosses 80% or 95%.")
+                    .font(.system(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(nil)
+            }
+            .padding(12)
+            .background(PadzyTheme.surface)
+            .border(PadzyTheme.muted.opacity(0.3), width: 1)
+
+            EditorialKicker(number: "02", title: "REFRESH INTERVAL")
             
             VStack(alignment: .leading, spacing: 8) {
                 Text("AUTO-SYNC: FILE WATCHER")
