@@ -16,6 +16,7 @@ struct SettingsView: View {
         .padding(20)
         .frame(width: 420, height: 320)
         .background(PadzyTheme.ground)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -30,6 +31,7 @@ private struct GeneralSettingsTab: View {
                 Toggle("QUOTA ALERTS", isOn: $notificationsEnabled)
                     .font(.display(size: 12, weight: .bold))
                     .foregroundColor(PadzyTheme.ink)
+                    .tint(PadzyTheme.accent)
                 
                 Text("ALERTS AT 80% / 95%")
                     .font(.mono(size: 11))
@@ -82,7 +84,7 @@ private struct AboutSettingsTab: View {
                 
                 Text("AI USAGE TELEMETRY  ·  VERSION 0.1.0")
                     .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.accent)
+                    .foregroundColor(PadzyTheme.muted)
                 
                 HairlineDivider()
                     .padding(.vertical, 4)

@@ -40,15 +40,12 @@ struct DashboardView: View {
                 Rectangle()
                     .fill(PadzyTheme.muted.opacity(0.3))
                     .frame(width: 1)
-                if viewModel.selectedProvider == .claudeCode && !isClaudeInstalled {
-                    emptyState
-                } else {
-                    usagePane
-                }
+                rightPane
             }
             statusStrip
         }
         .background(PadzyTheme.ground)
+        .preferredColorScheme(.dark)
         .frame(minWidth: 860, minHeight: 560)
         .focusable()
         .onMoveCommand { direction in
@@ -111,6 +108,49 @@ struct DashboardView: View {
 
     // MARK: 02 / USAGE
 
+    /// True when the selected provider has any real signal to render (tokens in
+    /// any window, an active quota, or a cost). Drives the empty state.
+    private var selectedHasData: Bool {
+        guard let snapshot = selectedSnapshot else { return false }
+        let tokenTotals = [snapshot.todayUsage.totalTokens, snapshot.weekUsage.totalTokens,
+                           snapshot.monthUsage?.totalTokens, snapshot.lifetimeUsage?.totalTokens]
+            .compactMap { $0 }
+        if tokenTotals.contains(where: { $0 > 0 }) { return true }
+        if snapshot.quotaWindows.contains(where: { $0.confidence != .unavailable }) { return true }
+        if snapshot.costUsage?.amount != nil { return true }
+        return false
+    }
+
+    /// Provider-detail surface: resolves to error → tailored empty (Claude not
+    /// installed) → loading → generic empty → loaded, in that precedence.
+    @ViewBuilder
+    private var rightPane: some View {
+        if let errorMessage = viewModel.errorMessage {
+            SurfaceStateView(
+                kicker: ("02", "USAGE"),
+                kind: .error(headline: "Sync failed", detail: errorMessage),
+                onRetry: { Task { await viewModel.refresh() } }
+            )
+        } else if viewModel.selectedProvider == .claudeCode && !isClaudeInstalled {
+            emptyState
+        } else if selectedSnapshot == nil && viewModel.isLoading {
+            SurfaceStateView(
+                kicker: ("02", "USAGE"),
+                kind: .loading(message: "Reading local logs")
+            )
+        } else if !selectedHasData {
+            SurfaceStateView(
+                kicker: ("02", "USAGE"),
+                kind: .empty(
+                    headline: "No usage data",
+                    hint: "No local session logs found for this provider yet. Run it once, then use Sync Now below."
+                )
+            )
+        } else {
+            usagePane
+        }
+    }
+
     private var usagePane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
@@ -127,9 +167,8 @@ struct DashboardView: View {
                     .foregroundColor(PadzyTheme.muted)
 
                 Text(TokenFormatter.format(selectedSnapshot?.todayUsage.totalTokens))
-                    .font(.display(size: 150, weight: .black))
+                    .font(.mono(size: 150))
                     .foregroundColor(PadzyTheme.ink)
-                    .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.25)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -345,9 +384,8 @@ struct DashboardView: View {
             }
 
             Text(TokenFormatter.format(usage?.totalTokens))
-                .font(.display(size: 40, weight: .black))
+                .font(.mono(size: 40))
                 .foregroundColor(PadzyTheme.ink)
-                .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
