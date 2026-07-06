@@ -91,3 +91,63 @@ enum ClaudeFixtures {
                   comps.hour!, comps.minute!, comps.second!)
   }
 }
+
+enum CodexFixtures {
+  static let ignoredEvent = """
+    {"timestamp":"2026-07-06T08:00:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"hello"}}
+    """
+
+  static let malformedLine = """
+    {not valid codex json
+    """
+
+  static func twoTokenCountEvents() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.123Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"reasoning_output_tokens":10,"total_tokens":130},"last_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30,"reasoning_output_tokens":10,"total_tokens":130},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":30.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    {"timestamp":"2026-07-06T11:00:00.456Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":25,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":200},"last_token_usage":{"input_tokens":50,"cached_input_tokens":5,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":70},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":12.5,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":33.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    """
+  }
+
+  static func windowBucketLines(referenceNow: Date) -> String {
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC")!
+
+    let todayStart = utc.startOfDay(for: referenceNow)
+    let todayTS = isoString(todayStart.addingTimeInterval(3600), utc: utc)
+    let weekTS = isoString(utc.date(byAdding: .day, value: -3, to: todayStart)!, utc: utc)
+    let monthTS = isoString(utc.date(byAdding: .day, value: -20, to: todayStart)!, utc: utc)
+    let outsideTS = isoString(utc.date(byAdding: .month, value: -2, to: todayStart)!, utc: utc)
+
+    func line(id: String, total: Int, timestamp: String) -> String {
+      """
+      {"timestamp":"\(timestamp)","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\(total),"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":\(total)},"last_token_usage":{"input_tokens":\(total),"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":\(total)}},"rate_limits":null}}
+      """
+    }
+
+    return [
+      line(id: "today", total: 10, timestamp: todayTS),
+      line(id: "week", total: 20, timestamp: weekTS),
+      line(id: "month", total: 30, timestamp: monthTS),
+      line(id: "outside", total: 40, timestamp: outsideTS),
+    ].joined(separator: "\n")
+  }
+
+  static func nullRateLimitFields() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"cached_input_tokens":null,"output_tokens":5,"reasoning_output_tokens":null,"total_tokens":15},"last_token_usage":{"input_tokens":10,"cached_input_tokens":null,"output_tokens":5,"reasoning_output_tokens":null,"total_tokens":15}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":null,"window_minutes":null,"resets_at":null},"secondary":null,"credits":null,"plan_type":null,"rate_limit_reached_type":null}}}
+    """
+  }
+
+  static func staleRateLimits() -> String {
+    """
+    {"timestamp":"2026-07-04T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":30},"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":30}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":40.0,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":60.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    """
+  }
+
+  private static func isoString(_ date: Date, utc: Calendar) -> String {
+    let comps = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+                  comps.year!, comps.month!, comps.day!,
+                  comps.hour!, comps.minute!, comps.second!)
+  }
+}

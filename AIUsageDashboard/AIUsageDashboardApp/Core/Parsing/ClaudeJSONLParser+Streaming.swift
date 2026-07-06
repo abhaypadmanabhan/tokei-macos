@@ -6,35 +6,6 @@ enum LineParseOutcome: Sendable {
     case malformed
 }
 
-private enum ClaudeDateParsing {
-    nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    nonisolated(unsafe) static let standard: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    static func parseTimestamp(from json: [String: Any]) -> Date? {
-        if let ts = json["timestamp"] as? TimeInterval {
-            return Date(timeIntervalSince1970: ts)
-        }
-        if let tsString = json["timestamp"] as? String {
-            if let date = fractional.date(from: tsString) {
-                return date
-            }
-            if let date = standard.date(from: tsString) {
-                return date
-            }
-        }
-        return nil
-    }
-}
-
 extension ClaudeJSONLParser {
     /// Streams a JSONL file line-by-line using URL.lines. Never loads the entire file into memory.
     func parseFile(at url: URL, onRecord: (ClaudeUsageRecord) -> Void) async throws -> Int {
@@ -73,7 +44,7 @@ extension ClaudeJSONLParser {
             requestID: requestID,
             sessionID: sessionID,
             uuid: uuid,
-            timestamp: ClaudeDateParsing.parseTimestamp(from: json),
+            timestamp: JSONLDateParsing.parseTimestamp(from: json),
             inputTokens: usage["input_tokens"] as? Int ?? 0,
             outputTokens: usage["output_tokens"] as? Int ?? 0,
             cacheReadInputTokens: usage["cache_read_input_tokens"] as? Int ?? 0,

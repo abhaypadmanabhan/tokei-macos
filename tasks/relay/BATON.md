@@ -50,3 +50,9 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Tests: N passing
 - Watch out: ...
 -->
+### Leg 1 — Codex — 2026-07-06
+- Merged: a8701fb ("Implement Codex usage provider")
+- Done: Replaced the Codex skeleton with a local `~/.codex/sessions` JSONL adapter, token delta aggregation, daily totals, latest provider-reported session/weekly quota windows, `~/.codex` availability/auth detection, shared `UsageWindows` bucketing with Claude, and watcher defaults for Claude + Codex paths.
+- Stubbed/skipped: Codex cost remains nil; auth is presence-only for `auth.json` by design.
+- Tests: 37 passing
+- Watch out: Codex real-log smoke saw 1 malformed-line warning skipped; latest smoke printed 39 files, 139,497,475 delta tokens vs 138,915,496 final-session tokens (~0.42% diff), session quota 18%, weekly quota 36%.
