@@ -2,15 +2,16 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class ClaudeJSONLParserTests: XCTestCase {
-    var parser: ClaudeJSONLParser!
     var tempDirectory: URL!
+  var utcCalendar: Calendar!
 
     override func setUp() {
         super.setUp()
-        parser = ClaudeJSONLParser()
         tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    utcCalendar = Calendar(identifier: .gregorian)
+    utcCalendar.timeZone = TimeZone(identifier: "UTC")!
     }
 
     override func tearDown() {
@@ -24,37 +25,136 @@ final class ClaudeJSONLParserTests: XCTestCase {
         return url
     }
 
+  private func makeSource(url: URL, sessionID: String = "test-session") -> LogSource {
+    LogSource(providerID: .claudeCode, url: url, sessionID: sessionID)
+  }
+
+  private func referenceNow() -> Date {
+    var comps = DateComponents()
+    comps.year = 2026
+    comps.month = 7
+    comps.day = 6
+    comps.hour = 12
+    comps.minute = 0
+    comps.second = 0
+    comps.timeZone = TimeZone(identifier: "UTC")
+    return utcCalendar.date(from: comps)!
+  }
+
+  private func makeParser(now: Date? = nil) -> ClaudeJSONLParser {
+    let fixed = now ?? referenceNow()
+    return ClaudeJSONLParser(calendar: utcCalendar, now: { fixed })
+  }
+
     func testEmptyLogSources() async {
+    let parser = makeParser()
         let usage = await parser.parse(logSources: [])
         XCTAssertEqual(usage.lifetime.totalTokens, 0)
         XCTAssertEqual(usage.lifetime.confidence, .localParsed)
     }
 
-    func testSampleJSONL() async throws {
-        let content = """
-        {"message_id": "msg_1", "timestamp": 1700000000, "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20, "cache_creation_input_tokens": 10}}
-        {"message_id": "msg_2", "timestamp": 1700000001, "usage": {"input_tokens": 200, "output_tokens": 100, "cache_read_input_tokens": 30, "cache_creation_input_tokens": 15}}
-        """
-        let url = writeFixture(content, named: "sample.jsonl")
-        let source = LogSource(providerID: .claudeCode, url: url, sessionID: "test-session")
-        let usage = await parser.parse(logSources: [source])
+  func testRealSchemaAggregation() async {
+    let url = writeFixture(ClaudeFixtures.twoDistinctMessages(), named: "real.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
 
-        XCTAssertEqual(usage.lifetime.inputTokens, 300)
-        XCTAssertEqual(usage.lifetime.outputTokens, 150)
-        XCTAssertEqual(usage.lifetime.cacheReadTokens, 50)
-        XCTAssertEqual(usage.lifetime.cacheCreationTokens, 25)
-        XCTAssertEqual(usage.lifetime.totalTokens, 525)
-    }
+    XCTAssertEqual(usage.lifetime.inputTokens, 300)
+    XCTAssertEqual(usage.lifetime.outputTokens, 150)
+    XCTAssertEqual(usage.lifetime.cacheReadTokens, 50)
+    XCTAssertEqual(usage.lifetime.cacheCreationTokens, 25)
+    XCTAssertEqual(usage.lifetime.totalTokens, 525)
+  }
 
-    func testDeduplication() async throws {
-        let content = """
-        {"message_id": "msg_1", "timestamp": 1700000000, "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20, "cache_creation_input_tokens": 10}}
-        {"message_id": "msg_1", "timestamp": 1700000000, "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 20, "cache_creation_input_tokens": 10}}
-        """
-        let url = writeFixture(content, named: "dup.jsonl")
-        let source = LogSource(providerID: .claudeCode, url: url, sessionID: "test-session")
-        let usage = await parser.parse(logSources: [source])
-        XCTAssertEqual(usage.lifetime.inputTokens, 100)
-    }
+  func testDeduplicationByMessageId() async {
+    let url = writeFixture(ClaudeFixtures.duplicateAssistantBlocks, named: "dup.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 100)
+    XCTAssertEqual(usage.lifetime.outputTokens, 50)
+  }
+
+  func testDeduplicationAcrossFiles() async {
+    let content = ClaudeFixtures.crossFileDuplicate()
+    let url1 = writeFixture(content, named: "file1.jsonl")
+    let url2 = writeFixture(content, named: "file2.jsonl")
+    let usage = await makeParser().parse(logSources: [
+      makeSource(url: url1, sessionID: "s1"),
+      makeSource(url: url2, sessionID: "s2"),
+    ])
+    XCTAssertEqual(usage.lifetime.inputTokens, 100)
+  }
+
+  func testFractionalTimestamp() async {
+    let url = writeFixture(ClaudeFixtures.assistantLine, named: "frac.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.inputTokens, 4)
+    XCTAssertEqual(usage.lifetime.outputTokens, 250)
+    XCTAssertEqual(usage.lifetime.cacheReadTokens, 14085)
+    XCTAssertEqual(usage.lifetime.cacheCreationTokens, 24924)
+    XCTAssertGreaterThan(usage.today.inputTokens ?? 0, 0)
+    XCTAssertGreaterThan(usage.week.inputTokens ?? 0, 0)
+    XCTAssertGreaterThan(usage.month.inputTokens ?? 0, 0)
+  }
+
+  func testEpochTimestamp() async {
+    let url = writeFixture(ClaudeFixtures.epochTimestampLine, named: "epoch.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 10)
+    XCTAssertEqual(usage.lifetime.totalTokens, 15)
+  }
+
+  func testNonFractionalTimestamp() async {
+    let url = writeFixture(ClaudeFixtures.isoTimestampLine, named: "iso.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 20)
+    XCTAssertGreaterThan(usage.today.inputTokens ?? 0, 0)
+  }
+
+  func testSkipsLinesWithoutUsage() async {
+    let content = """
+    \(ClaudeFixtures.userLine)
+    \(ClaudeFixtures.summaryLine)
+    """
+    let url = writeFixture(content, named: "skip.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.totalTokens, 0)
+  }
+
+  func testSidechainCounted() async {
+    let url = writeFixture(ClaudeFixtures.sidechainLine, named: "sidechain.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 30)
+    XCTAssertEqual(usage.lifetime.outputTokens, 15)
+    XCTAssertEqual(usage.lifetime.cacheReadTokens, 5)
+    XCTAssertEqual(usage.lifetime.cacheCreationTokens, 2)
+    XCTAssertEqual(usage.lifetime.totalTokens, 52)
+  }
+
+  func testMalformedLinesWarning() async {
+    let url = writeFixture(ClaudeFixtures.validWithMalformed(), named: "malformed.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 100)
+    XCTAssertEqual(usage.warnings.count, 1)
+    XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
+    XCTAssertEqual(usage.warnings[0].level, .warning)
+  }
+
+  func testWindowBucketing() async {
+    let now = referenceNow()
+    let content = ClaudeFixtures.windowBucketLines(referenceNow: now)
+    let url = writeFixture(content, named: "windows.jsonl")
+    let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.inputTokens, 100)
+    XCTAssertEqual(usage.today.inputTokens, 10)
+    XCTAssertEqual(usage.week.inputTokens, 30)   // today(10) + week(20)
+    XCTAssertEqual(usage.month.inputTokens, 60)   // today + week + month(30)
+  }
+
+  func testLegacyTopLevelUsage() async {
+    let url = writeFixture(ClaudeFixtures.legacyTopLevelUsage, named: "legacy.jsonl")
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    XCTAssertEqual(usage.lifetime.inputTokens, 100)
+    XCTAssertEqual(usage.lifetime.outputTokens, 50)
+    XCTAssertEqual(usage.lifetime.totalTokens, 180)
+  }
 }
-
