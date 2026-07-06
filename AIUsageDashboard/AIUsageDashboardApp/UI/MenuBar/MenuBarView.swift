@@ -97,9 +97,13 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
-                // Settings — reachable here because a menu-bar-extra app has no
-                // app menu, so the default ⌘, path to the Settings scene is hidden.
-                SettingsLink {
+                // Settings — opens the in-app Settings pane inside the dashboard window
+                // (there is no separate Settings dialog; a menu-bar-extra app has no ⌘, menu).
+                Button(action: {
+                    viewModel.showingSettings = true
+                    openWindow(id: "dashboard-window")
+                    NSApp.activate(ignoringOtherApps: true)
+                }) {
                     Text("SETTINGS")
                         .font(.mono(size: 11))
                         .foregroundColor(PadzyTheme.ink)
@@ -109,9 +113,6 @@ struct MenuBarView: View {
                         .border(PadzyTheme.muted, width: 1)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded {
-                    NSApp.activate(ignoringOtherApps: true)
-                })
 
                 // Quit
                 Button(action: {

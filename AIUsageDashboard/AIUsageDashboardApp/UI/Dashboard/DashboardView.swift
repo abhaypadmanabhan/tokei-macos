@@ -51,8 +51,10 @@ struct DashboardView: View {
         .onMoveCommand { direction in
             switch direction {
             case .up:
+                viewModel.showingSettings = false
                 viewModel.selectPreviousProvider()
             case .down:
+                viewModel.showingSettings = false
                 viewModel.selectNextProvider()
             default:
                 break
@@ -85,6 +87,7 @@ struct DashboardView: View {
                 Button(action: {
                     if isAvailable {
                         viewModel.selectedProvider = providerID
+                        viewModel.showingSettings = false
                     }
                 }) {
                     ProviderCard(
@@ -101,9 +104,35 @@ struct DashboardView: View {
 
                 HairlineDivider()
             }
-            Spacer()
+            Spacer(minLength: 0)
+            settingsSidebarRow
         }
         .frame(width: 230)
+    }
+
+    /// Bottom-pinned sidebar entry that swaps the right pane to the in-app Settings
+    /// surface. Mirrors ProviderCard's 2px leading accent tick + surface fill on active.
+    private var settingsSidebarRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HairlineDivider()
+            Button(action: { viewModel.showingSettings = true }) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(viewModel.showingSettings ? PadzyTheme.accent : Color.clear)
+                        .frame(width: 2)
+                    Text("SETTINGS")
+                        .font(.display(size: 13, weight: .bold))
+                        .foregroundColor(viewModel.showingSettings ? PadzyTheme.ink : PadzyTheme.muted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 12)
+                    Spacer(minLength: 0)
+                }
+                .background(viewModel.showingSettings ? PadzyTheme.surface : Color.clear)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isButton)
+        }
     }
 
     // MARK: 02 / USAGE
@@ -125,7 +154,9 @@ struct DashboardView: View {
     /// installed) → loading → generic empty → loaded, in that precedence.
     @ViewBuilder
     private var rightPane: some View {
-        if let errorMessage = viewModel.errorMessage {
+        if viewModel.showingSettings {
+            SettingsPane()
+        } else if let errorMessage = viewModel.errorMessage {
             SurfaceStateView(
                 kicker: ("02", "USAGE"),
                 kind: .error(headline: "Sync failed", detail: errorMessage),

@@ -8,6 +8,9 @@ public final class DashboardViewModel: ObservableObject {
     @Published public var errorMessage: String?
     @Published public var lastSyncedAt: Date?
     @Published public var selectedProvider: ProviderID = .claudeCode
+    /// When true the dashboard's right pane shows the in-app Settings surface instead
+    /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
+    @Published public var showingSettings = false
 
     private let syncEngine: SyncEngine
     private var updatesTask: Task<Void, Never>?

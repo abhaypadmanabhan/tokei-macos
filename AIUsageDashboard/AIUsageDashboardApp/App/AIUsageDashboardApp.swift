@@ -23,11 +23,8 @@ struct AIUsageDashboardApp: App {
             }
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            SettingsView()
-                .environmentObject(viewModel)
-        }
+        // Settings live in-app (dashboard right pane via the sidebar SETTINGS entry),
+        // not in a separate macOS Settings window.
     }
 }
 
