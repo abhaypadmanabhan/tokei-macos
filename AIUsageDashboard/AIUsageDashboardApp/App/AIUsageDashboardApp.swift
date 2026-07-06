@@ -19,7 +19,7 @@ struct AIUsageDashboardApp: App {
         } label: {
             HStack(spacing: 5) {
                 Image(nsImage: TokeiMark.menuBarImage)
-                Text(TokenFormatter.format(viewModel.claudeSnapshot?.todayUsage.totalTokens ?? 0))
+                Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
             }
         }
         .menuBarExtraStyle(.window)
