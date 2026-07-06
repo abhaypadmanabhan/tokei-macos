@@ -151,3 +151,65 @@ enum CodexFixtures {
                   comps.hour!, comps.minute!, comps.second!)
   }
 }
+
+enum ClineFixtures {
+  static let malformedJSON = """
+    {not valid cline json at all
+    """
+
+  static func twoAssistantMessages(sessionID: String = "1783325327533_test") -> String {
+    """
+    {"version":1,"updated_at":1783325327533,"agent":"cline","sessionId":"\(sessionID)","messages":[
+      {"id":"msg_a","role":"assistant","ts":1783325327533,"modelInfo":{"id":"cline-pass/kimi-k2.7-code","provider":"cline-pass"},"metrics":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":20,"cacheWriteTokens":10,"cost":0.01}},
+      {"id":"msg_b","role":"assistant","ts":1783325407533,"modelInfo":{"id":"cline-pass/kimi-k2.7-code","provider":"cline-pass"},"metrics":{"inputTokens":200,"outputTokens":100,"cacheReadTokens":30,"cacheWriteTokens":15,"cost":0.02}}
+    ],"system_prompt":""}
+    """
+  }
+
+  static func duplicateMessage(sessionID: String = "1783325327533_dup") -> String {
+    """
+    {"version":1,"sessionId":"\(sessionID)","messages":[
+      {"id":"msg_shared","role":"assistant","ts":1783325327533,"metrics":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":20,"cacheWriteTokens":10,"cost":0.01}}
+    ]}
+    """
+  }
+
+  static func messageWithoutMetrics(sessionID: String = "1783325327533_nom") -> String {
+    """
+    {"version":1,"sessionId":"\(sessionID)","messages":[
+      {"id":"msg_no_metrics","role":"assistant","ts":1783325327533},
+      {"id":"msg_with_metrics","role":"assistant","ts":1783325327534,"metrics":{"inputTokens":10,"outputTokens":5,"cacheReadTokens":0,"cacheWriteTokens":0,"cost":0.001}}
+    ]}
+    """
+  }
+
+  static func windowBucketMessages(referenceNow: Date, sessionID: String = "1783325327533_win") -> String {
+    var utc = Calendar(identifier: .gregorian)
+    utc.timeZone = TimeZone(identifier: "UTC")!
+
+    let todayStart = utc.startOfDay(for: referenceNow)
+    let todayMillis = millis(todayStart.addingTimeInterval(3600), utc: utc)
+    let weekMillis = millis(utc.date(byAdding: .day, value: -3, to: todayStart)!, utc: utc)
+    let monthMillis = millis(utc.date(byAdding: .day, value: -20, to: todayStart)!, utc: utc)
+    let outsideMillis = millis(utc.date(byAdding: .month, value: -2, to: todayStart)!, utc: utc)
+
+    func message(id: String, input: Int, ts: Int64) -> String {
+      """
+      {"id":"\(id)","role":"assistant","ts":\(ts),"metrics":{"inputTokens":\(input),"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"cost":0.001}}
+      """
+    }
+
+    return """
+    {"version":1,"sessionId":"\(sessionID)","messages":[
+      \(message(id: "today", input: 10, ts: todayMillis)),
+      \(message(id: "week", input: 20, ts: weekMillis)),
+      \(message(id: "month", input: 30, ts: monthMillis)),
+      \(message(id: "outside", input: 40, ts: outsideMillis))
+    ]}
+    """
+  }
+
+  private static func millis(_ date: Date, utc: Calendar) -> Int64 {
+    Int64(date.timeIntervalSince1970 * 1000)
+  }
+}

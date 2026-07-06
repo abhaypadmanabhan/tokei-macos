@@ -6,7 +6,9 @@ public actor FileWatcher {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects", isDirectory: true),
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true)
+            .appendingPathComponent(".codex/sessions", isDirectory: true),
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cline/data/sessions", isDirectory: true)
     ]
     public static let defaultWatchPath: URL = defaultWatchPaths[0]
 
