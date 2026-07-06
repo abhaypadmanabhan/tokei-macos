@@ -42,11 +42,10 @@ public enum CodexPricing {
         "o4-mini": Rate(inputPerMillion: 1.10, cachedInputPerMillion: 0.275, outputPerMillion: 4.40),
     ]
 
-    /// Returns the estimated USD cost of `tokens` under `model`'s published rate, or
-    /// `nil` if `model` has no row in `rates` — never fabricates a number for an
-    /// unrecognized model.
+    /// Returns the estimated USD cost of `tokens` under `model`'s rate, or `nil` if no
+    /// rate can be resolved — never fabricates a number for an unrecognized family.
     public static func estimateCost(tokens: TokenUsage, model: String) -> Double? {
-        guard let rate = rates[model] else { return nil }
+        guard let rate = resolveRate(for: model) else { return nil }
         let billedInput = Double(tokens.inputTokens ?? 0)
         let cachedInput = Double(tokens.cacheReadTokens ?? 0)
         let billedOutput = Double(tokens.outputTokens ?? 0) + Double(tokens.reasoningTokens ?? 0)
@@ -55,5 +54,34 @@ public enum CodexPricing {
             + cachedInput * rate.cachedInputPerMillion
             + billedOutput * rate.outputPerMillion
         return amount / 1_000_000
+    }
+
+    /// Resolves a rate for `model`, tolerating slugs newer than this table:
+    /// 1. exact match; 2. match after stripping a `-codex` variant suffix; 3. the
+    /// longest table key that is a dash/dot-delimited prefix of the slug — so a new
+    /// minor like `gpt-5.5` or `gpt-5.3-codex` prices under the verified `gpt-5` base
+    /// rate. This is a deliberate approximation (surfaced as `.estimated`): a newer
+    /// minor may be repriced, but anchoring to its base family beats showing nothing.
+    /// A slug with no known base family (e.g. a future `gpt-6`) still yields `nil`.
+    static func resolveRate(for model: String) -> Rate? {
+        let slug = model.lowercased()
+        if let rate = rates[slug] { return rate }
+
+        let stripped: String = slug.hasSuffix("-codex") ? String(slug.dropLast("-codex".count)) : slug
+        if stripped != slug, let rate = rates[stripped] { return rate }
+
+        // Longest key that is a boundary-aligned prefix of the slug (next char is - or .).
+        var bestKey: String?
+        for key in rates.keys {
+            let matches = stripped == key
+                || stripped.hasPrefix(key + "-")
+                || stripped.hasPrefix(key + ".")
+            guard matches else { continue }
+            if bestKey == nil || key.count > bestKey!.count {
+                bestKey = key
+            }
+        }
+        guard let bestKey else { return nil }
+        return rates[bestKey]
     }
 }
