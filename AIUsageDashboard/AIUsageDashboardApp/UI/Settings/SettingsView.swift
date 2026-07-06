@@ -1,104 +1,103 @@
 import SwiftUI
 
-struct SettingsView: View {
-    var body: some View {
-        TabView {
-            GeneralSettingsTab()
-                .tabItem {
-                    Label("GENERAL", systemImage: "slider.horizontal.3")
-                }
-            
-            AboutSettingsTab()
-                .tabItem {
-                    Label("ABOUT", systemImage: "info.circle")
-                }
-        }
-        .padding(20)
-        .frame(width: 420, height: 320)
-        .background(PadzyTheme.ground)
-        .preferredColorScheme(.dark)
-    }
-}
-
-private struct GeneralSettingsTab: View {
+/// In-app Settings surface. Renders inside the dashboard's right pane (not a separate
+/// macOS Settings window), so new configuration can grow here over time. Reached from
+/// the bottom-pinned SETTINGS entry in the provider sidebar and from the menu bar.
+struct SettingsPane: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            EditorialKicker(number: "01", title: "QUOTA ALERTS")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle("QUOTA ALERTS", isOn: $notificationsEnabled)
-                    .font(.display(size: 12, weight: .bold))
-                    .foregroundColor(PadzyTheme.ink)
-                    .tint(PadzyTheme.accent)
-                
-                Text("ALERTS AT 80% / 95%")
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                
-                Text("Tokei posts a notification when any provider quota window crosses 80% or 95%.")
-                    .font(.system(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                    .lineLimit(nil)
-            }
-            .padding(12)
-            .background(PadzyTheme.surface)
-            .border(PadzyTheme.muted.opacity(0.3), width: 1)
-
-            EditorialKicker(number: "02", title: "REFRESH INTERVAL")
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("AUTO-SYNC: FILE WATCHER")
-                    .font(.display(size: 12, weight: .bold))
-                    .foregroundColor(PadzyTheme.ink)
-                
-                Text("WATCHING ~/.claude/projects  ·  2S DEBOUNCE")
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                
-                Text("Tokei refreshes automatically whenever Claude Code writes new session logs. Manual sync: \u{2318}R in the dashboard.")
-                    .font(.system(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                    .lineLimit(nil)
-            }
-            .padding(12)
-            .background(PadzyTheme.surface)
-            .border(PadzyTheme.muted.opacity(0.3), width: 1)
-            
-            Spacer()
-        }
-        .padding(.vertical, 8)
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
-}
 
-private struct AboutSettingsTab: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            EditorialKicker(number: "02", title: "METADATA")
-            
-            VStack(alignment: .leading, spacing: 6) {
-                Text("TOKEI")
-                    .font(.display(size: 16, weight: .black))
-                    .foregroundColor(PadzyTheme.ink)
-                
-                Text("AI USAGE TELEMETRY  ·  VERSION 0.1.0")
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top) {
+                    EditorialKicker(number: "02", title: "SETTINGS")
+                    Spacer()
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+
                 HairlineDivider()
-                    .padding(.vertical, 4)
-                
-                Text("Designed under Padzy OS design system constraints (cool dark, signal pink).")
-                    .font(.system(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    section(number: "01", title: "QUOTA ALERTS") {
+                        Toggle(isOn: $notificationsEnabled) {
+                            Text("QUOTA ALERTS")
+                                .font(.display(size: 12, weight: .bold))
+                                .foregroundColor(PadzyTheme.ink)
+                        }
+                        .toggleStyle(.switch)
+                        .tint(PadzyTheme.accent)
+
+                        Text("ALERTS AT 80% / 95%")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+
+                        Text("Tokei posts a notification when any provider quota window crosses 80% or 95%.")
+                            .font(.system(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    section(number: "02", title: "REFRESH INTERVAL") {
+                        Text("AUTO-SYNC: FILE WATCHER")
+                            .font(.display(size: 12, weight: .bold))
+                            .foregroundColor(PadzyTheme.ink)
+
+                        Text("WATCHING ~/.claude  ·  ~/.codex  ·  ~/.cline  ·  2S DEBOUNCE")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+
+                        Text("Tokei refreshes automatically whenever a provider writes new session logs. Manual sync: \u{2318}R in the dashboard.")
+                            .font(.system(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    section(number: "03", title: "ABOUT") {
+                        Text("TOKEI")
+                            .font(.display(size: 16, weight: .black))
+                            .foregroundColor(PadzyTheme.ink)
+
+                        Text("LOCAL-FIRST AI USAGE  ·  v\(appVersion)")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+
+                        Text("All data is read locally from your machine — nothing leaves it. Built under the Padzy OS design system.")
+                            .font(.system(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+
+                Spacer(minLength: 24)
             }
-            .padding(12)
-            .background(PadzyTheme.surface)
-            .border(PadzyTheme.muted.opacity(0.3), width: 1)
-            
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(PadzyTheme.ground)
+    }
+
+    /// A labeled settings block: numbered mono kicker over a hairline-bordered surface.
+    @ViewBuilder
+    private func section<Content: View>(
+        number: String,
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EditorialKicker(number: number, title: title)
+            VStack(alignment: .leading, spacing: 8, content: content)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(PadzyTheme.surface)
+                .border(PadzyTheme.muted.opacity(0.3), width: 1)
+        }
     }
 }
