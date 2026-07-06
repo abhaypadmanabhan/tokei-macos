@@ -213,3 +213,24 @@ enum ClineFixtures {
     Int64(date.timeIntervalSince1970 * 1000)
   }
 }
+
+enum CursorFixtures {
+  static func dailyTokenStats(
+    date: String,
+    inputTokens: Int,
+    outputTokens: Int,
+    cacheReadTokens: Int,
+    cacheCreationTokens: Int,
+    reasoningTokens: Int
+  ) -> String {
+    """
+    {"date":"\(date)","inputTokens":\(inputTokens),"outputTokens":\(outputTokens),"cacheReadTokens":\(cacheReadTokens),"cacheCreationTokens":\(cacheCreationTokens),"reasoningTokens":\(reasoningTokens)}
+    """
+  }
+
+  static func codeLineDailyStats(date: String) -> String {
+    """
+    {"date":"\(date)","tabSuggestedLines":12,"tabAcceptedLines":3,"composerSuggestedLines":45,"composerAcceptedLines":18}
+    """
+  }
+}
