@@ -131,6 +131,39 @@ struct CodexRateLimit: Sendable {
 }
 
 extension CodexJSONLParser {
+    /// Best-effort scan for the most recently configured model, read from `turn_context`
+    /// events' `payload.model`. Read-only: does not affect `parse(logSources:)` or the
+    /// shape of `AggregateUsage`. This is a separate pass over the log files from
+    /// `parse(logSources:)`'s token-count scan, so sources are walked newest-first
+    /// (they're expected pre-sorted chronologically, as `CodexProvider.discoverLogSources()`
+    /// returns them) and stop at the first file with a `turn_context` event — avoiding a
+    /// second full read of every session file just to find the most recent model.
+    public func detectLatestModel(logSources: [LogSource]) async -> String? {
+        for source in logSources.reversed() {
+            if let model = await latestModel(inFileAt: source.url) {
+                return model
+            }
+        }
+        return nil
+    }
+
+    private func latestModel(inFileAt url: URL) async -> String? {
+        var model: String?
+        do {
+            for try await line in url.lines {
+                guard let data = line.data(using: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["type"] as? String == "turn_context",
+                      let payload = json["payload"] as? [String: Any],
+                      let payloadModel = payload["model"] as? String else { continue }
+                model = payloadModel
+            }
+        } catch {
+            return nil
+        }
+        return model
+    }
+
     func parseFile(at url: URL, onRecord: (CodexUsageRecord) -> Void) async throws -> Int {
         var malformedCount = 0
         for try await line in url.lines {

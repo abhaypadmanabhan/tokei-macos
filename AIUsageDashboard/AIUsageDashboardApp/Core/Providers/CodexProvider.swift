@@ -48,6 +48,8 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             warnings.append(ProviderWarning(message: "No Codex session logs found", level: .info))
         }
 
+        let costUsage = await costUsage(for: usage.lifetime, logs: logs)
+
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
@@ -57,11 +59,27 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             weekUsage: usage.week,
             monthUsage: usage.month,
             lifetimeUsage: usage.lifetime,
-            costUsage: nil,
+            costUsage: costUsage,
             warnings: warnings,
             lastSyncedAt: Date(),
             dailyTotals: usage.dailyTotals
         )
+    }
+
+    /// Estimates lifetime cost from `CodexPricing`'s static table, keyed by the most
+    /// recently configured model found in the logs. No pricing row for that model
+    /// (including model slugs newer than the table) yields `.unavailable`, never a
+    /// guessed number.
+    ///
+    /// Note: this prices the *entire* `lifetime` aggregate at that one model's rate,
+    /// not just tokens generated under it — a user who switched models mid-history
+    /// will see their whole total skew toward the current model's price.
+    private func costUsage(for lifetime: TokenUsage, logs: [LogSource]) async -> CostUsage {
+        guard let model = await parser.detectLatestModel(logSources: logs),
+              let amount = CodexPricing.estimateCost(tokens: lifetime, model: model) else {
+            return CostUsage(confidence: .unavailable)
+        }
+        return CostUsage(amount: amount, currency: "USD", confidence: .estimated)
     }
 
     public func discoverLogSources() async throws -> [LogSource] {
