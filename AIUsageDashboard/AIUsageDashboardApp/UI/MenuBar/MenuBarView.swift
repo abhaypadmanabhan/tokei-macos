@@ -97,6 +97,22 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Settings — reachable here because a menu-bar-extra app has no
+                // app menu, so the default ⌘, path to the Settings scene is hidden.
+                SettingsLink {
+                    Text("SETTINGS")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(Color.clear)
+                        .border(PadzyTheme.muted, width: 1)
+                }
+                .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture().onEnded {
+                    NSApp.activate(ignoringOtherApps: true)
+                })
+
                 // Quit
                 Button(action: {
                     NSApp.terminate(nil)

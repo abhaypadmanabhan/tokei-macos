@@ -50,9 +50,35 @@ final class CodexCostTests: XCTestCase {
         XCTAssertEqual(amount!, 6.90, accuracy: 0.0001)
     }
 
-    func testEstimateCostForUnknownModelReturnsNil() {
+    func testEstimateCostForUnknownFamilyReturnsNil() {
+        // A future *major* with no base row in the table resolves to no rate — never a guess.
         let tokens = TokenUsage(inputTokens: 100, outputTokens: 50, confidence: .localParsed)
-        XCTAssertNil(CodexPricing.estimateCost(tokens: tokens, model: "gpt-5.5-not-in-table"))
+        XCTAssertNil(CodexPricing.estimateCost(tokens: tokens, model: "gpt-6-ultra"))
+        XCTAssertNil(CodexPricing.estimateCost(tokens: tokens, model: "some-other-model"))
+    }
+
+    func testEstimateCostPricesNewMinorUnderBaseFamilyRate() {
+        // gpt-5.5 / gpt-5.4 / gpt-5.3-codex are newer than the table → priced under gpt-5.
+        let tokens = TokenUsage(
+            inputTokens: 1_000_000,
+            outputTokens: 500_000,
+            cacheReadTokens: 200_000,
+            reasoningTokens: 100_000,
+            confidence: .localParsed
+        )
+        let base = CodexPricing.estimateCost(tokens: tokens, model: "gpt-5")
+        XCTAssertNotNil(base)
+        for slug in ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "GPT-5.5"] {
+            let amount = CodexPricing.estimateCost(tokens: tokens, model: slug)
+            XCTAssertNotNil(amount, "expected family fallback for \(slug)")
+            XCTAssertEqual(amount!, base!, accuracy: 0.0001, "\(slug) should price under gpt-5 base rate")
+        }
+        // An exact table row must still win over the family fallback.
+        XCTAssertNotEqual(
+            CodexPricing.estimateCost(tokens: tokens, model: "gpt-5-mini")!,
+            base!,
+            accuracy: 0.0001
+        )
     }
 
     // MARK: - CodexProvider.fetchSnapshot() costUsage attachment
@@ -71,9 +97,23 @@ final class CodexCostTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.costUsage!.amount!, 0)
     }
 
-    func testFetchSnapshotOmitsCostForUnknownModel() async throws {
+    func testFetchSnapshotEstimatesCostForNewMinorViaFamilyFallback() async throws {
+        // Real-world case on this machine: Codex logs report gpt-5.5, newer than the
+        // table. It must now price under the gpt-5 base rate rather than show nothing.
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-5.5"), codex: codex)
+
+        let provider = CodexProvider(codexDirectory: codex)
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertNotNil(snapshot.costUsage?.amount)
+        XCTAssertEqual(snapshot.costUsage?.confidence, .estimated)
+        XCTAssertEqual(snapshot.costUsage?.currency, "USD")
+    }
+
+    func testFetchSnapshotOmitsCostForUnknownFamily() async throws {
+        let codex = codexDirectory()
+        try writeSession(CodexFixtures.sessionWithModel(model: "gpt-6-ultra"), codex: codex)
 
         let provider = CodexProvider(codexDirectory: codex)
         let snapshot = try await provider.fetchSnapshot()
