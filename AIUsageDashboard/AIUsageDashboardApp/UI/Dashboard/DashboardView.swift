@@ -339,7 +339,7 @@ struct DashboardView: View {
                             .foregroundColor(PadzyTheme.muted)
                         Text(String(format: "$%.2f", amount))
                             .font(.mono(size: 11))
-                            .foregroundColor(PadzyTheme.accent)
+                            .foregroundColor(PadzyTheme.ink)
                     }
                 }
             }

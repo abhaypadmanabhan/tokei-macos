@@ -84,3 +84,11 @@ Known limitations (accepted for MVP):
 - [x] Update menu bar sum and list all active providers in panel
 - [x] Validate with build & test suite
 
+
+## Relay (post-MVP) — COMPLETE 2026-07-06
+- [x] Leg 1 Codex — CodexProvider: tokens + REAL quota windows (verified 0.41% vs baseline; quotas live)
+- [x] Leg 2 Cursor — ClineProvider: tokens + $ cost (exact match: 131,011,355 tokens / $22.74); Cursor detection
+- [x] Leg 3 Antigravity — multi-provider UI, quota gauges w/ countdowns, cost display, menu bar sum (screenshot-verified)
+- [x] Leg 4 Kimi — notification thresholds 80/95% (11 tests, no-spam re-arm), QUOTA ALERTS toggle, docs
+- [x] Fable final: accent-as-data cost fix, full verification — 59/59 tests, build green
+Remaining post-relay: Cursor metrics (dashboard API auth), Antigravity data source, WidgetKit, app polish.
