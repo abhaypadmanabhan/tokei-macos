@@ -7,6 +7,16 @@ require_repo
 diff="$(diff_text || true)"
 [ -z "$diff" ] && pass "empty diff, nothing to scan"
 
+# Drop hunks belonging to this gate's own source. The `patterns` array below contains
+# secret-shaped string literals (aws_secret_access_key, sk-…, "access_token") that would
+# otherwise self-match when .claude/gates/ is part of the scanned diff. Only the gate
+# source dir is excluded; every other file (incl. real credentials) is still scanned.
+diff="$(printf '%s\n' "$diff" | awk '
+  /^diff --git / { skip = ($3 ~ /^a\/\.claude\/gates\//); next }
+  !skip
+')"
+[ -z "$diff" ] && pass "empty diff after excluding gate sources, nothing to scan"
+
 # Only inspect added lines (leading '+', not the '+++' file header).
 added="$(printf '%s\n' "$diff" | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
 
