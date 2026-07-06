@@ -52,7 +52,7 @@ move finished items to DONE with date + commit.
       [needs-decision]
 - [ ] **Multi-machine aggregation** — sync usage-store.json via iCloud Drive
       container; dedupe by day+provider.
-- [ ] **App Store / notarization** — Developer ID signing, sandbox
+- [ ] **App Store / notarization** — Developer ID signing (re-enable ENABLE_HARDENED_RUNTIME then — disabled 2026-07-06 because hardened runtime + adhoc framework signing breaks dyld library validation), sandbox
       entitlements (read-only home dirs won't fly in sandbox — needs
       security-scoped bookmarks UX), notarized DMG pipeline.
 
