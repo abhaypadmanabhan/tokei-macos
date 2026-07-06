@@ -92,3 +92,23 @@ Known limitations (accepted for MVP):
 - [x] Leg 4 Kimi — notification thresholds 80/95% (11 tests, no-spam re-arm), QUOTA ALERTS toggle, docs
 - [x] Fable final: accent-as-data cost fix, full verification — 59/59 tests, build green
 Remaining post-relay: Cursor metrics (dashboard API auth), Antigravity data source, WidgetKit, app polish.
+
+## padzy-os skill enhancement — 2026-07-06
+
+Gap analysis done (baseline: current skill cannot answer these build questions):
+dataviz/charts absent (Tokei IS a dashboard); anti-slop = one phrase; no data-formatting
+spec; focus-visible contradiction ("no glow ring" vs a11y); no overlay/scrim/toast spec;
+no dark-ground rules; no empty/error/destructive patterns; decks/PDF promised but missing;
+stale theme lists; no responsive/metrics/voice/perf thresholds.
+
+- [x] NEW `references/antislop.md` — AI-slop tell taxonomy (visual/layout/copy/motion/dataviz) + Padzy replacement per tell
+- [x] NEW `references/dataviz.md` — chart rules: one-accent series logic, hairline axes, mono ticks, stat tiles, sparklines, chart states
+- [x] NEW `references/decks-print.md` — decks, PDFs, docs surface rules
+- [x] `language.md` — data formatting, measure cap, focus-visible spec, dark-ground rules, responsive degradation, voice
+- [x] `components.md` — modal/scrim, toast, command palette, empty state, destructive pattern, control metrics
+- [x] `ux-principles.md` — perceived-performance thresholds
+- [x] `themes.md` — fix stale: volini + aitracker now locked
+- [x] `SKILL.md` — wire new refs, fix stale theme list, extend shipping checklist
+- [x] Verify: subagent probe PASSED — agent routed to dataviz.md + antislop.md via SKILL.md alone; all 5 specs compliant (focus+context series, tile anatomy, empty state, slop-free hero, focus-visible outline)
+- [x] NEW `references/image-mockups.md` — GPT Images mockup loop (prompt recipe + image→code reconciliation); wired as SKILL.md step 4
+- [x] Verify: Auto Coach probe PASSED — agent hit image-mockups.md via routing, produced full-recipe prompt (theme hexes, positive invariants, negative slop bans, aspect, single-variable variations) + correct reconciliation plan
