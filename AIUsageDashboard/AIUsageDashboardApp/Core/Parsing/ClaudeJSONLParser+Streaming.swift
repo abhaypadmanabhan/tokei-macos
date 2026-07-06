@@ -1,53 +1,96 @@
 import Foundation
 
-extension ClaudeJSONLParser {
-    /// Streams a JSONL file line-by-line using URL.lines. Never loads the entire file into memory.
-    func parseFile(at url: URL) async throws -> [ClaudeUsageRecord] {
-        var records: [ClaudeUsageRecord] = []
-        for try await line in url.lines {
-            guard let data = line.data(using: .utf8) else { continue }
-            if let record = try? parseLine(data) {
-                records.append(record)
+enum LineParseOutcome: Sendable {
+    case usage(ClaudeUsageRecord)
+    case skipped
+    case malformed
+}
+
+private enum ClaudeDateParsing {
+    nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    nonisolated(unsafe) static let standard: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    static func parseTimestamp(from json: [String: Any]) -> Date? {
+        if let ts = json["timestamp"] as? TimeInterval {
+            return Date(timeIntervalSince1970: ts)
+        }
+        if let tsString = json["timestamp"] as? String {
+            if let date = fractional.date(from: tsString) {
+                return date
+            }
+            if let date = standard.date(from: tsString) {
+                return date
             }
         }
-        return records
-    }
-
-    func parseLine(_ data: Data) throws -> ClaudeUsageRecord? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-
-        let usage = json["usage"] as? [String: Any]
-            ?? (json["message"] as? [String: Any])?["usage"] as? [String: Any]
-            ?? json
-
-        let inputTokens = usage["input_tokens"] as? Int ?? 0
-        let outputTokens = usage["output_tokens"] as? Int ?? 0
-        let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
-        let cacheCreate = usage["cache_creation_input_tokens"] as? Int ?? 0
-
-        let messageID = json["message_id"] as? String ?? json["id"] as? String
-        let requestID = json["request_id"] as? String
-        let sessionID = json["session_id"] as? String
-
-        let timestamp: Date?
-        if let ts = json["timestamp"] as? TimeInterval {
-            timestamp = Date(timeIntervalSince1970: ts)
-        } else if let tsString = json["timestamp"] as? String, let date = ISO8601DateFormatter().date(from: tsString) {
-            timestamp = date
-        } else {
-            timestamp = nil
-        }
-
-        return ClaudeUsageRecord(
-            messageID: messageID,
-            requestID: requestID,
-            sessionID: sessionID,
-            timestamp: timestamp,
-            inputTokens: inputTokens,
-            outputTokens: outputTokens,
-            cacheReadInputTokens: cacheRead,
-            cacheCreationInputTokens: cacheCreate
-        )
+        return nil
     }
 }
 
+extension ClaudeJSONLParser {
+    /// Streams a JSONL file line-by-line using URL.lines. Never loads the entire file into memory.
+    func parseFile(at url: URL, onRecord: (ClaudeUsageRecord) -> Void) async throws -> Int {
+        var malformedCount = 0
+        for try await line in url.lines {
+            guard let data = line.data(using: .utf8) else { continue }
+            switch parseLine(data) {
+            case .usage(let record):
+                onRecord(record)
+            case .skipped:
+                break
+            case .malformed:
+                malformedCount += 1
+            }
+        }
+        return malformedCount
+    }
+
+    func parseLine(_ data: Data) -> LineParseOutcome {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .malformed
+        }
+
+        guard let usage = extractUsage(from: json) else {
+            return .skipped
+        }
+
+        let message = json["message"] as? [String: Any]
+        let messageID = message?["id"] as? String ?? json["message_id"] as? String
+        let requestID = json["requestId"] as? String ?? json["request_id"] as? String
+        let sessionID = json["sessionId"] as? String ?? json["session_id"] as? String
+        let uuid = json["uuid"] as? String
+
+        let record = ClaudeUsageRecord(
+            messageID: messageID,
+            requestID: requestID,
+            sessionID: sessionID,
+            uuid: uuid,
+            timestamp: ClaudeDateParsing.parseTimestamp(from: json),
+            inputTokens: usage["input_tokens"] as? Int ?? 0,
+            outputTokens: usage["output_tokens"] as? Int ?? 0,
+            cacheReadInputTokens: usage["cache_read_input_tokens"] as? Int ?? 0,
+            cacheCreationInputTokens: usage["cache_creation_input_tokens"] as? Int ?? 0
+        )
+        return .usage(record)
+    }
+
+    private func extractUsage(from json: [String: Any]) -> [String: Any]? {
+        if let message = json["message"] as? [String: Any],
+           let usage = message["usage"] as? [String: Any] {
+            return usage
+        }
+        if let usage = json["usage"] as? [String: Any],
+           usage.keys.contains(where: { $0.hasSuffix("_tokens") }) {
+            return usage
+        }
+        return nil
+    }
+}

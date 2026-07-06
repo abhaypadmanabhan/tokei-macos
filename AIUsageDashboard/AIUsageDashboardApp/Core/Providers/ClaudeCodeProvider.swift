@@ -25,8 +25,24 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        let logs = try? await discoverLogSources()
-        let usage = try? await parser.parse(logSources: logs ?? [])
+        var warnings: [ProviderWarning] = []
+        let logs: [LogSource]
+        do {
+            logs = try await discoverLogSources()
+        } catch {
+            warnings.append(ProviderWarning(
+                message: "Failed to discover Claude logs: \(error.localizedDescription)",
+                level: .warning
+            ))
+            logs = []
+        }
+
+        let usage = await parser.parse(logSources: logs)
+        warnings.append(contentsOf: usage.warnings)
+
+        if warnings.isEmpty {
+            warnings.append(ProviderWarning(message: "Local logs only; quotas unavailable", level: .info))
+        }
 
         return ProviderSnapshot(
             providerID: id,
@@ -54,12 +70,12 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                     source: "Claude weekly limits not available from local logs"
                 )
             ],
-            todayUsage: usage?.today ?? .unavailable,
-            weekUsage: usage?.week ?? .unavailable,
-            monthUsage: usage?.month,
-            lifetimeUsage: usage?.lifetime,
+            todayUsage: usage.today,
+            weekUsage: usage.week,
+            monthUsage: usage.month,
+            lifetimeUsage: usage.lifetime,
             costUsage: nil,
-            warnings: usage?.warnings ?? [ProviderWarning(message: "Local logs only; quotas unavailable", level: .info)],
+            warnings: warnings,
             lastSyncedAt: Date()
         )
     }
@@ -69,12 +85,10 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let projectsDir = home.appendingPathComponent(".claude/projects", isDirectory: true)
         var sources: [LogSource] = []
 
-        guard let projectDirs = try? fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: nil) else {
-            return sources
-        }
+        let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: nil)
 
         for projectDir in projectDirs {
-            guard let files = try? fileManager.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            let files = try fileManager.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey])
             for file in files where file.pathExtension == "jsonl" {
                 let sessionID = file.deletingPathExtension().lastPathComponent
                 let modificationDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
