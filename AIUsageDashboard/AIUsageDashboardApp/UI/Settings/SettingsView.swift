@@ -25,15 +25,15 @@ private struct GeneralSettingsTab: View {
             EditorialKicker(number: "01", title: "REFRESH INTERVAL")
             
             VStack(alignment: .leading, spacing: 8) {
-                Text("AUTOMATIC BACKGROUND SYNC")
+                Text("AUTO-SYNC: FILE WATCHER")
                     .font(.display(size: 12, weight: .bold))
                     .foregroundColor(PadzyTheme.ink)
                 
-                Text("INTERVAL: 15 MINUTES (DEFAULT)")
+                Text("WATCHING ~/.claude/projects  ·  2S DEBOUNCE")
                     .font(.mono(size: 11))
                     .foregroundColor(PadzyTheme.muted)
                 
-                Text("Usage snapshots are compiled from local project log streams automatically in the background.")
+                Text("Tokei refreshes automatically whenever Claude Code writes new session logs. Manual sync: \u{2318}R in the dashboard.")
                     .font(.system(size: 11))
                     .foregroundColor(PadzyTheme.muted)
                     .lineLimit(nil)
@@ -54,11 +54,11 @@ private struct AboutSettingsTab: View {
             EditorialKicker(number: "02", title: "METADATA")
             
             VStack(alignment: .leading, spacing: 6) {
-                Text("AI USAGE DASHBOARD")
+                Text("TOKEI")
                     .font(.display(size: 16, weight: .black))
                     .foregroundColor(PadzyTheme.ink)
                 
-                Text("VERSION 1.0.0 (MVP)")
+                Text("AI USAGE TELEMETRY  ·  VERSION 0.1.0")
                     .font(.mono(size: 11))
                     .foregroundColor(PadzyTheme.accent)
                 

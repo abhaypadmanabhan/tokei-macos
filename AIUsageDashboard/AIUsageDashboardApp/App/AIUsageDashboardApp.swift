@@ -7,7 +7,7 @@ struct AIUsageDashboardApp: App {
     @StateObject private var viewModel = DashboardViewModel()
 
     var body: some Scene {
-        Window("AI Usage Dashboard", id: "dashboard-window") {
+        Window("Tokei", id: "dashboard-window") {
             DashboardView()
                 .environmentObject(viewModel)
         }
@@ -17,8 +17,10 @@ struct AIUsageDashboardApp: App {
             MenuBarView()
                 .environmentObject(viewModel)
         } label: {
-            let total = viewModel.claudeSnapshot?.todayUsage.totalTokens ?? 0
-            Text("⌾ \(TokenFormatter.format(total))")
+            HStack(spacing: 5) {
+                Image(nsImage: TokeiMark.menuBarImage)
+                Text(TokenFormatter.format(viewModel.claudeSnapshot?.todayUsage.totalTokens ?? 0))
+            }
         }
         .menuBarExtraStyle(.window)
 

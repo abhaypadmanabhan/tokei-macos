@@ -6,6 +6,8 @@ public actor ClaudeJSONLParser {
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
+        /// Total tokens per calendar day (start-of-day key) for records with timestamps.
+        public let dailyTotals: [Date: Int]
         public let warnings: [ProviderWarning]
     }
 
@@ -30,6 +32,7 @@ public actor ClaudeJSONLParser {
         var week = emptyUsage
         var month = emptyUsage
         var lifetime = emptyUsage
+        var dailyTotals: [Date: Int] = [:]
 
         for source in logSources {
             do {
@@ -43,6 +46,7 @@ public actor ClaudeJSONLParser {
                         if ts >= todayStart { today = today.merging(usage) }
                         if ts >= weekStart { week = week.merging(usage) }
                         if ts >= monthStart { month = month.merging(usage) }
+                        dailyTotals[calendar.startOfDay(for: ts), default: 0] += record.totalTokens
                     }
                 }
                 if malformedCount > 0 {
@@ -59,7 +63,7 @@ public actor ClaudeJSONLParser {
             }
         }
 
-        return AggregateUsage(today: today, week: week, month: month, lifetime: lifetime, warnings: warnings)
+        return AggregateUsage(today: today, week: week, month: month, lifetime: lifetime, dailyTotals: dailyTotals, warnings: warnings)
     }
 
     private var emptyUsage: TokenUsage {
