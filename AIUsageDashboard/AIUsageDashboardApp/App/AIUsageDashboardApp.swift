@@ -1,22 +1,30 @@
 import SwiftUI
+import AIUsageDashboardCore
 
 @main
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var viewModel = DashboardViewModel()
 
     var body: some Scene {
-        WindowGroup {
+        Window("AI Usage Dashboard", id: "dashboard-window") {
             DashboardView()
+                .environmentObject(viewModel)
         }
         .windowStyle(.titleBar)
 
-        MenuBarExtra("AI Usage Dashboard", systemImage: "chart.bar") {
+        MenuBarExtra {
             MenuBarView()
+                .environmentObject(viewModel)
+        } label: {
+            let total = viewModel.claudeSnapshot?.todayUsage.totalTokens ?? 0
+            Text("⌾ \(TokenFormatter.format(total))")
         }
         .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()
+                .environmentObject(viewModel)
         }
     }
 }
