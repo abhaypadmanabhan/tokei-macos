@@ -22,17 +22,7 @@ public actor ClaudeJSONLParser {
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
         var seenIDs: Set<String> = []
         var warnings: [ProviderWarning] = []
-
-        let referenceDate = now()
-        let todayStart = calendar.startOfDay(for: referenceDate)
-        let weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
-        let monthStart = calendar.date(byAdding: .month, value: -1, to: todayStart) ?? todayStart
-
-        var today = emptyUsage
-        var week = emptyUsage
-        var month = emptyUsage
-        var lifetime = emptyUsage
-        var dailyTotals: [Date: Int] = [:]
+        var windows = UsageWindows(calendar: calendar, referenceDate: now())
 
         for source in logSources {
             do {
@@ -41,13 +31,7 @@ public actor ClaudeJSONLParser {
                         guard seenIDs.insert(key).inserted else { return }
                     }
                     let usage = record.toTokenUsage()
-                    lifetime = lifetime.merging(usage)
-                    if let ts = record.timestamp {
-                        if ts >= todayStart { today = today.merging(usage) }
-                        if ts >= weekStart { week = week.merging(usage) }
-                        if ts >= monthStart { month = month.merging(usage) }
-                        dailyTotals[calendar.startOfDay(for: ts), default: 0] += record.totalTokens
-                    }
+                    windows.accumulate(usage, timestamp: record.timestamp, dailyTotal: record.totalTokens)
                 }
                 if malformedCount > 0 {
                     warnings.append(ProviderWarning(
@@ -63,17 +47,14 @@ public actor ClaudeJSONLParser {
             }
         }
 
-        return AggregateUsage(today: today, week: week, month: month, lifetime: lifetime, dailyTotals: dailyTotals, warnings: warnings)
-    }
-
-    private var emptyUsage: TokenUsage {
-        TokenUsage(
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            reasoningTokens: 0,
-            confidence: .localParsed
+        let snapshot = windows.snapshot()
+        return AggregateUsage(
+            today: snapshot.today,
+            week: snapshot.week,
+            month: snapshot.month,
+            lifetime: snapshot.lifetime,
+            dailyTotals: snapshot.dailyTotals,
+            warnings: warnings
         )
     }
 }
