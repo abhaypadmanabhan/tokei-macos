@@ -70,3 +70,11 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Stubbed/skipped: Left Cursor and Antigravity snapshots unavailable/non-interactive per leg requirements.
 - Tests: 48 passing
 - Watch out: Sidebar selection via ↑/↓ keys requires focus to be active on the dashboard.
+
+### Leg 4 — Kimi — 2026-07-06
+- Merged: TBD ("Merge relay/04-kimi: quota notifications, real Settings, docs")
+- Done: Implemented `NotificationEngine` with 80%/95% quota thresholds, no-spam re-arm logic (resetAt-based + percent-drop), UserDefaults-persisted armed state, lazy UNUserNotificationCenter authorization, and injectable clock/notification-center fakes. Wired one-line hook into `SyncEngine.refreshAll()`. Made Settings real with a "QUOTA ALERTS" toggle bound to `notificationsEnabled`, threshold text, and preserved Padzy styling. Refreshed README and roadmap to reflect legs 1–4.
+- Stubbed/skipped: Per-provider threshold overrides, custom notification body overrides, and extended settings polish deferred.
+- Tests: 59 passing (48 previous + 11 new notification tests).
+- Watch out: Real Codex windows are ~29% session / ~38% weekly on this machine, so live 80%/95% fires will be exercised later; UNUserNotificationCenter wrapper is `@unchecked Sendable` due to singleton usage.
+
