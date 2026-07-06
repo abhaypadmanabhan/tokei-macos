@@ -3,14 +3,78 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
-            Text("General settings placeholder")
-                .tabItem { Label("General", systemImage: "gear") }
-            Text("Providers settings placeholder")
-                .tabItem { Label("Providers", systemImage: "externaldrive") }
-            Text("Notifications settings placeholder")
-                .tabItem { Label("Notifications", systemImage: "bell") }
+            GeneralSettingsTab()
+                .tabItem {
+                    Label("GENERAL", systemImage: "slider.horizontal.3")
+                }
+            
+            AboutSettingsTab()
+                .tabItem {
+                    Label("ABOUT", systemImage: "info.circle")
+                }
         }
-        .padding()
-        .frame(width: 480, height: 320)
+        .padding(20)
+        .frame(width: 420, height: 260)
+        .background(PadzyTheme.ground)
+    }
+}
+
+private struct GeneralSettingsTab: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            EditorialKicker(number: "01", title: "REFRESH INTERVAL")
+            
+            VStack(alignment: .leading, spacing: 8) {
+                Text("AUTOMATIC BACKGROUND SYNC")
+                    .font(.display(size: 12, weight: .bold))
+                    .foregroundColor(PadzyTheme.ink)
+                
+                Text("INTERVAL: 15 MINUTES (DEFAULT)")
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                
+                Text("Usage snapshots are compiled from local project log streams automatically in the background.")
+                    .font(.system(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(nil)
+            }
+            .padding(12)
+            .background(PadzyTheme.surface)
+            .border(PadzyTheme.muted.opacity(0.3), width: 1)
+            
+            Spacer()
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+private struct AboutSettingsTab: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            EditorialKicker(number: "02", title: "METADATA")
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text("AI USAGE DASHBOARD")
+                    .font(.display(size: 16, weight: .black))
+                    .foregroundColor(PadzyTheme.ink)
+                
+                Text("VERSION 1.0.0 (MVP)")
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.accent)
+                
+                HairlineDivider()
+                    .padding(.vertical, 4)
+                
+                Text("Designed under Padzy OS design system constraints (cool dark, signal pink).")
+                    .font(.system(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+            }
+            .padding(12)
+            .background(PadzyTheme.surface)
+            .border(PadzyTheme.muted.opacity(0.3), width: 1)
+            
+            Spacer()
+        }
+        .padding(.vertical, 8)
     }
 }

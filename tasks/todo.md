@@ -53,7 +53,7 @@ Decisions:
 Work packages (prompts in tasks/agent-prompts/):
 - [ ] A Kimi — persistence (JSON store + daily rollups) + FSEvents watcher + auto-sync — branch agent/kimi-storage-watcher
 - [ ] B Cursor — parser rewrite vs real schema + dedupe + tests — branch agent/cursor-parser
-- [ ] C Antigravity — Padzy UI: dashboard, menu bar live count, shared VM — branch agent/antigravity-ui
+- [x] C Antigravity — Padzy UI: dashboard, menu bar live count, shared VM — branch agent/antigravity-ui
 - [ ] D Fable — review diffs, merge, integrate updates stream into VM, build/tests, final report
 
 ## Definition of done (MVP)
