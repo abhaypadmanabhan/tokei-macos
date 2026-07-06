@@ -4,258 +4,285 @@ import AIUsageDashboardCore
 struct DashboardView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    
+
     @State private var pulseOpacity: Double = 1.0
-    
-    private let timeFormatter: DateFormatter = {
+
+    private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
-    
+
     private var isClaudeInstalled: Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let claudeDir = home.appendingPathComponent(".claude", isDirectory: true)
         return FileManager.default.fileExists(atPath: claudeDir.path)
     }
 
+    /// Daily totals sorted by day, most recent last, limited to the trailing `days`.
+    private func dailySeries(days: Int?) -> [Int] {
+        guard let totals = viewModel.claudeSnapshot?.dailyTotals, !totals.isEmpty else { return [] }
+        let sorted = totals.sorted { $0.key < $1.key }.map(\.value)
+        if let days, sorted.count > days { return Array(sorted.suffix(days)) }
+        return sorted
+    }
+
     var body: some View {
-        HStack(spacing: 0) {
-            // Sidebar (01 / PROVIDERS)
-            VStack(alignment: .leading, spacing: 16) {
-                EditorialKicker(number: "01", title: "PROVIDERS")
-                
-                VStack(spacing: 1) {
-                    // Claude Code: Available and Selected
-                    let claudeToday = viewModel.claudeSnapshot?.todayUsage
-                    ProviderCard(
-                        providerID: .claudeCode,
-                        displayName: "CLAUDE CODE",
-                        todayUsage: claudeToday,
-                        isSelected: true,
-                        isAvailable: true
-                    )
-                    
-                    HairlineDivider()
-                    
-                    // Other providers are unavailable
-                    ForEach(ProviderID.allCases.filter { $0 != .claudeCode }, id: \.self) { providerID in
-                        ProviderCard(
-                            providerID: providerID,
-                            displayName: providerID.rawValue.replacingOccurrences(of: "_", with: " "),
-                            todayUsage: nil,
-                            isSelected: false,
-                            isAvailable: false
-                        )
-                        HairlineDivider()
-                    }
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                sidebar
+                Rectangle()
+                    .fill(PadzyTheme.muted.opacity(0.3))
+                    .frame(width: 1)
+                if isClaudeInstalled {
+                    usagePane
+                } else {
+                    emptyState
                 }
-                
-                Spacer()
             }
-            .frame(width: 220)
-            .padding(.top, 20)
-            .padding(.horizontal, 16)
-            
-            // Exposed Hairline Divider
-            Rectangle()
-                .fill(PadzyTheme.muted.opacity(0.3))
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
-            
-            // Detail Area (02 / USAGE)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !isClaudeInstalled {
-                        // Empty/error state: no ~/.claude directory
-                        VStack(alignment: .leading, spacing: 16) {
-                            EditorialKicker(number: "02", title: "USAGE")
-                            
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("NO CLAUDE CODE DIRECTORY DETECTED")
-                                    .font(.display(size: 14, weight: .bold))
-                                    .foregroundColor(PadzyTheme.accent)
-                                
-                                Text("Expected location: ~/.claude")
-                                    .font(.mono(size: 11))
-                                    .foregroundColor(PadzyTheme.ink)
-                                
-                                Text("Please make sure Claude Code is installed and has been run at least once in your terminal to initialize session logs.")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(PadzyTheme.muted)
-                                    .lineLimit(nil)
-                            }
-                            .padding(16)
-                            .background(PadzyTheme.surface)
-                            .border(PadzyTheme.accent.opacity(0.4), width: 1)
-                        }
-                    } else {
-                        // Regular detail view
-                        HStack(alignment: .bottom) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                EditorialKicker(number: "02", title: "USAGE")
-                                
-                                Text("CLAUDE CODE")
-                                    .font(.display(size: 24, weight: .black))
-                                    .foregroundColor(PadzyTheme.ink)
-                            }
-                            
-                            Spacer()
-                            
-                            // Sync status bar
-                            HStack(spacing: 12) {
-                                // Sync indicator (accent tick that pulses when loading)
-                                if viewModel.isLoading {
-                                    Rectangle()
-                                        .fill(PadzyTheme.accent)
-                                        .frame(width: 6, height: 6)
-                                        .opacity(pulseOpacity)
-                                        .onAppear {
-                                            if !reduceMotion {
-                                                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                                                    pulseOpacity = 0.2
-                                                }
-                                            }
-                                        }
-                                } else {
-                                    // Solid static tick on bottom edge of status or just omitted when idle
-                                    Rectangle()
-                                        .fill(PadzyTheme.muted)
-                                        .frame(width: 6, height: 6)
-                                }
-                                
-                                // Last synced timestamp
-                                if let date = viewModel.lastSyncedAt {
-                                    Text("SYNCED: \(timeFormatter.string(from: date))")
-                                        .font(.mono(size: 10))
-                                        .foregroundColor(PadzyTheme.muted)
-                                } else {
-                                    Text("SYNCED: NEVER")
-                                        .font(.mono(size: 10))
-                                        .foregroundColor(PadzyTheme.muted)
-                                }
-                                
-                                // Refresh Button (CMD+R shortcut)
-                                Button(action: {
-                                    Task {
-                                        await viewModel.refresh()
-                                    }
-                                }) {
-                                    Text("REFRESH")
-                                        .font(.mono(size: 10))
-                                        .foregroundColor(PadzyTheme.accent)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.clear)
-                                        .border(PadzyTheme.accent, width: 1)
-                                }
-                                .buttonStyle(.plain)
-                                .keyboardShortcut("r", modifiers: .command)
-                                .disabled(viewModel.isLoading)
-                            }
-                            .padding(.bottom, 4)
-                        }
-                        
-                        // 2x2 grid of rolling window metrics
-                        let snapshot = viewModel.claudeSnapshot
-                        let columns = [
-                            GridItem(.flexible(), spacing: 12),
-                            GridItem(.flexible(), spacing: 12)
-                        ]
-                        
-                        LazyVGrid(columns: columns, spacing: 12) {
-                            MetricBlock(title: "TODAY", usage: snapshot?.todayUsage)
-                            MetricBlock(title: "7D ROLLING", usage: snapshot?.weekUsage)
-                            MetricBlock(title: "30D ROLLING", usage: snapshot?.monthUsage)
-                            MetricBlock(title: "LIFETIME", usage: snapshot?.lifetimeUsage)
-                        }
-                        
-                        // Warnings section if any exist
-                        if let warnings = snapshot?.warnings, !warnings.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                EditorialKicker(number: "03", title: "WARNINGS")
-                                
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(warnings) { warning in
-                                        HStack(alignment: .top, spacing: 8) {
-                                            Text("!!")
-                                                .font(.mono(size: 10))
-                                                .foregroundColor(PadzyTheme.accent)
-                                            Text(warning.message.uppercased())
-                                                .font(.mono(size: 10))
-                                                .foregroundColor(PadzyTheme.muted)
-                                                .lineLimit(nil)
-                                        }
-                                    }
-                                }
-                                .padding(12)
-                                .background(PadzyTheme.surface)
-                                .border(PadzyTheme.muted.opacity(0.3), width: 1)
-                            }
-                        }
-                    }
-                }
-                .padding(20)
-            }
+            statusStrip
         }
         .background(PadzyTheme.ground)
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 860, minHeight: 560)
         .task {
             viewModel.beginAutoSync()
             await viewModel.refresh()
         }
     }
-}
 
-private struct MetricBlock: View {
-    let title: String
-    let usage: TokenUsage?
+    // MARK: 01 / PROVIDERS
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.display(size: 11, weight: .bold))
-                    .foregroundColor(PadzyTheme.muted)
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            EditorialKicker(number: "01", title: "PROVIDERS")
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 16)
+            HairlineDivider()
 
-                Spacer()
+            providerRow(name: "CLAUDE CODE", selected: true, available: true)
+            HairlineDivider()
+            ForEach(ProviderID.allCases.filter { $0 != .claudeCode }, id: \.self) { providerID in
+                providerRow(
+                    name: providerID.rawValue.replacingOccurrences(of: "_", with: " ").uppercased(),
+                    selected: false,
+                    available: false
+                )
+                HairlineDivider()
+            }
+            Spacer()
+        }
+        .frame(width: 230)
+    }
 
-                if let usage = usage {
-                    ConfidenceBadge(confidence: usage.confidence)
+    private func providerRow(name: String, selected: Bool, available: Bool) -> some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(selected ? PadzyTheme.accent : Color.clear)
+                .frame(width: 2)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(name)
+                    .font(.display(size: 15, weight: selected ? .black : .bold))
+                    .foregroundColor(available ? PadzyTheme.ink : PadzyTheme.muted)
+                if !available {
+                    Text("UNAVAILABLE")
+                        .font(.mono(size: 9))
+                        .foregroundColor(PadzyTheme.muted.opacity(0.7))
                 }
             }
-
-            Text(TokenFormatter.format(usage?.totalTokens))
-                .font(.mono(size: 24))
-                .foregroundColor(PadzyTheme.ink)
-
-            VStack(alignment: .leading, spacing: 4) {
-                MetricRow(label: "INPUT", value: usage?.inputTokens)
-                MetricRow(label: "OUTPUT", value: usage?.outputTokens)
-                MetricRow(label: "CACHE READ", value: usage?.cacheReadTokens)
-                MetricRow(label: "CACHE WRITE", value: usage?.cacheCreationTokens)
-            }
-            .padding(.top, 4)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            Spacer()
         }
-        .padding(12)
-        .background(PadzyTheme.surface)
-        .border(PadzyTheme.muted.opacity(0.3), width: 1)
+        .background(selected ? PadzyTheme.surface : Color.clear)
+        .accessibilityElement(children: .combine)
     }
-}
 
-private struct MetricRow: View {
-    let label: String
-    let value: Int?
+    // MARK: 02 / USAGE
 
-    var body: some View {
-        HStack {
+    private var usagePane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                EditorialKicker(number: "02", title: "USAGE")
+                Spacer()
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("01 / TODAY")
+                    .font(.mono(size: 12))
+                    .tracking(12 * 0.04)
+                    .foregroundColor(PadzyTheme.muted)
+
+                Text(TokenFormatter.format(viewModel.claudeSnapshot?.todayUsage.totalTokens))
+                    .font(.display(size: 150, weight: .black))
+                    .foregroundColor(PadzyTheme.ink)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.25)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                usageBreakdown
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 20)
+
+            Spacer(minLength: 16)
+            HairlineDivider()
+
+            HStack(alignment: .top, spacing: 0) {
+                metricBlock(number: "02", title: "7D ROLLING",
+                            usage: viewModel.claudeSnapshot?.weekUsage, series: dailySeries(days: 7))
+                verticalHairline
+                metricBlock(number: "03", title: "30D ROLLING",
+                            usage: viewModel.claudeSnapshot?.monthUsage, series: dailySeries(days: 30))
+                verticalHairline
+                metricBlock(number: "04", title: "LIFETIME",
+                            usage: viewModel.claudeSnapshot?.lifetimeUsage, series: dailySeries(days: nil))
+            }
+            .frame(height: 168)
+        }
+    }
+
+    private var usageBreakdown: some View {
+        HStack(spacing: 24) {
+            breakdownItem("INPUT", viewModel.claudeSnapshot?.todayUsage.inputTokens)
+            breakdownItem("OUTPUT", viewModel.claudeSnapshot?.todayUsage.outputTokens)
+            breakdownItem("CACHE READ", viewModel.claudeSnapshot?.todayUsage.cacheReadTokens)
+            breakdownItem("CACHE WRITE", viewModel.claudeSnapshot?.todayUsage.cacheCreationTokens)
+            if let confidence = viewModel.claudeSnapshot?.todayUsage.confidence {
+                ConfidenceBadge(confidence: confidence)
+            }
+        }
+    }
+
+    private func breakdownItem(_ label: String, _ value: Int?) -> some View {
+        HStack(spacing: 6) {
             Text(label)
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.muted)
-            Spacer()
             Text(TokenFormatter.format(value))
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.ink)
         }
+    }
+
+    private var verticalHairline: some View {
+        Rectangle()
+            .fill(PadzyTheme.muted.opacity(0.3))
+            .frame(width: 1)
+    }
+
+    private func metricBlock(number: String, title: String, usage: TokenUsage?, series: [Int]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(number) / \(title)")
+                .font(.mono(size: 11))
+                .tracking(11 * 0.04)
+                .foregroundColor(PadzyTheme.muted)
+            Text(TokenFormatter.format(usage?.totalTokens))
+                .font(.display(size: 40, weight: .black))
+                .foregroundColor(PadzyTheme.ink)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Sparkline(values: series)
+                .frame(height: 44)
+                .accessibilityHidden(true)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: 03 / STATUS
+
+    private var statusStrip: some View {
+        VStack(spacing: 0) {
+            if let warnings = viewModel.claudeSnapshot?.warnings.filter({ $0.level != .info }), !warnings.isEmpty {
+                HairlineDivider()
+                HStack(spacing: 8) {
+                    Text("!!")
+                        .font(.mono(size: 10))
+                        .foregroundColor(PadzyTheme.accent)
+                    Text(warnings.map(\.message).joined(separator: "  ·  ").uppercased())
+                        .font(.mono(size: 10))
+                        .foregroundColor(PadzyTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            }
+            HairlineDivider()
+            HStack(spacing: 16) {
+                Text("03 / STATUS")
+                    .font(.mono(size: 11))
+                    .tracking(11 * 0.04)
+                    .foregroundColor(PadzyTheme.muted)
+
+                if viewModel.isLoading {
+                    Rectangle()
+                        .fill(PadzyTheme.accent)
+                        .frame(width: 6, height: 6)
+                        .opacity(pulseOpacity)
+                        .onAppear {
+                            if !reduceMotion {
+                                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                                    pulseOpacity = 0.2
+                                }
+                            }
+                        }
+                }
+
+                Text(statusLine)
+                    .font(.mono(size: 12))
+                    .foregroundColor(PadzyTheme.ink)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Button(action: { Task { await viewModel.refresh() } }) {
+                    Text("SYNC NOW")
+                        .font(.mono(size: 12))
+                        .foregroundColor(PadzyTheme.ground)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .background(PadzyTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(viewModel.isLoading)
+                .accessibilityLabel("Sync now")
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+        }
+    }
+
+    private var statusLine: String {
+        let synced = viewModel.lastSyncedAt.map { Self.timeFormatter.string(from: $0) } ?? "NEVER"
+        let confidence = viewModel.claudeSnapshot?.todayUsage.confidence.displayName.uppercased() ?? "—"
+        return "SYNCED \(synced)  ·  \(confidence)  ·  WATCHING ~/.claude"
+    }
+
+    // MARK: Empty state
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            EditorialKicker(number: "02", title: "USAGE")
+            Text("NO CLAUDE CODE DIRECTORY DETECTED")
+                .font(.display(size: 18, weight: .black))
+                .foregroundColor(PadzyTheme.ink)
+            Text("Expected location: ~/.claude")
+                .font(.mono(size: 12))
+                .foregroundColor(PadzyTheme.ink)
+            Text("Install Claude Code and run it once in your terminal to initialize session logs.")
+                .font(.system(size: 12))
+                .foregroundColor(PadzyTheme.muted)
+            Spacer()
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

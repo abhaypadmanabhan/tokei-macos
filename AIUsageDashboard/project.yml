@@ -38,13 +38,13 @@ targets:
       - path: AIUsageDashboardApp
         excludes:
           - Core
-          - Resources
     dependencies:
       - target: AIUsageDashboardCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard
-        INFOPLIST_KEY_CFBundleDisplayName: "AI Usage Dashboard"
+        PRODUCT_NAME: Tokei
+        PRODUCT_BUNDLE_IDENTIFIER: ai.padzy.tokei
+        INFOPLIST_KEY_CFBundleDisplayName: "Tokei"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     scheme: {}

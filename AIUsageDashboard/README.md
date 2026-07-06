@@ -1,6 +1,6 @@
-# AI Usage Dashboard
+# Tokei
 
-A local-first native macOS app for tracking AI coding tool usage across multiple providers.
+Tokei (formerly "AI Usage Dashboard") — a local-first native macOS app for tracking AI coding tool usage across multiple providers.
 
 ## Supported Providers (MVP)
 

@@ -76,7 +76,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             lifetimeUsage: usage.lifetime,
             costUsage: nil,
             warnings: warnings,
-            lastSyncedAt: Date()
+            lastSyncedAt: Date(),
+            dailyTotals: usage.dailyTotals
         )
     }
 

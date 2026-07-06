@@ -13,6 +13,8 @@ public struct ProviderSnapshot: Sendable, Identifiable {
     public let costUsage: CostUsage?
     public let warnings: [ProviderWarning]
     public let lastSyncedAt: Date?
+    /// Total tokens per calendar day (start-of-day key), when the provider can derive them.
+    public let dailyTotals: [Date: Int]?
 
     public init(
         providerID: ProviderID,
@@ -25,7 +27,8 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         lifetimeUsage: TokenUsage? = nil,
         costUsage: CostUsage? = nil,
         warnings: [ProviderWarning] = [],
-        lastSyncedAt: Date? = nil
+        lastSyncedAt: Date? = nil,
+        dailyTotals: [Date: Int]? = nil
     ) {
         self.providerID = providerID
         self.displayName = displayName
@@ -38,6 +41,7 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         self.costUsage = costUsage
         self.warnings = warnings
         self.lastSyncedAt = lastSyncedAt
+        self.dailyTotals = dailyTotals
     }
 }
 
