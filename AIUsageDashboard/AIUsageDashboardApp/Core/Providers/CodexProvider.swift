@@ -1,35 +1,96 @@
 import Foundation
 
-public actor CodexProvider: UsageProvider {
+public actor CodexProvider: UsageProvider, LocalLogProvider {
     public let id: ProviderID = .codex
     public let displayName: String = "OpenAI Codex"
-    public let capabilities: ProviderCapabilities = []
+    public let capabilities: ProviderCapabilities = [.localLog, .tokenUsage, .quota]
 
-    public init() {}
+    private let fileManager: FileManager
+    private let parser: CodexJSONLParser
+    private let codexDirectory: URL
+
+    public init(
+        fileManager: FileManager = .default,
+        parser: CodexJSONLParser = .init(),
+        codexDirectory: URL? = nil
+    ) {
+        self.fileManager = fileManager
+        self.parser = parser
+        self.codexDirectory = codexDirectory ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+    }
 
     public func detectAvailability() async -> ProviderAvailability {
-        // TODO: Detect ~/.codex directory or Codex auth/config.
-        .unknown
+        fileManager.fileExists(atPath: codexDirectory.path) ? .installed : .notInstalled
     }
 
     public func authenticate() async throws -> AuthStatus {
-        // TODO: Read ~/.codex/auth.json and validate token.
-        .unknown
+        let auth = codexDirectory.appendingPathComponent("auth.json")
+        return fileManager.fileExists(atPath: auth.path) ? .authenticated : .unauthenticated
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        ProviderSnapshot(
+        var warnings: [ProviderWarning] = []
+        let logs: [LogSource]
+        do {
+            logs = try await discoverLogSources()
+        } catch {
+            warnings.append(ProviderWarning(
+                message: "Failed to discover Codex logs: \(error.localizedDescription)",
+                level: .warning
+            ))
+            logs = []
+        }
+
+        let usage = await parser.parse(logSources: logs)
+        warnings.append(contentsOf: usage.warnings)
+        if logs.isEmpty {
+            warnings.append(ProviderWarning(message: "No Codex session logs found", level: .info))
+        }
+
+        return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
-            authStatus: .unknown,
-            quotaWindows: [],
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: nil,
-            lifetimeUsage: nil,
+            authStatus: try await authenticate(),
+            quotaWindows: usage.quotaWindows,
+            todayUsage: usage.today,
+            weekUsage: usage.week,
+            monthUsage: usage.month,
+            lifetimeUsage: usage.lifetime,
             costUsage: nil,
-            warnings: [ProviderWarning(message: "Codex provider not yet implemented", level: .info)],
-            lastSyncedAt: Date()
+            warnings: warnings,
+            lastSyncedAt: Date(),
+            dailyTotals: usage.dailyTotals
         )
+    }
+
+    public func discoverLogSources() async throws -> [LogSource] {
+        let sessionsDirectory = codexDirectory.appendingPathComponent("sessions", isDirectory: true)
+        guard fileManager.fileExists(atPath: sessionsDirectory.path) else {
+            return []
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: sessionsDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        var sources: [LogSource] = []
+        while let file = enumerator.nextObject() as? URL {
+            guard file.pathExtension == "jsonl" else { continue }
+            let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+            guard values?.isRegularFile != false else { continue }
+            sources.append(LogSource(
+                providerID: id,
+                url: file,
+                sessionID: file.deletingPathExtension().lastPathComponent,
+                lastModified: values?.contentModificationDate
+            ))
+        }
+
+        return sources.sorted { $0.url.path < $1.url.path }
     }
 }
