@@ -51,10 +51,8 @@ struct DashboardView: View {
         .onMoveCommand { direction in
             switch direction {
             case .up:
-                viewModel.showingSettings = false
                 viewModel.selectPreviousProvider()
             case .down:
-                viewModel.showingSettings = false
                 viewModel.selectNextProvider()
             default:
                 break
@@ -87,7 +85,6 @@ struct DashboardView: View {
                 Button(action: {
                     if isAvailable {
                         viewModel.selectedProvider = providerID
-                        viewModel.showingSettings = false
                     }
                 }) {
                     ProviderCard(
@@ -124,7 +121,7 @@ struct DashboardView: View {
                         .font(.display(size: 13, weight: .bold))
                         .foregroundColor(viewModel.showingSettings ? PadzyTheme.ink : PadzyTheme.muted)
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 10)
                     Spacer(minLength: 0)
                 }
                 .background(viewModel.showingSettings ? PadzyTheme.surface : Color.clear)

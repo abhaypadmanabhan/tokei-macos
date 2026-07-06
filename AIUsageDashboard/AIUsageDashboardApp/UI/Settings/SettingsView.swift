@@ -6,9 +6,9 @@ import SwiftUI
 struct SettingsPane: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
 
-    private var appVersion: String {
+    // Bundle version can't change at runtime — compute once.
+    private static let appVersion: String =
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-    }
 
     var body: some View {
         ScrollView {
@@ -63,7 +63,7 @@ struct SettingsPane: View {
                             .font(.display(size: 16, weight: .black))
                             .foregroundColor(PadzyTheme.ink)
 
-                        Text("LOCAL-FIRST AI USAGE  ·  v\(appVersion)")
+                        Text("LOCAL-FIRST AI USAGE  ·  v\(Self.appVersion)")
                             .font(.mono(size: 11))
                             .foregroundColor(PadzyTheme.muted)
 

@@ -57,8 +57,8 @@ public enum CodexPricing {
     }
 
     /// Resolves a rate for `model`, tolerating slugs newer than this table:
-    /// 1. exact match; 2. match after stripping a `-codex` variant suffix; 3. the
-    /// longest table key that is a dash/dot-delimited prefix of the slug — so a new
+    /// 1. exact match; 2. the longest table key that is a dash/dot-delimited prefix of
+    /// the slug (with any trailing `-codex` variant suffix removed first) — so a new
     /// minor like `gpt-5.5` or `gpt-5.3-codex` prices under the verified `gpt-5` base
     /// rate. This is a deliberate approximation (surfaced as `.estimated`): a newer
     /// minor may be repriced, but anchoring to its base family beats showing nothing.
@@ -68,9 +68,9 @@ public enum CodexPricing {
         if let rate = rates[slug] { return rate }
 
         let stripped: String = slug.hasSuffix("-codex") ? String(slug.dropLast("-codex".count)) : slug
-        if stripped != slug, let rate = rates[stripped] { return rate }
 
         // Longest key that is a boundary-aligned prefix of the slug (next char is - or .).
+        // Subsumes an exact match on `stripped` (a key == stripped is its own longest prefix).
         var bestKey: String?
         for key in rates.keys {
             let matches = stripped == key

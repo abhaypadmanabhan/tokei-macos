@@ -7,7 +7,11 @@ public final class DashboardViewModel: ObservableObject {
     @Published public var isLoading = false
     @Published public var errorMessage: String?
     @Published public var lastSyncedAt: Date?
-    @Published public var selectedProvider: ProviderID = .claudeCode
+    /// Selecting any provider always exits the Settings pane (they are one right-pane
+    /// selection), so the invariant lives here rather than at every call site.
+    @Published public var selectedProvider: ProviderID = .claudeCode {
+        didSet { showingSettings = false }
+    }
     /// When true the dashboard's right pane shows the in-app Settings surface instead
     /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
     @Published public var showingSettings = false
