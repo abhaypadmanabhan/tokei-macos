@@ -2,9 +2,13 @@ import Foundation
 
 public actor FileWatcher {
     public static let shared = FileWatcher()
-    public static let defaultWatchPath: URL = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent(".claude/projects", isDirectory: true)
+    public static let defaultWatchPaths: [URL] = [
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects", isDirectory: true),
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions", isDirectory: true)
+    ]
+    public static let defaultWatchPath: URL = defaultWatchPaths[0]
 
     public struct Event: Sendable, Equatable {
         public let path: String
@@ -14,7 +18,7 @@ public actor FileWatcher {
         }
     }
 
-    private let watchedURL: URL
+    private let watchedURLs: [URL]
     private let debounceInterval: TimeInterval
     private var stream: FSEventStreamRef?
     private var context: Unmanaged<FileWatcherContext>?
@@ -22,14 +26,18 @@ public actor FileWatcher {
     private var eventContinuation: AsyncStream<Event>.Continuation
     private var eventStream: AsyncStream<Event>
 
-    public init(path: URL = defaultWatchPath, debounceInterval: TimeInterval = 2.0) {
-        self.watchedURL = path
+    public init(paths: [URL] = defaultWatchPaths, debounceInterval: TimeInterval = 2.0) {
+        self.watchedURLs = paths
         self.debounceInterval = debounceInterval
         var continuation: AsyncStream<Event>.Continuation!
         self.eventStream = AsyncStream { cont in
             continuation = cont
         }
         self.eventContinuation = continuation
+    }
+
+    public init(path: URL, debounceInterval: TimeInterval = 2.0) {
+        self.init(paths: [path], debounceInterval: debounceInterval)
     }
 
     public var events: AsyncStream<Event> {
@@ -47,7 +55,7 @@ public actor FileWatcher {
         }
         self.context = Unmanaged.passRetained(context)
 
-        let paths = [watchedURL.path as NSString] as CFArray
+        let paths = watchedURLs.map { $0.path as NSString } as CFArray
         var callbackContext = FSEventStreamContext(
             version: 0,
             info: self.context?.toOpaque(),
@@ -102,7 +110,7 @@ public actor FileWatcher {
     }
 
     private func emitChange() {
-        eventContinuation.yield(Event(path: watchedURL.path))
+        eventContinuation.yield(Event(path: watchedURLs.first?.path ?? ""))
     }
 }
 
