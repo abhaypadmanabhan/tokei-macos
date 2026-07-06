@@ -5,15 +5,23 @@ public actor CursorProvider: UsageProvider {
     public let displayName: String = "Cursor"
     public let capabilities: ProviderCapabilities = []
 
-    public init() {}
+    private let fileManager: FileManager
+    private let stateDatabaseURL: URL
+
+    public init(
+        fileManager: FileManager = .default,
+        stateDatabaseURL: URL? = nil
+    ) {
+        self.fileManager = fileManager
+        self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+    }
 
     public func detectAvailability() async -> ProviderAvailability {
-        // TODO: Detect Cursor state.vscdb.
-        .unknown
+        fileManager.fileExists(atPath: stateDatabaseURL.path) ? .installed : .notInstalled
     }
 
     public func authenticate() async throws -> AuthStatus {
-        // TODO: Read cursorAuth/accessToken from state.vscdb.
         .unknown
     }
 
@@ -21,25 +29,17 @@ public actor CursorProvider: UsageProvider {
         ProviderSnapshot(
             providerID: id,
             displayName: displayName,
-            authStatus: .unknown,
-            quotaWindows: [
-                QuotaWindow(
-                    providerID: id,
-                    type: .monthly,
-                    used: nil,
-                    limit: nil,
-                    remaining: nil,
-                    resetAt: nil,
-                    confidence: .unavailable,
-                    source: "Cursor monthly budget not yet available"
-                )
-            ],
+            authStatus: try await authenticate(),
+            quotaWindows: [],
             todayUsage: .unavailable,
             weekUsage: .unavailable,
             monthUsage: nil,
             lifetimeUsage: nil,
             costUsage: nil,
-            warnings: [ProviderWarning(message: "Cursor provider not yet implemented; monthly-budget model only", level: .info)],
+            warnings: [ProviderWarning(
+                message: "Cursor metrics require dashboard auth (post-MVP)",
+                level: .info
+            )],
             lastSyncedAt: Date()
         )
     }
