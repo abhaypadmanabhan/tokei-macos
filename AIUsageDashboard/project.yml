@@ -29,7 +29,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.Core
         SWIFT_STRICT_CONCURRENCY: complete
-        CODE_SIGN_IDENTITY: ""
+        CODE_SIGN_IDENTITY: "-"
     scheme:
       testTargets:
         - AIUsageDashboardCoreTests
