@@ -62,18 +62,19 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 ## What Works (MVP, verified 2026-07-06)
 
 - **Claude Code** tracking end-to-end from local JSONL (`~/.claude/projects`): real schema, dedupe by `message.id`/`requestId`/`uuid`, fractional-second ISO8601 timestamps, malformed-line warnings. Verified against an independent baseline (<0.1% divergence).
-- **OpenAI Codex** adapter reads `~/.codex/sessions/**/*.jsonl` and reports real token windows plus session/weekly quota windows with reset times.
+- **OpenAI Codex** adapter reads `~/.codex/sessions/**/*.jsonl` and reports real token windows plus session/weekly quota windows with reset times, plus an **estimated USD cost** (static per-model pricing table, `.estimated` confidence; unknown model slugs yield no cost, never a guessed number).
 - **Cline / Cline Pass** adapter reads `~/.cline/data/sessions/*/*.messages.json`, reports lifetime tokens and dollar cost.
 - **Multi-provider dashboard** with dynamic provider selection, quota gauges, visual hairline meters, >90% warning indicators, and live countdown timers.
 - **Menu bar extra** with summed today total and dense per-provider rows.
 - **Auto-refresh**: FSEvents watcher on provider log directories, 2 s debounce → SyncEngine → AsyncStream → shared view model. Manual refresh via ⌘R.
 - **Persistence**: `~/Library/Application Support/AIUsageDashboard/usage-store.json` (snapshots + per-day rollups that survive log rotation).
 - **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
-- 48+ unit tests green, incl. real-logs smoke tests (skip on machines without logs).
+- **Cursor** local read layer reads `state.vscdb` (SQLite) via a read-only temp copy, excluding secret/auth rows, and surfaces real token windows at `.localParsed` confidence **when Cursor writes token-count rows locally**; otherwise falls back honestly to unavailable with an info warning. No network, no cookie/dashboard auth.
+- 67 unit tests green, incl. real-logs smoke tests (skip on machines without logs).
 
 ## What Is Stubbed (post-MVP)
 
-- **Cursor** detection (`state.vscdb` presence) is implemented; metrics and quota remain unavailable.
+- **Cursor** token metrics are unavailable on machines where Cursor stores only local code-line stats (no token counters in `state.vscdb`) — the read layer is in place and will light up if/when those rows exist. Quota/cost and the dashboard-API (cookie) path remain out.
 - **Antigravity** remains a non-interactive skeleton pending data-source research.
 - WidgetKit target deferred (source exists, not in `project.yml`).
 - App icon and additional settings functionality minimal.
