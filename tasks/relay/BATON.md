@@ -58,7 +58,7 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Watch out: Codex real-log smoke saw 1 malformed-line warning skipped; latest smoke printed 39 files, 139,497,475 delta tokens vs 138,915,496 final-session tokens (~0.42% diff), session quota 18%, weekly quota 36%.
 
 ### Leg 2 — Cursor — 2026-07-06
-- Merged: (pending merge commit) ("Implement Cline usage provider and Cursor detection.")
+- Merged: 4bdc594 ("Merge relay/02-cursor: Cline provider and Cursor detection.")
 - Done: Real `ClineProvider` from `~/.cline/data/sessions/*/*.messages.json` with token windows via shared `UsageWindows`, lifetime dollar cost in `CostUsage`, message dedupe by `id`, and `FileWatcher` path for Cline sessions. `CursorProvider` detects install via `state.vscdb` presence only; metrics stay unavailable with post-MVP warning.
 - Stubbed/skipped: Cline credits quota and auth (no cline.bot API); Cursor metrics/SQLite; `~/.cline/db/` ignored.
 - Tests: 47 passing
