@@ -7,14 +7,17 @@ public actor CursorProvider: UsageProvider {
 
     private let fileManager: FileManager
     private let stateDatabaseURL: URL
+    private let parser: CursorStateDBParser
 
     public init(
         fileManager: FileManager = .default,
-        stateDatabaseURL: URL? = nil
+        stateDatabaseURL: URL? = nil,
+        parser: CursorStateDBParser = .init()
     ) {
         self.fileManager = fileManager
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+        self.parser = parser
     }
 
     public func detectAvailability() async -> ProviderAvailability {
@@ -26,21 +29,21 @@ public actor CursorProvider: UsageProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        ProviderSnapshot(
+        let usage = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+
+        return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
             authStatus: try await authenticate(),
             quotaWindows: [],
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: nil,
-            lifetimeUsage: nil,
+            todayUsage: usage.today,
+            weekUsage: usage.week,
+            monthUsage: usage.month,
+            lifetimeUsage: usage.lifetime,
             costUsage: nil,
-            warnings: [ProviderWarning(
-                message: "Cursor metrics require dashboard auth (post-MVP)",
-                level: .info
-            )],
-            lastSyncedAt: Date()
+            warnings: usage.warnings,
+            lastSyncedAt: Date(),
+            dailyTotals: usage.dailyTotals.isEmpty ? nil : usage.dailyTotals
         )
     }
 }
