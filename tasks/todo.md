@@ -51,15 +51,26 @@ Decisions:
   see AIUsageDashboard/docs/07-padzy-theme.md.
 
 Work packages (prompts in tasks/agent-prompts/):
-- [ ] A Kimi — persistence (JSON store + daily rollups) + FSEvents watcher + auto-sync — branch agent/kimi-storage-watcher
-- [ ] B Cursor — parser rewrite vs real schema + dedupe + tests — branch agent/cursor-parser
+- [x] A Kimi — persistence (JSON store + daily rollups) + FSEvents watcher + auto-sync — branch agent/kimi-storage-watcher
+- [x] B Cursor — parser rewrite vs real schema + dedupe + tests — branch agent/cursor-parser
 - [x] C Antigravity — Padzy UI: dashboard, menu bar live count, shared VM — branch agent/antigravity-ui
-- [ ] D Fable — review diffs, merge, integrate updates stream into VM, build/tests, final report
+- [x] D Fable — review diffs, merge, integrate updates stream into VM, build/tests, final report
 
-## Definition of done (MVP)
-- Claude tokens correct vs ccusage-style dedupe baseline (±1%)
-- Dashboard: today/7D/30D/lifetime + confidence labels; other providers marked unavailable
-- Menu bar: live today total + sync status
-- Auto-refresh on ~/.claude/projects changes (debounced) + manual ⌘R
-- History persisted to Application Support (survives log rotation)
-- Build + all tests green
+## Definition of done (MVP) — ALL MET 2026-07-06
+- [x] Claude tokens correct vs independent dedupe baseline (<0.1% divergence; delta = live log growth between runs)
+- [x] Dashboard: today/7D/30D/lifetime + confidence labels; other providers marked unavailable (screenshot-verified)
+- [x] Menu bar: live today total (⌾ 20.9M observed) + sync status
+- [x] Auto-refresh on ~/.claude/projects changes (observed: SYNCED advanced + TODAY grew with no manual refresh)
+- [x] History persisted to Application Support (usage-store.json written on first run)
+- [x] Build + all 27 tests green
+
+Integration fixes by Fable post-merge:
+- .DS_Store in ~/.claude/projects crashed log discovery (caught by new real-logs smoke test) → skip non-directories
+- Daily rollup stored lifetime-cumulative → changed to per-day todayUsage (lifetime shrinks on log rotation)
+- Wired SyncEngine.updates AsyncStream + startAutoSync into DashboardViewModel (beginAutoSync, idempotent)
+- Deleted unreferenced .jsonl fixtures; added RealLogsSmokeTests
+
+Known limitations (accepted for MVP):
+- SyncEngine stopAutoSync→startAutoSync cycle dead (AsyncStream terminates on cancel); app starts auto-sync once at launch
+- updates stream single-consumer (the shared view model)
+- Padzy theme "aitracker" still pending Abhay confirmation

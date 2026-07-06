@@ -93,5 +93,11 @@ struct MenuBarView: View {
         .padding(16)
         .frame(width: 250)
         .background(PadzyTheme.ground)
+        .task {
+            viewModel.beginAutoSync()
+            if viewModel.lastSyncedAt == nil {
+                await viewModel.refresh()
+            }
+        }
     }
 }
