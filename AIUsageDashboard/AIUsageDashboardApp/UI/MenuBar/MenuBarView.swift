@@ -17,7 +17,9 @@ struct MenuBarView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 let activeSnapshots = ProviderID.allCases.compactMap { providerID -> ProviderSnapshot? in
-                    guard viewModel.isAvailable(providerID), let snapshot = viewModel.snapshot(for: providerID) else { return nil }
+                    guard !ProviderVisibility.isHidden(providerID),
+                          viewModel.isAvailable(providerID),
+                          let snapshot = viewModel.snapshot(for: providerID) else { return nil }
                     return snapshot
                 }
 

@@ -25,6 +25,26 @@ struct DashboardView: View {
         viewModel.snapshot(for: viewModel.selectedProvider)
     }
 
+    private var capabilityTier: ProviderCapabilityTier {
+        ProviderCapabilityTier.classify(selectedSnapshot)
+    }
+
+    /// Advances selection, skipping hidden providers. Bounded by the provider
+    /// count so an all-hidden state can never loop forever.
+    private func selectNextVisible() {
+        for _ in ProviderID.allCases {
+            viewModel.selectNextProvider()
+            if !ProviderVisibility.isHidden(viewModel.selectedProvider) { break }
+        }
+    }
+
+    private func selectPreviousVisible() {
+        for _ in ProviderID.allCases {
+            viewModel.selectPreviousProvider()
+            if !ProviderVisibility.isHidden(viewModel.selectedProvider) { break }
+        }
+    }
+
     /// Daily totals sorted by day, most recent last, limited to the trailing `days`.
     private func dailySeries(days: Int?) -> [Int] {
         guard let totals = selectedSnapshot?.dailyTotals, !totals.isEmpty else { return [] }
@@ -51,9 +71,9 @@ struct DashboardView: View {
         .onMoveCommand { direction in
             switch direction {
             case .up:
-                viewModel.selectPreviousProvider()
+                selectPreviousVisible()
             case .down:
-                viewModel.selectNextProvider()
+                selectNextVisible()
             default:
                 break
             }
@@ -78,28 +98,7 @@ struct DashboardView: View {
             HairlineDivider()
 
             ForEach(ProviderID.allCases, id: \.self) { providerID in
-                let isSelected = viewModel.selectedProvider == providerID
-                let isAvailable = viewModel.isAvailable(providerID)
-                let snapshot = viewModel.snapshot(for: providerID)
-
-                Button(action: {
-                    if isAvailable {
-                        viewModel.selectedProvider = providerID
-                    }
-                }) {
-                    ProviderCard(
-                        providerID: providerID,
-                        displayName: snapshot?.displayName ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").uppercased(),
-                        todayUsage: snapshot?.todayUsage,
-                        isSelected: isSelected,
-                        isAvailable: isAvailable
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(!isAvailable)
-                .accessibilityAddTraits(.isButton)
-
-                HairlineDivider()
+                SidebarProviderRow(providerID: providerID)
             }
             Spacer(minLength: 0)
             settingsSidebarRow
@@ -135,7 +134,9 @@ struct DashboardView: View {
     // MARK: 02 / USAGE
 
     /// True when the selected provider has any real signal to render (tokens in
-    /// any window, an active quota, or a cost). Drives the empty state.
+    /// any window, an active quota, a cost, a plan/tier signal, or a daily-total
+    /// bonus stat like Cursor's accepted lines). Drives the empty state — a
+    /// provider that's merely `.planOnly` still has something honest to show.
     private var selectedHasData: Bool {
         guard let snapshot = selectedSnapshot else { return false }
         let tokenTotals = [snapshot.todayUsage.totalTokens, snapshot.weekUsage.totalTokens,
@@ -144,7 +145,20 @@ struct DashboardView: View {
         if tokenTotals.contains(where: { $0 > 0 }) { return true }
         if snapshot.quotaWindows.contains(where: { $0.confidence != .unavailable }) { return true }
         if snapshot.costUsage?.amount != nil { return true }
+        if ProviderMetadata.planText(from: snapshot.warnings) != nil { return true }
+        if let totals = snapshot.dailyTotals, !totals.isEmpty { return true }
         return false
+    }
+
+    /// One mono line disclosing the capability tier + the exact local path(s)
+    /// Tokei reads for this provider. Shared by the loaded and plan-only surfaces
+    /// so the disclosure never depends on which branch rendered.
+    private func sourceDisclosureLine(providerID: ProviderID, tier: ProviderCapabilityTier) -> some View {
+        Text("\(tier.label)  ·  \(ProviderMetadata.localPaths(for: providerID).joined(separator: ", "))")
+            .font(.mono(size: 10))
+            .foregroundColor(PadzyTheme.muted)
+            .lineLimit(1)
+            .truncationMode(.middle)
     }
 
     /// Provider-detail surface: resolves to error → tailored empty (Claude not
@@ -171,11 +185,79 @@ struct DashboardView: View {
                 kicker: ("02", "USAGE"),
                 kind: .empty(
                     headline: "No usage data",
-                    hint: "No local session logs found for this provider yet. Run it once, then use Sync Now below."
+                    hint: "No data yet at \(ProviderMetadata.localPaths(for: viewModel.selectedProvider).joined(separator: ", ")). Run it once, then use Sync Now below."
                 )
             )
+        } else if capabilityTier == .planOnly {
+            capabilityPane
         } else {
             usagePane
+        }
+    }
+
+    /// Honest surface for a provider that has a plan/quota/cost signal but no
+    /// token-usage data locally (e.g. Cursor offline, Antigravity). Never shows
+    /// the big TODAY hero, since token counts are genuinely unavailable here —
+    /// showing "0" would read as real zero usage instead of "not measured."
+    private var capabilityPane: some View {
+        let providerID = viewModel.selectedProvider
+        let snapshot = selectedSnapshot
+        let plan = snapshot.flatMap { ProviderMetadata.planText(from: $0.warnings) }
+        let creditsWindow = snapshot?.quotaWindows.first { $0.type == .credits }
+        let acceptedLinesToday = providerID == .cursor ? snapshot?.dailyTotals?[DateHelpers.startOfToday()] : nil
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                EditorialKicker(number: "02", title: "USAGE")
+                Spacer()
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+
+            sourceDisclosureLine(providerID: providerID, tier: .planOnly)
+                .padding(.horizontal, 28)
+                .padding(.top, 8)
+
+            VStack(alignment: .leading, spacing: 16) {
+                if let plan {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PLAN")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                        Text(plan.uppercased())
+                            .font(.display(size: 20, weight: .black))
+                            .foregroundColor(PadzyTheme.ink)
+                    }
+                }
+
+                if let acceptedLinesToday {
+                    breakdownItem("ACCEPTED LINES TODAY", acceptedLinesToday)
+                }
+
+                if let creditsWindow {
+                    quotaGaugeRow(creditsWindow)
+                }
+
+                Text("TOKEN USAGE UNAVAILABLE LOCALLY")
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+
+                if providerID == .cursor {
+                    Button(action: { viewModel.showingSettings = true }) {
+                        Text("ENABLE ONLINE IN SETTINGS")
+                            .font(.mono(size: 12))
+                            .foregroundColor(PadzyTheme.ground)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(PadzyTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 20)
+
+            Spacer(minLength: 16)
         }
     }
 
@@ -187,6 +269,10 @@ struct DashboardView: View {
             }
             .padding(.horizontal, 28)
             .padding(.top, 24)
+
+            sourceDisclosureLine(providerID: viewModel.selectedProvider, tier: .fullMetrics)
+                .padding(.horizontal, 28)
+                .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("01 / TODAY")
@@ -494,14 +580,7 @@ struct DashboardView: View {
     private var statusLine: String {
         let synced = viewModel.lastSyncedAt.map { Self.timeFormatter.string(from: $0) } ?? "NEVER"
         let confidence = selectedSnapshot?.todayUsage.confidence.displayName.uppercased() ?? "—"
-        let pathName: String
-        switch viewModel.selectedProvider {
-        case .claudeCode: pathName = "~/.claude"
-        case .codex: pathName = "~/.codex"
-        case .cursor: pathName = "~/.cursor"
-        case .antigravity: pathName = "~/.antigravity"
-        case .cline: pathName = "~/.cline"
-        }
+        let pathName = ProviderMetadata.localPaths(for: viewModel.selectedProvider).first ?? "—"
         return "SYNCED \(synced)  ·  \(confidence)  ·  WATCHING \(pathName)"
     }
 
@@ -523,5 +602,47 @@ struct DashboardView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One sidebar entry, gated by the per-provider hide toggle (Settings). Holds its
+/// own `@AppStorage` so hiding/showing a provider updates the sidebar instantly.
+private struct SidebarProviderRow: View {
+    let providerID: ProviderID
+    @EnvironmentObject private var viewModel: DashboardViewModel
+    @AppStorage private var isHidden: Bool
+
+    init(providerID: ProviderID) {
+        self.providerID = providerID
+        _isHidden = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
+    }
+
+    var body: some View {
+        if !isHidden {
+            let isSelected = viewModel.selectedProvider == providerID
+            let isAvailable = viewModel.isAvailable(providerID)
+            let snapshot = viewModel.snapshot(for: providerID)
+            let tier = ProviderCapabilityTier.classify(snapshot)
+
+            Button(action: {
+                if isAvailable {
+                    viewModel.selectedProvider = providerID
+                }
+            }) {
+                ProviderCard(
+                    providerID: providerID,
+                    displayName: snapshot?.displayName ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").uppercased(),
+                    todayUsage: snapshot?.todayUsage,
+                    tier: tier,
+                    isSelected: isSelected,
+                    isAvailable: isAvailable
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!isAvailable)
+            .accessibilityAddTraits(.isButton)
+
+            HairlineDivider()
+        }
     }
 }
