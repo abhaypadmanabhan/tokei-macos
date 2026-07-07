@@ -10,6 +10,9 @@ struct SettingsPane: View {
     /// this is the one sanctioned switch for the network-usage path (Bible §"WP-2 · B").
     /// Default OFF: Cursor never makes a network request unless the user opts in here.
     @AppStorage("cursorNetworkUsageEnabled") private var cursorNetworkUsageEnabled = false
+    /// Read by the Antigravity connector directly, mirroring the Cursor switch above.
+    /// Default OFF: no local RPC call to the running Antigravity app unless opted in.
+    @AppStorage("antigravityOnlineQuotaEnabled") private var antigravityOnlineQuotaEnabled = false
 
     /// Same environment view model as the dashboard (SettingsPane renders inside it),
     /// so toggling a data-source setting can immediately re-run the providers.
@@ -66,6 +69,25 @@ struct SettingsPane: View {
                         }
 
                         Text("Makes an authenticated request to Cursor's servers using your local session token to fetch real token/quota usage. Off by default — Cursor otherwise reports plan/tier and accepted-lines from local data only, with no network access.")
+                            .font(.system(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HairlineDivider()
+                            .padding(.vertical, 8)
+
+                        Toggle(isOn: $antigravityOnlineQuotaEnabled) {
+                            Text("ANTIGRAVITY: FETCH QUOTA ONLINE")
+                                .font(.display(size: 12, weight: .bold))
+                                .foregroundColor(PadzyTheme.ink)
+                        }
+                        .toggleStyle(.switch)
+                        .tint(PadzyTheme.accent)
+                        .onChange(of: antigravityOnlineQuotaEnabled) {
+                            Task { await viewModel.refresh() }
+                        }
+
+                        Text("Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere. Requires Antigravity to be open.")
                             .font(.system(size: 11))
                             .foregroundColor(PadzyTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)

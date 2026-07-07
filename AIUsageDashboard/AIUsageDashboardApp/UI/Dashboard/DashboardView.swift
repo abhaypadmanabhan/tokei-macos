@@ -4,6 +4,9 @@ import AIUsageDashboardCore
 struct DashboardView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Read-only mirror of the Settings toggle — drives which empty-state hint the
+    /// Antigravity quota section shows (off vs. on-but-not-syncing yet).
+    @AppStorage("antigravityOnlineQuotaEnabled") private var antigravityOnlineQuotaEnabled = false
 
     @State private var pulseOpacity: Double = 1.0
     @State private var countdownTick = Date()
@@ -205,6 +208,13 @@ struct DashboardView: View {
         let plan = snapshot.flatMap { ProviderMetadata.planText(from: $0.warnings) }
         let creditsWindow = snapshot?.quotaWindows.first { $0.type == .credits }
         let acceptedLinesToday = providerID == .cursor ? snapshot?.dailyTotals?[DateHelpers.startOfToday()] : nil
+        // Honest per-model usage text Core already composes (e.g. "Cursor: 214 requests
+        // this billing month since Jul 1, 2026") for uncapped accounts that get no gauge.
+        // The "Plan:" info warning is parsed into `plan` above and shown separately, so
+        // it's excluded here to avoid printing it twice.
+        let usageInfoLines = (snapshot?.warnings ?? []).filter {
+            $0.level == .info && $0.message.range(of: "Plan:", options: [.caseInsensitive]) == nil
+        }.map(\.message)
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
@@ -236,6 +246,27 @@ struct DashboardView: View {
 
                 if let creditsWindow {
                     quotaGaugeRow(creditsWindow)
+                }
+
+                if providerID == .antigravity {
+                    antigravityQuotaSection(snapshot)
+                } else {
+                    // Honest gauge for any other capped window a provider emits (e.g. a
+                    // Cursor model with a real `maxRequestUsage`). Uncapped accounts emit
+                    // no such window, so this renders nothing — matching "no fake gauge."
+                    let cappedWindows = (snapshot?.quotaWindows ?? []).filter {
+                        $0.type != .credits && $0.confidence != .unavailable
+                    }
+                    ForEach(cappedWindows) { window in
+                        quotaGaugeRow(window)
+                    }
+                }
+
+                ForEach(usageInfoLines, id: \.self) { line in
+                    Text(line.uppercased())
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Text("TOKEN USAGE UNAVAILABLE LOCALLY")
@@ -379,6 +410,87 @@ struct DashboardView: View {
         }
     }
 
+    /// Antigravity's weekly + 5-hour windows, grouped by model group (`label`,
+    /// e.g. "Gemini Models" / "Claude and GPT models") and rendered under a group
+    /// heading — order-preserving so the groups display in the order Core emits
+    /// them (Gemini first, then Claude/GPT), never re-sorted alphabetically.
+    private struct AntigravityQuotaGroup: Identifiable {
+        var id: String { label }
+        let label: String
+        let windows: [QuotaWindow]
+    }
+
+    private func groupedAntigravityWindows(_ windows: [QuotaWindow]) -> [AntigravityQuotaGroup] {
+        var order: [String] = []
+        var buckets: [String: [QuotaWindow]] = [:]
+        for window in windows {
+            let label = window.label ?? "Model Quota"
+            if buckets[label] == nil { order.append(label) }
+            buckets[label, default: []].append(window)
+        }
+        return order.map { label in
+            let sorted = (buckets[label] ?? []).sorted { quotaTypeSortKey($0.type) < quotaTypeSortKey($1.type) }
+            return AntigravityQuotaGroup(label: label, windows: sorted)
+        }
+    }
+
+    private func quotaTypeSortKey(_ type: QuotaWindowType) -> Int {
+        switch type {
+        case .weekly: return 0
+        case .fiveHour: return 1
+        default: return 2
+        }
+    }
+
+    @ViewBuilder
+    private func antigravityQuotaSection(_ snapshot: ProviderSnapshot?) -> some View {
+        let windows = (snapshot?.quotaWindows ?? []).filter {
+            $0.providerID == .antigravity && $0.confidence != .unavailable
+        }
+        let groups = groupedAntigravityWindows(windows)
+
+        VStack(alignment: .leading, spacing: 12) {
+            Text("MODEL QUOTA")
+                .font(.mono(size: 11))
+                .foregroundColor(PadzyTheme.muted)
+
+            if !antigravityOnlineQuotaEnabled {
+                SurfaceStateView(
+                    kind: .empty(headline: "Live quota disabled", hint: "Enable in Settings to see weekly and 5-hour model quota."),
+                    compact: true
+                )
+            } else if groups.isEmpty {
+                SurfaceStateView(
+                    kind: .empty(headline: "No live quota yet", hint: "Open Antigravity to sync."),
+                    compact: true
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(group.label.uppercased())
+                                .font(.display(size: 13, weight: .bold))
+                                .foregroundColor(PadzyTheme.ink)
+                            VStack(spacing: 8) {
+                                ForEach(group.windows) { window in
+                                    quotaGaugeRow(window)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func quotaWindowTypeLabel(_ type: QuotaWindowType) -> String {
+        switch type {
+        case .fiveHour: return "5-HOUR"
+        case .perModel: return "PER MODEL"
+        default: return type.rawValue.uppercased()
+        }
+    }
+
     private func quotaGaugeRow(_ window: QuotaWindow) -> some View {
         let percent = window.used.map { Int(round($0)) } ?? 0
         let isCritical = percent > 90
@@ -387,7 +499,7 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     let resetLabel = window.resetAt.map { " · RESETS \(formatCountdown(from: $0))" } ?? ""
-                    Text("\(window.type.rawValue.uppercased())\(resetLabel)")
+                    Text("\(quotaWindowTypeLabel(window.type))\(resetLabel)")
                         .font(.mono(size: 11))
                         .foregroundColor(PadzyTheme.muted)
                     ConfidenceBadge(confidence: window.confidence)
@@ -435,7 +547,15 @@ struct DashboardView: View {
         let _ = countdownTick
         let timeInterval = date.timeIntervalSince(Date())
         guard timeInterval > 0 else { return "00:00" }
-        let hours = Int(timeInterval) / 3600
+        let totalHours = Int(timeInterval) / 3600
+        // Windows that reset days out (weekly quota, monthly billing) read better as
+        // "4d 12h" than a five-digit hour count ticking every second.
+        if totalHours >= 24 {
+            let days = totalHours / 24
+            let hours = totalHours % 24
+            return "\(days)d \(hours)h"
+        }
+        let hours = totalHours
         let minutes = (Int(timeInterval) % 3600) / 60
         let seconds = Int(timeInterval) % 60
         if hours > 0 {
