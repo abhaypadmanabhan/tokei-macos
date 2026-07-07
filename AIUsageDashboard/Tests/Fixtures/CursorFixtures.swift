@@ -48,4 +48,11 @@ extension CursorFixtures {
       "nested": { "foo": "bar" }
     }
     """
+
+    static let cursorStripeProfileSuccess = """
+    {"membershipType":"pro","subscriptionStatus":"active","individualMembershipType":"pro",
+     "isYearlyPlan":false,"isOnBillableAuto":true,"customerBalance":null,"isTeamMember":false,
+     "teamMembershipType":null,"trialEligible":false,"trialLengthDays":7,"verifiedStudent":false,
+     "lastPaymentFailed":false,"pendingCancellationDate":null,"paymentRecoveryAction":null}
+    """
 }

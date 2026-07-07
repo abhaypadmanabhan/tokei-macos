@@ -15,6 +15,7 @@ final class CursorUsageClientTests: XCTestCase {
 
     override func tearDown() {
         MockCursorURLProtocol.mockResponse = nil
+        MockCursorURLProtocol.lastRequest = nil
         session.invalidateAndCancel()
         super.tearDown()
     }
@@ -55,15 +56,38 @@ final class CursorUsageClientTests: XCTestCase {
         XCTAssertEqual(response.warnings.count, 1)
         XCTAssertEqual(response.warnings.first?.level, .warning)
     }
+
+    func testStripeProfileResponseProducesPlanWarning() async throws {
+        MockCursorURLProtocol.mockResponse = (
+            data: CursorFixtures.cursorStripeProfileSuccess.data(using: .utf8)!,
+            statusCode: 200
+        )
+
+        let profile = try await client.fetchStripeProfile(bearerToken: "test-token")
+
+        XCTAssertEqual(MockCursorURLProtocol.lastRequest?.url?.absoluteString, "https://api2.cursor.sh/auth/full_stripe_profile")
+        XCTAssertEqual(MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        XCTAssertEqual(profile.membershipType, "pro")
+        XCTAssertEqual(profile.subscriptionStatus, "active")
+        XCTAssertEqual(profile.isYearlyPlan, false)
+        XCTAssertEqual(profile.isOnBillableAuto, true)
+        XCTAssertEqual(profile.customerBalance, nil)
+        XCTAssertEqual(profile.pendingCancellationDate, nil)
+        XCTAssertEqual(profile.lastPaymentFailed, false)
+        XCTAssertEqual(profile.planWarning.message, "Plan: Pro · monthly · auto-billing on")
+        XCTAssertEqual(profile.planWarning.level, .info)
+    }
 }
 
 private final class MockCursorURLProtocol: URLProtocol {
     static var mockResponse: (data: Data, statusCode: Int)?
+    static var lastRequest: URLRequest?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        Self.lastRequest = request
         guard let (data, statusCode) = Self.mockResponse else {
             client?.urlProtocol(self, didFailWithError: NSError(domain: "MockCursorURLProtocol", code: -1))
             return
