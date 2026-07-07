@@ -91,15 +91,3 @@ public actor AntigravityProvider: UsageProvider {
         return warnings
     }
 }
-
-private final class ProviderUserDefaultsReader: @unchecked Sendable {
-    private let userDefaults: UserDefaults
-
-    init(_ userDefaults: UserDefaults) {
-        self.userDefaults = userDefaults
-    }
-
-    func bool(forKey key: String) -> Bool {
-        userDefaults.bool(forKey: key)
-    }
-}

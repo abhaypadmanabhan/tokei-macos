@@ -28,7 +28,6 @@ public struct AntigravityQuotaEndpoint: CustomDebugStringConvertible, CustomStri
 
 public enum AntigravityQuotaError: LocalizedError, Sendable {
     case discoveryUnavailable
-    case noReachableQuotaEndpoint
     case unexpectedResponse
     case httpStatus(Int)
     case unrecognizedResponse
@@ -37,8 +36,6 @@ public enum AntigravityQuotaError: LocalizedError, Sendable {
         switch self {
         case .discoveryUnavailable:
             "Antigravity local quota endpoint could not be discovered."
-        case .noReachableQuotaEndpoint:
-            "Antigravity local quota endpoint was not reachable."
         case .unexpectedResponse:
             "Antigravity local quota endpoint returned an unexpected response."
         case .httpStatus(let statusCode):
@@ -84,7 +81,9 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             }
         }
 
-        throw lastError ?? AntigravityQuotaError.noReachableQuotaEndpoint
+        // `lastError` is always set: the guard above ensures `listenPorts` is non-empty,
+        // so the loop runs at least once and every iteration either returns or records an error.
+        throw lastError ?? AntigravityQuotaError.discoveryUnavailable
     }
 
     private func fetchQuotaWindows(port: Int, csrfToken: String) async throws -> [QuotaWindow] {
@@ -106,12 +105,11 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
 
     static func decodeQuotaWindows(_ data: Data, providerID: ProviderID) throws -> [QuotaWindow] {
         let payload = try JSONDecoder().decode(QuotaSummaryPayload.self, from: data)
-        let formatter = ISO8601DateFormatter()
 
         let windows = payload.response.groups.flatMap { group in
             group.buckets.compactMap { bucket -> QuotaWindow? in
                 guard let type = quotaWindowType(from: bucket.window),
-                      let resetAt = formatter.date(from: bucket.resetTime) else {
+                      let resetAt = JSONLDateParsing.standard.date(from: bucket.resetTime) else {
                     return nil
                 }
 
@@ -174,12 +172,12 @@ public struct DefaultAntigravityQuotaEndpointDiscoverer: AntigravityQuotaEndpoin
         }
 
         for line in output.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.contains("language_server"),
-                  trimmed.contains("--standalone") else {
+            // Filter on the Substring first; only the matching line (of hundreds) is trimmed.
+            guard line.contains("language_server"), line.contains("--standalone") else {
                 continue
             }
 
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             let parts = trimmed.split(separator: " ", maxSplits: 1).map(String.init)
             guard parts.count == 2, let pid = Int32(parts[0]) else { continue }
             return (pid, parts[1])

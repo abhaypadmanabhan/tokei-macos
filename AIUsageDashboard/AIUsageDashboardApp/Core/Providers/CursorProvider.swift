@@ -49,8 +49,12 @@ public actor CursorProvider: UsageProvider {
 
         if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
             if let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL) {
+                // Independent calls to the same host — run them concurrently.
+                async let usageResult = usageClient.fetchUsage(bearerToken: token)
+                async let stripeResult = usageClient.fetchStripeProfile(bearerToken: token)
+
                 do {
-                    let response = try await usageClient.fetchUsage(bearerToken: token)
+                    let response = try await usageResult
                     quotaWindows = response.quotaWindows
                     warnings.append(contentsOf: response.warnings)
                 } catch {
@@ -60,7 +64,7 @@ public actor CursorProvider: UsageProvider {
                     ))
                 }
 
-                if let stripeProfile = try? await usageClient.fetchStripeProfile(bearerToken: token) {
+                if let stripeProfile = try? await stripeResult {
                     warnings.removeAll { warning in
                         warning.level == .info && warning.message.hasPrefix("Plan: ")
                     }
@@ -91,14 +95,3 @@ public actor CursorProvider: UsageProvider {
     }
 }
 
-private final class ProviderUserDefaultsReader: @unchecked Sendable {
-    private let userDefaults: UserDefaults
-
-    init(_ userDefaults: UserDefaults) {
-        self.userDefaults = userDefaults
-    }
-
-    func bool(forKey key: String) -> Bool {
-        userDefaults.bool(forKey: key)
-    }
-}

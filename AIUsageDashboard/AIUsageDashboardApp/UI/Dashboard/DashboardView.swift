@@ -445,7 +445,7 @@ struct DashboardView: View {
     @ViewBuilder
     private func antigravityQuotaSection(_ snapshot: ProviderSnapshot?) -> some View {
         let windows = (snapshot?.quotaWindows ?? []).filter {
-            $0.providerID == .antigravity && $0.confidence != .unavailable
+            $0.confidence != .unavailable
         }
         let groups = groupedAntigravityWindows(windows)
 
