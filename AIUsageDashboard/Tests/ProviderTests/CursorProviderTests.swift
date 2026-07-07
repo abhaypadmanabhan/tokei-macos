@@ -127,7 +127,19 @@ final class CursorProviderTests: XCTestCase {
             ],
             warnings: []
         )
-        let mockClient = MockCursorUsageClient(result: .success(response))
+        let mockClient = MockCursorUsageClient(
+            result: .success(response),
+            stripeProfile: .success(CursorStripeProfile(
+                membershipType: "pro",
+                subscriptionStatus: "active",
+                individualMembershipType: "pro",
+                isYearlyPlan: false,
+                isOnBillableAuto: true,
+                customerBalance: nil,
+                pendingCancellationDate: nil,
+                lastPaymentFailed: false
+            ))
+        )
         let provider = CursorProvider(
             stateDatabaseURL: stateDB,
             parser: CursorStateDBParser(calendar: calendar),
@@ -146,6 +158,7 @@ final class CursorProviderTests: XCTestCase {
         assertUnavailable(snapshot.weekUsage)
         XCTAssertEqual(snapshot.dailyTotals?[date("2026-07-06")], 21)
         XCTAssertEqual(snapshot.warnings.count, 1)
+        XCTAssertEqual(snapshot.warnings.first?.message, "Plan: Pro · monthly · auto-billing on")
     }
 
     func testFlagOnWithClientFailureFallsBackToOffline() async throws {
@@ -250,11 +263,23 @@ final class CursorProviderTests: XCTestCase {
 
 private struct MockCursorUsageClient: CursorUsageClient {
     let result: Result<CursorUsageResponse, Error>
+    var stripeProfile: Result<CursorStripeProfile, Error>?
 
     func fetchUsage(bearerToken: String) async throws -> CursorUsageResponse {
         switch result {
         case .success(let response): return response
         case .failure(let error): throw error
+        }
+    }
+
+    func fetchStripeProfile(bearerToken: String) async throws -> CursorStripeProfile {
+        switch stripeProfile {
+        case .success(let profile):
+            return profile
+        case .failure(let error):
+            throw error
+        case nil:
+            throw CursorUsageError.unexpectedResponse
         }
     }
 }

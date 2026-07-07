@@ -5,7 +5,7 @@ public actor CursorProvider: UsageProvider {
     public let displayName: String = "Cursor"
 
     public nonisolated var capabilities: ProviderCapabilities {
-        if userDefaults.bool(forKey: "cursorNetworkUsageEnabled") {
+        if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
             return [.localLog, .quota, .tokenUsage, .providerEndpoint]
         }
         return [.localLog]
@@ -15,7 +15,7 @@ public actor CursorProvider: UsageProvider {
     private let stateDatabaseURL: URL
     private let parser: CursorStateDBParser
     private let usageClient: CursorUsageClient
-    private nonisolated let userDefaults: UserDefaults
+    private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
         fileManager: FileManager = .default,
@@ -29,7 +29,7 @@ public actor CursorProvider: UsageProvider {
             .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         self.parser = parser
         self.usageClient = usageClient ?? CursorUsageClientImpl()
-        self.userDefaults = userDefaults
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
     public func detectAvailability() async -> ProviderAvailability {
@@ -47,7 +47,7 @@ public actor CursorProvider: UsageProvider {
 
         var quotaWindows: [QuotaWindow] = []
 
-        if userDefaults.bool(forKey: "cursorNetworkUsageEnabled") {
+        if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
             if let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL) {
                 do {
                     let response = try await usageClient.fetchUsage(bearerToken: token)
@@ -58,6 +58,13 @@ public actor CursorProvider: UsageProvider {
                         message: "Cursor online usage request failed: \(error.localizedDescription). Falling back to offline data.",
                         level: .warning
                     ))
+                }
+
+                if let stripeProfile = try? await usageClient.fetchStripeProfile(bearerToken: token) {
+                    warnings.removeAll { warning in
+                        warning.level == .info && warning.message.hasPrefix("Plan: ")
+                    }
+                    warnings.append(stripeProfile.planWarning)
                 }
             } else {
                 warnings.append(ProviderWarning(
@@ -81,5 +88,17 @@ public actor CursorProvider: UsageProvider {
             lastSyncedAt: Date(),
             dailyTotals: state.acceptedLinesByDate.isEmpty ? nil : state.acceptedLinesByDate
         )
+    }
+}
+
+private final class ProviderUserDefaultsReader: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+
+    init(_ userDefaults: UserDefaults) {
+        self.userDefaults = userDefaults
+    }
+
+    func bool(forKey key: String) -> Bool {
+        userDefaults.bool(forKey: key)
     }
 }

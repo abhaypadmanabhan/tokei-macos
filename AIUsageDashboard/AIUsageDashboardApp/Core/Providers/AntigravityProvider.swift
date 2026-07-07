@@ -3,21 +3,33 @@ import Foundation
 public actor AntigravityProvider: UsageProvider {
     public let id: ProviderID = .antigravity
     public let displayName: String = "Antigravity"
-    public let capabilities: ProviderCapabilities = [.localLog]
+
+    public nonisolated var capabilities: ProviderCapabilities {
+        if userDefaultsReader.bool(forKey: "antigravityOnlineQuotaEnabled") {
+            return [.localLog, .quota, .providerEndpoint]
+        }
+        return [.localLog]
+    }
 
     private let fileManager: FileManager
     private let stateDatabaseURL: URL
     private let parser: AntigravityStateDBParser
+    private let quotaClient: AntigravityQuotaClient
+    private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
         fileManager: FileManager = .default,
         stateDatabaseURL: URL? = nil,
-        parser: AntigravityStateDBParser = .init()
+        parser: AntigravityStateDBParser = .init(),
+        quotaClient: AntigravityQuotaClient? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/state.vscdb")
         self.parser = parser
+        self.quotaClient = quotaClient ?? AntigravityQuotaClientImpl()
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
     public func detectAvailability() async -> ProviderAvailability {
@@ -30,23 +42,28 @@ public actor AntigravityProvider: UsageProvider {
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        var quotaWindows: [QuotaWindow] = []
+
+        if userDefaultsReader.bool(forKey: "antigravityOnlineQuotaEnabled") {
+            quotaWindows = (try? await quotaClient.fetchQuotaWindows()) ?? []
+        }
 
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
             authStatus: try await authenticate(),
-            quotaWindows: [],
+            quotaWindows: quotaWindows,
             todayUsage: .unavailable,
             weekUsage: .unavailable,
             monthUsage: nil,
             lifetimeUsage: nil,
             costUsage: nil,
-            warnings: warnings(from: state),
+            warnings: warnings(from: state, hasLiveQuota: !quotaWindows.isEmpty),
             lastSyncedAt: Date()
         )
     }
 
-    private func warnings(from state: AntigravityStateDBParser.ParsedState) -> [ProviderWarning] {
+    private func warnings(from state: AntigravityStateDBParser.ParsedState, hasLiveQuota: Bool) -> [ProviderWarning] {
         var warnings = state.warnings
 
         if let planName = state.planName, !planName.isEmpty {
@@ -64,11 +81,25 @@ public actor AntigravityProvider: UsageProvider {
                 level: .info
             ))
         }
-        warnings.append(ProviderWarning(
-            message: "Model quota (weekly / 5-hour limits) is only shown in the Antigravity app; it is not stored locally, so Tokei can't read it offline.",
-            level: .info
-        ))
+        if !hasLiveQuota {
+            warnings.append(ProviderWarning(
+                message: "Model quota (weekly / 5-hour limits) is only shown in the Antigravity app; it is not stored locally, so Tokei can't read it offline.",
+                level: .info
+            ))
+        }
 
         return warnings
+    }
+}
+
+private final class ProviderUserDefaultsReader: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+
+    init(_ userDefaults: UserDefaults) {
+        self.userDefaults = userDefaults
+    }
+
+    func bool(forKey key: String) -> Bool {
+        userDefaults.bool(forKey: key)
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 
 public protocol CursorUsageClient: Sendable {
     func fetchUsage(bearerToken: String) async throws -> CursorUsageResponse
+    func fetchStripeProfile(bearerToken: String) async throws -> CursorStripeProfile
 }
 
 public struct CursorUsageResponse: Sendable {
@@ -11,6 +12,65 @@ public struct CursorUsageResponse: Sendable {
     public init(quotaWindows: [QuotaWindow] = [], warnings: [ProviderWarning] = []) {
         self.quotaWindows = quotaWindows
         self.warnings = warnings
+    }
+}
+
+public struct CursorStripeProfile: Sendable, Decodable {
+    public let membershipType: String?
+    public let subscriptionStatus: String?
+    public let individualMembershipType: String?
+    public let isYearlyPlan: Bool?
+    public let isOnBillableAuto: Bool?
+    public let customerBalance: Double?
+    public let pendingCancellationDate: String?
+    public let lastPaymentFailed: Bool?
+
+    public init(
+        membershipType: String? = nil,
+        subscriptionStatus: String? = nil,
+        individualMembershipType: String? = nil,
+        isYearlyPlan: Bool? = nil,
+        isOnBillableAuto: Bool? = nil,
+        customerBalance: Double? = nil,
+        pendingCancellationDate: String? = nil,
+        lastPaymentFailed: Bool? = nil
+    ) {
+        self.membershipType = membershipType
+        self.subscriptionStatus = subscriptionStatus
+        self.individualMembershipType = individualMembershipType
+        self.isYearlyPlan = isYearlyPlan
+        self.isOnBillableAuto = isOnBillableAuto
+        self.customerBalance = customerBalance
+        self.pendingCancellationDate = pendingCancellationDate
+        self.lastPaymentFailed = lastPaymentFailed
+    }
+
+    public var planWarning: ProviderWarning {
+        ProviderWarning(message: "Plan: \(planLabel)", level: .info)
+    }
+
+    public var planLabel: String {
+        var parts = [displayPlanName]
+        if let isYearlyPlan {
+            parts.append(isYearlyPlan ? "yearly" : "monthly")
+        }
+        if let isOnBillableAuto {
+            parts.append(isOnBillableAuto ? "auto-billing on" : "auto-billing off")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var displayPlanName: String {
+        let rawPlan = nonEmpty(membershipType) ?? nonEmpty(individualMembershipType) ?? "unknown"
+        return rawPlan
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .capitalized
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 }
 
@@ -41,7 +101,23 @@ public actor CursorUsageClientImpl: CursorUsageClient {
         return CursorUsageResponse.decode(data, providerID: .cursor)
     }
 
+    public func fetchStripeProfile(bearerToken: String) async throws -> CursorStripeProfile {
+        var request = URLRequest(url: Self.stripeProfileURL)
+        // SECURITY: the token leaves the process only as this Bearer header over TLS.
+        request.setValue("Bearer \(bearerToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw CursorUsageError.unexpectedResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw CursorUsageError.httpStatus(httpResponse.statusCode)
+        }
+        return try JSONDecoder().decode(CursorStripeProfile.self, from: data)
+    }
+
     private static let endpointURL = URL(string: "https://api2.cursor.sh/auth/usage")!
+    private static let stripeProfileURL = URL(string: "https://api2.cursor.sh/auth/full_stripe_profile")!
 }
 
 extension CursorUsageResponse {
