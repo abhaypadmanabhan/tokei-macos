@@ -45,122 +45,94 @@ public actor CursorUsageClientImpl: CursorUsageClient {
 }
 
 extension CursorUsageResponse {
-    /// Defensive decode: tolerates shape drift by returning a single warning when
-    /// no recognizable quota fields are found, never throwing.
+    /// Defensive decode of the real `api2.cursor.sh/auth/usage` shape (verified
+    /// 2026-07-06):
+    /// ```
+    /// { "<model>": { "numRequests": Int, "numRequestsTotal": Int, "numTokens": Int,
+    ///               "maxRequestUsage": Int?, "maxTokenUsage": Int? }, ...,
+    ///   "startOfMonth": "<ISO8601>" }
+    /// ```
+    /// Per the app's quota convention, `QuotaWindow.used` is a **percent 0–100** with
+    /// `limit == 100` — so a monthly gauge is emitted only for models that actually
+    /// carry a request cap (`maxRequestUsage`). Uncapped plans (Pro often reports
+    /// `maxRequestUsage == nil`) surface an honest request-count info warning instead
+    /// of a fabricated gauge. Tolerates shape drift by warning, never throwing.
     static func decode(_ data: Data, providerID: ProviderID) -> CursorUsageResponse {
         guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return CursorUsageResponse(
-                quotaWindows: [],
                 warnings: [ProviderWarning(message: "Cursor usage response was not valid JSON.", level: .warning)]
             )
         }
 
-        var windowsMap: [QuotaWindowType: QuotaWindow] = [:]
+        let startOfMonth = (json["startOfMonth"] as? String).flatMap(parseISODate)
+        let resetAt = startOfMonth.flatMap { Calendar.current.date(byAdding: .month, value: 1, to: $0) }
 
-        // Top-level keys.
-        if let window = quotaWindow(from: json, providerID: providerID) {
-            windowsMap[window.type] = window
-        }
+        var sawModel = false
+        var totalRequests = 0
+        var windows: [QuotaWindow] = []
 
-        // Nested quota/usage/subscription objects.
-        for nestedKey in ["quota", "usage", "subscription", "premium"] {
-            if let nested = json[nestedKey] as? [String: Any],
-               let window = quotaWindow(from: nested, providerID: providerID) {
-                if windowsMap[window.type] == nil {
-                    windowsMap[window.type] = window
-                }
+        for (key, value) in json where key != "startOfMonth" {
+            guard let model = value as? [String: Any],
+                  let numRequests = intValue(model["numRequests"]) else { continue }
+            sawModel = true
+            totalRequests += numRequests
+
+            if let maxRequests = intValue(model["maxRequestUsage"]), maxRequests > 0 {
+                let usedPercent = min(100.0, Double(numRequests) / Double(maxRequests) * 100.0)
+                windows.append(QuotaWindow(
+                    providerID: providerID,
+                    type: .monthly,
+                    used: usedPercent,
+                    limit: 100,
+                    remaining: 100 - usedPercent,
+                    resetAt: resetAt,
+                    confidence: .providerReported,
+                    source: "api2.cursor.sh/auth/usage (\(key))"
+                ))
             }
         }
 
-        // Array of windows.
-        if let windowsArray = json["windows"] as? [[String: Any]] {
-            for windowJSON in windowsArray {
-                if let window = quotaWindow(from: windowJSON, providerID: providerID, inferType: true) {
-                    if windowsMap[window.type] == nil {
-                        windowsMap[window.type] = window
-                    }
-                }
-            }
-        }
-
-        let windows = windowsMap.values.sorted { $0.type.rawValue < $1.type.rawValue }
-
-        if windows.isEmpty {
+        guard sawModel else {
             return CursorUsageResponse(
-                quotaWindows: [],
                 warnings: [ProviderWarning(
-                    message: "Cursor usage response did not contain recognized quota fields.",
+                    message: "Cursor usage response shape was unrecognized.",
                     level: .warning
                 )]
             )
         }
 
-        return CursorUsageResponse(quotaWindows: windows, warnings: [])
-    }
+        let since = startOfMonth.map { " since \(mediumDate($0))" } ?? ""
+        let warning = ProviderWarning(
+            message: "Cursor: \(totalRequests) requests this billing month\(since).",
+            level: .info
+        )
 
-    private static func quotaWindow(
-        from json: [String: Any],
-        providerID: ProviderID,
-        inferType: Bool = false
-    ) -> QuotaWindow? {
-        guard let used = doubleValue(in: json, keys: ["used", "totalUsed", "consumed", "usage"]) else {
-            return nil
-        }
-        let limit = doubleValue(in: json, keys: ["limit", "quota", "max", "total", "cap"])
-        let remaining = doubleValue(in: json, keys: ["remaining", "left", "available", "balance"])
-        let resetAt = dateValue(in: json, keys: ["resetAt", "reset", "expiresAt", "periodEnd", "cycleEnd"])
-        let type: QuotaWindowType = inferType ? windowType(in: json) : .monthly
-        return QuotaWindow(
-            providerID: providerID,
-            type: type,
-            used: used,
-            limit: limit,
-            remaining: remaining,
-            resetAt: resetAt,
-            confidence: .providerReported,
-            source: "api2.cursor.sh/auth/usage"
+        return CursorUsageResponse(
+            quotaWindows: windows.sorted { $0.source < $1.source },
+            warnings: [warning]
         )
     }
 
-    private static func doubleValue(in json: [String: Any], keys: [String]) -> Double? {
-        for (key, value) in json where keys.contains(key) {
-            if let double = value as? Double { return double }
-            if let int = value as? Int { return Double(int) }
-            if let string = value as? String, let double = Double(string) { return double }
-        }
+    private static func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let double = value as? Double { return Int(double) }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
         return nil
     }
 
-    private static func dateValue(in json: [String: Any], keys: [String]) -> Date? {
-        for (key, value) in json where keys.contains(key) {
-            if let string = value as? String {
-                let formatter = ISO8601DateFormatter()
-                formatter.formatOptions = [.withInternetDateTime]
-                if let date = formatter.date(from: string) { return date }
-                formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                if let date = formatter.date(from: string) { return date }
-            }
-            if let timeInterval = value as? TimeInterval {
-                return Date(timeIntervalSince1970: timeInterval)
-            }
-        }
-        return nil
+    private static func parseISODate(_ string: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: string) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: string)
     }
 
-    private static func windowType(in json: [String: Any]) -> QuotaWindowType {
-        for (key, value) in json where ["type", "window", "period", "range"].contains(key) {
-            if let string = value as? String {
-                switch string.lowercased() {
-                case "session": return .session
-                case "daily", "day": return .daily
-                case "weekly", "week": return .weekly
-                case "monthly", "month": return .monthly
-                case "credits": return .credits
-                case "lifetime", "total": return .lifetime
-                default: break
-                }
-            }
-        }
-        return .monthly
+    private static func mediumDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 }

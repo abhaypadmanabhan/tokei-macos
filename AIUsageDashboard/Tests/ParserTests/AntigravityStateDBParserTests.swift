@@ -71,7 +71,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
         XCTAssertEqual(availability, .installed)
     }
 
-    func testProviderReturnsAuthenticatedCreditsQuotaAndPlanWarning() async throws {
+    func testProviderReturnsAuthenticatedPlanAndHonestCreditInfoWithoutFabricatedQuota() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())
         let provider = AntigravityProvider(stateDatabaseURL: stateDB)
@@ -79,20 +79,23 @@ final class AntigravityStateDBParserTests: XCTestCase {
         let snapshot = try await provider.fetchSnapshot()
         let capabilities = await provider.capabilities
 
-        XCTAssertEqual(capabilities.rawValue, ProviderCapabilities([.localLog, .quota]).rawValue)
+        // No .quota capability and NO quota window: the real per-model weekly/5-hour
+        // quota is not stored locally, so we never fabricate one from modelCredits.
+        XCTAssertEqual(capabilities.rawValue, ProviderCapabilities([.localLog]).rawValue)
         XCTAssertEqual(snapshot.providerID, .antigravity)
         XCTAssertEqual(snapshot.authStatus, .authenticated)
         XCTAssertEqual(snapshot.todayUsage.confidence, .unavailable)
         XCTAssertEqual(snapshot.weekUsage.confidence, .unavailable)
-        XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        XCTAssertEqual(snapshot.quotaWindows.first?.type, .credits)
-        XCTAssertEqual(snapshot.quotaWindows.first?.remaining, 1000)
-        XCTAssertEqual(snapshot.quotaWindows.first?.limit, 1050)
-        XCTAssertEqual(snapshot.quotaWindows.first?.used, 50)
-        XCTAssertEqual(snapshot.quotaWindows.first?.confidence, .localParsed)
-        XCTAssertEqual(snapshot.quotaWindows.first?.source, "antigravity local protobuf")
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+        // Plan + the real available-credits number surface as honest info, and the
+        // connector states plainly that model quota is online-only.
         XCTAssertTrue(snapshot.warnings.contains { $0.level == .info && $0.message == "Plan: Pro" })
-        XCTAssertTrue(snapshot.warnings.contains { $0.level == .info && $0.message == "Antigravity raw quota field 7: 16384" })
+        XCTAssertTrue(snapshot.warnings.contains {
+            $0.level == .info && $0.message == "Antigravity: 1000 model credits available (local)."
+        })
+        XCTAssertTrue(snapshot.warnings.contains {
+            $0.level == .info && $0.message.contains("Model quota") && $0.message.contains("offline")
+        })
     }
 
     private func fixtureRows() -> [String: String] {

@@ -31,12 +31,16 @@ final class CursorUsageClientTests: XCTestCase {
         let window = response.quotaWindows[0]
         XCTAssertEqual(window.providerID, .cursor)
         XCTAssertEqual(window.type, .monthly)
-        XCTAssertEqual(window.used, 1500)
-        XCTAssertEqual(window.limit, 5000)
-        XCTAssertEqual(window.remaining, 3500)
+        // 150 of 500 requests → 30% used (convention: used is a percent, limit == 100).
+        XCTAssertEqual(window.used, 30)
+        XCTAssertEqual(window.limit, 100)
+        XCTAssertEqual(window.remaining, 70)
         XCTAssertEqual(window.confidence, .providerReported)
-        XCTAssertEqual(window.source, "api2.cursor.sh/auth/usage")
-        XCTAssertTrue(response.warnings.isEmpty)
+        XCTAssertEqual(window.source, "api2.cursor.sh/auth/usage (gpt-4)")
+        // Honest request-count info is always surfaced.
+        XCTAssertTrue(response.warnings.contains {
+            $0.level == .info && $0.message.contains("150 requests this billing month")
+        })
     }
 
     func testMalformedResponseReturnsWarningWithoutThrowing() async throws {

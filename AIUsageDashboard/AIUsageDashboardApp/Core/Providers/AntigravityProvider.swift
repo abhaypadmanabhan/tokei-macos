@@ -3,7 +3,7 @@ import Foundation
 public actor AntigravityProvider: UsageProvider {
     public let id: ProviderID = .antigravity
     public let displayName: String = "Antigravity"
-    public let capabilities: ProviderCapabilities = [.localLog, .quota]
+    public let capabilities: ProviderCapabilities = [.localLog]
 
     private let fileManager: FileManager
     private let stateDatabaseURL: URL
@@ -35,7 +35,7 @@ public actor AntigravityProvider: UsageProvider {
             providerID: id,
             displayName: displayName,
             authStatus: try await authenticate(),
-            quotaWindows: quotaWindows(from: state),
+            quotaWindows: [],
             todayUsage: .unavailable,
             weekUsage: .unavailable,
             monthUsage: nil,
@@ -46,29 +46,6 @@ public actor AntigravityProvider: UsageProvider {
         )
     }
 
-    private func quotaWindows(from state: AntigravityStateDBParser.ParsedState) -> [QuotaWindow] {
-        guard let availableCredits = state.availableCredits else {
-            return []
-        }
-
-        let minimumCreditAmount = state.minimumCreditAmountForUsage
-        let limit = minimumCreditAmount.map { availableCredits + $0 }
-        let used = limit.map { $0 - availableCredits }
-
-        return [
-            QuotaWindow(
-                providerID: id,
-                type: .credits,
-                used: used.map(Double.init),
-                limit: limit.map(Double.init),
-                remaining: Double(availableCredits),
-                resetAt: nil,
-                confidence: .localParsed,
-                source: "antigravity local protobuf"
-            )
-        ]
-    }
-
     private func warnings(from state: AntigravityStateDBParser.ParsedState) -> [ProviderWarning] {
         var warnings = state.warnings
 
@@ -76,13 +53,21 @@ public actor AntigravityProvider: UsageProvider {
             warnings.append(ProviderWarning(message: "Plan: \(planName)", level: .info))
         }
 
-        for fieldNumber in state.rawQuotaValues.keys.sorted() {
-            guard let value = state.rawQuotaValues[fieldNumber] else { continue }
+        // `availableCredits` is a real local number, but it is NOT the "Model Quota"
+        // (per-model weekly / 5-hour limits) users see in the Antigravity app — that
+        // data is fetched live from Google's backend and is not written to local
+        // storage, so Tokei cannot show it offline. Surface the credits honestly and
+        // say so, rather than fabricating a quota gauge from unrelated numbers.
+        if let availableCredits = state.availableCredits {
             warnings.append(ProviderWarning(
-                message: "Antigravity raw quota field \(fieldNumber): \(value)",
+                message: "Antigravity: \(availableCredits) model credits available (local).",
                 level: .info
             ))
         }
+        warnings.append(ProviderWarning(
+            message: "Model quota (weekly / 5-hour limits) is only shown in the Antigravity app; it is not stored locally, so Tokei can't read it offline.",
+            level: .info
+        ))
 
         return warnings
     }

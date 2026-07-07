@@ -25,13 +25,19 @@ extension CursorFixtures {
         "aiCodeTracking.dailyStats.v1.5.\(date)"
     }
 
-    // Plausible api2.cursor.sh/auth/usage response for the mocked success test.
+    // Real api2.cursor.sh/auth/usage shape (verified 2026-07-06): per-model
+    // request/token usage keyed by model name, plus billing-cycle start. This model
+    // carries a request cap, so the decoder emits a monthly percent gauge.
     static let cursorUsageSuccess = """
     {
-      "used": 1500,
-      "limit": 5000,
-      "remaining": 3500,
-      "resetAt": "2026-08-06T00:00:00Z"
+      "gpt-4": {
+        "numRequests": 150,
+        "numRequestsTotal": 150,
+        "numTokens": 1000,
+        "maxTokenUsage": null,
+        "maxRequestUsage": 500
+      },
+      "startOfMonth": "2026-06-11T08:06:30.000Z"
     }
     """
 
