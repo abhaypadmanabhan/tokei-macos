@@ -1,10 +1,15 @@
 import SwiftUI
+import AIUsageDashboardCore
 
 /// In-app Settings surface. Renders inside the dashboard's right pane (not a separate
 /// macOS Settings window), so new configuration can grow here over time. Reached from
 /// the bottom-pinned SETTINGS entry in the provider sidebar and from the menu bar.
 struct SettingsPane: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
+    /// Read by the Cursor connector directly (`UserDefaults.standard.bool(forKey:)`) —
+    /// this is the one sanctioned switch for the network-usage path (Bible §"WP-2 · B").
+    /// Default OFF: Cursor never makes a network request unless the user opts in here.
+    @AppStorage("cursorNetworkUsageEnabled") private var cursorNetworkUsageEnabled = false
 
     // Bundle version can't change at runtime — compute once.
     private static let appVersion: String =
@@ -24,7 +29,38 @@ struct SettingsPane: View {
                 HairlineDivider()
 
                 VStack(alignment: .leading, spacing: 20) {
-                    section(number: "01", title: "QUOTA ALERTS") {
+                    section(number: "01", title: "PROVIDERS") {
+                        ForEach(ProviderID.allCases, id: \.self) { providerID in
+                            ProviderVisibilityToggleRow(
+                                providerID: providerID,
+                                displayName: providerID.rawValue.replacingOccurrences(of: "_", with: " ")
+                            )
+                        }
+
+                        Text("HIDDEN PROVIDERS ARE SKIPPED IN THE SIDEBAR, MENU BAR, AND KEYBOARD NAVIGATION.")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 4)
+
+                        HairlineDivider()
+                            .padding(.vertical, 8)
+
+                        Toggle(isOn: $cursorNetworkUsageEnabled) {
+                            Text("CURSOR: FETCH USAGE ONLINE")
+                                .font(.display(size: 12, weight: .bold))
+                                .foregroundColor(PadzyTheme.ink)
+                        }
+                        .toggleStyle(.switch)
+                        .tint(PadzyTheme.accent)
+
+                        Text("Makes an authenticated request to Cursor's servers using your local session token to fetch real token/quota usage. Off by default — Cursor otherwise reports plan/tier and accepted-lines from local data only, with no network access.")
+                            .font(.system(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    section(number: "02", title: "QUOTA ALERTS") {
                         Toggle(isOn: $notificationsEnabled) {
                             Text("QUOTA ALERTS")
                                 .font(.display(size: 12, weight: .bold))
@@ -43,7 +79,7 @@ struct SettingsPane: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    section(number: "02", title: "REFRESH INTERVAL") {
+                    section(number: "03", title: "REFRESH INTERVAL") {
                         Text("AUTO-SYNC: FILE WATCHER")
                             .font(.display(size: 12, weight: .bold))
                             .foregroundColor(PadzyTheme.ink)
@@ -58,7 +94,7 @@ struct SettingsPane: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    section(number: "03", title: "ABOUT") {
+                    section(number: "04", title: "ABOUT") {
                         Text("TOKEI")
                             .font(.display(size: 16, weight: .black))
                             .foregroundColor(PadzyTheme.ink)
