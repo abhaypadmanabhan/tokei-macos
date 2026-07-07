@@ -10,6 +10,17 @@ Suggested version for this release: **0.2.0** (feature release over the 0.1.0 MV
 bump `MARKETING_VERSION` in `AIUsageDashboard/project.yml` at merge if adopted.
 
 ### Added
+- **Antigravity — live Model Quota (opt-in).** New `AntigravityQuotaClient` reads the
+  real per-model-group weekly + 5-hour limits (Gemini / Claude&GPT) with reset countdowns
+  from the running Antigravity app's **local** `language_server` connect-rpc
+  (`RetrieveUserQuotaSummary`, csrf-authed over 127.0.0.1-scoped TLS) — the Google `ya29`
+  OAuth token is never read, sent, or stored. Gated behind `@AppStorage("antigravityOnlineQuotaEnabled")`
+  (default OFF); degrades silently to local data when the app is closed. Rendered as grouped
+  gauges + live countdowns, `.providerReported` confidence. Verified end-to-end against live
+  data (91.5%/87.6% Gemini, 100%/100% Claude&GPT).
+- **Cursor — accurate plan label.** Opt-in `full_stripe_profile` fetch (same Bearer JWT) adds
+  an honest plan label (`Pro · monthly · auto-billing on`); no fabricated gauge for uncapped
+  accounts.
 - **OpenAI Codex — estimated USD cost.** Static, dated per-model pricing table
   (`CodexPricing`) multiplies parsed token components into an estimated cost shown
   next to Codex, at `.estimated` confidence. Newer model slugs (`gpt-5.5`,
