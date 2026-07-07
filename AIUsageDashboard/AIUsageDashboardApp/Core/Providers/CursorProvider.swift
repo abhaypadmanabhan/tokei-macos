@@ -3,21 +3,33 @@ import Foundation
 public actor CursorProvider: UsageProvider {
     public let id: ProviderID = .cursor
     public let displayName: String = "Cursor"
-    public let capabilities: ProviderCapabilities = []
+
+    public nonisolated var capabilities: ProviderCapabilities {
+        if userDefaults.bool(forKey: "cursorNetworkUsageEnabled") {
+            return [.localLog, .quota, .tokenUsage, .providerEndpoint]
+        }
+        return [.localLog]
+    }
 
     private let fileManager: FileManager
     private let stateDatabaseURL: URL
     private let parser: CursorStateDBParser
+    private let usageClient: CursorUsageClient
+    private nonisolated let userDefaults: UserDefaults
 
     public init(
         fileManager: FileManager = .default,
         stateDatabaseURL: URL? = nil,
-        parser: CursorStateDBParser = .init()
+        parser: CursorStateDBParser = .init(),
+        usageClient: CursorUsageClient? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         self.parser = parser
+        self.usageClient = usageClient ?? CursorUsageClientImpl()
+        self.userDefaults = userDefaults
     }
 
     public func detectAvailability() async -> ProviderAvailability {
@@ -25,25 +37,49 @@ public actor CursorProvider: UsageProvider {
     }
 
     public func authenticate() async throws -> AuthStatus {
-        .unknown
+        let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        return state.isAuthenticated ? .authenticated : .unauthenticated
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        let usage = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        var warnings = state.warnings
+
+        var quotaWindows: [QuotaWindow] = []
+
+        if userDefaults.bool(forKey: "cursorNetworkUsageEnabled") {
+            if let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL) {
+                do {
+                    let response = try await usageClient.fetchUsage(bearerToken: token)
+                    quotaWindows = response.quotaWindows
+                    warnings.append(contentsOf: response.warnings)
+                } catch {
+                    warnings.append(ProviderWarning(
+                        message: "Cursor online usage request failed: \(error.localizedDescription). Falling back to offline data.",
+                        level: .warning
+                    ))
+                }
+            } else {
+                warnings.append(ProviderWarning(
+                    message: "Cursor online usage is enabled but no access token was found.",
+                    level: .warning
+                ))
+            }
+        }
 
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
-            authStatus: try await authenticate(),
-            quotaWindows: [],
-            todayUsage: usage.today,
-            weekUsage: usage.week,
-            monthUsage: usage.month,
-            lifetimeUsage: usage.lifetime,
+            authStatus: state.isAuthenticated ? .authenticated : .unauthenticated,
+            quotaWindows: quotaWindows,
+            todayUsage: .unavailable,
+            weekUsage: .unavailable,
+            monthUsage: nil,
+            lifetimeUsage: nil,
             costUsage: nil,
-            warnings: usage.warnings,
+            warnings: warnings,
             lastSyncedAt: Date(),
-            dailyTotals: usage.dailyTotals.isEmpty ? nil : usage.dailyTotals
+            dailyTotals: state.acceptedLinesByDate.isEmpty ? nil : state.acceptedLinesByDate
         )
     }
 }

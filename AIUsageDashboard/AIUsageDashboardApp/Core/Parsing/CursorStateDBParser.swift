@@ -2,13 +2,29 @@ import Foundation
 import SQLite3
 
 public actor CursorStateDBParser {
-    public struct AggregateUsage: Sendable {
-        public let today: TokenUsage
-        public let week: TokenUsage
-        public let month: TokenUsage?
-        public let lifetime: TokenUsage?
-        public let dailyTotals: [Date: Int]
+    public struct OfflineState: Sendable {
+        public let isAuthenticated: Bool
+        public let membershipType: String?
+        public let subscriptionStatus: String?
+        public let email: String?
+        public let acceptedLinesByDate: [Date: Int]
         public let warnings: [ProviderWarning]
+
+        public init(
+            isAuthenticated: Bool,
+            membershipType: String? = nil,
+            subscriptionStatus: String? = nil,
+            email: String? = nil,
+            acceptedLinesByDate: [Date: Int] = [:],
+            warnings: [ProviderWarning] = []
+        ) {
+            self.isAuthenticated = isAuthenticated
+            self.membershipType = membershipType
+            self.subscriptionStatus = subscriptionStatus
+            self.email = email
+            self.acceptedLinesByDate = acceptedLinesByDate
+            self.warnings = warnings
+        }
     }
 
     private let fileManager: FileManager
@@ -25,7 +41,7 @@ public actor CursorStateDBParser {
         self.now = now
     }
 
-    public func parse(stateDatabaseURL: URL) async -> AggregateUsage {
+    public func parse(stateDatabaseURL: URL) async -> OfflineState {
         do {
             let tempDirectory = try temporaryCopyDirectory()
             defer { try? fileManager.removeItem(at: tempDirectory) }
@@ -34,14 +50,35 @@ public actor CursorStateDBParser {
             try copyDatabase(from: stateDatabaseURL, to: databaseCopyURL)
             return try parseCopiedDatabase(at: databaseCopyURL)
         } catch {
-            return Self.unavailable(warnings: [
-                ProviderWarning(
-                    message: "Cursor local state database could not be read: \(error.localizedDescription)",
-                    level: .warning
-                )
-            ])
+            return OfflineState(
+                isAuthenticated: false,
+                warnings: [
+                    ProviderWarning(
+                        message: "Cursor local state database could not be read: \(error.localizedDescription)",
+                        level: .warning
+                    )
+                ]
+            )
         }
     }
+
+    /// Reads the JWT value for the network path. The value is returned to the caller
+    /// and must leave the process only as the `Authorization: Bearer` header to
+    /// `api2.cursor.sh` over TLS.
+    public func readAccessToken(stateDatabaseURL: URL) async -> String? {
+        do {
+            let tempDirectory = try temporaryCopyDirectory()
+            defer { try? fileManager.removeItem(at: tempDirectory) }
+
+            let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
+            try copyDatabase(from: stateDatabaseURL, to: databaseCopyURL)
+            return try readAccessTokenValue(at: databaseCopyURL)
+        } catch {
+            return nil
+        }
+    }
+
+    // MARK: - Private helpers
 
     private func temporaryCopyDirectory() throws -> URL {
         let directory = fileManager.temporaryDirectory
@@ -61,7 +98,7 @@ public actor CursorStateDBParser {
         }
     }
 
-    private func parseCopiedDatabase(at url: URL) throws -> AggregateUsage {
+    private func parseCopiedDatabase(at url: URL) throws -> OfflineState {
         var database: OpaquePointer?
         let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
         guard openResult == SQLITE_OK, let database else {
@@ -72,117 +109,111 @@ public actor CursorStateDBParser {
         defer { sqlite3_close(database) }
 
         var statement: OpaquePointer?
-        let prepareResult = sqlite3_prepare_v2(database, Self.usageRowsSQL, -1, &statement, nil)
+        let prepareResult = sqlite3_prepare_v2(database, Self.offlineStateSQL, -1, &statement, nil)
         guard prepareResult == SQLITE_OK, let statement else {
             throw SQLiteReadError(message: sqliteMessage(database))
         }
         defer { sqlite3_finalize(statement) }
 
-        let referenceDate = now()
-        var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
-        var foundTokenMetrics = false
+        var isAuthenticated = false
+        var membershipType: String?
+        var subscriptionStatus: String?
+        var email: String?
+        var acceptedLinesByDate: [Date: Int] = [:]
 
         while sqlite3_step(statement) == SQLITE_ROW {
-            guard
-                let key = stringColumn(statement, index: 0),
-                let value = dataColumn(statement, index: 1),
-                let usage = datedTokenUsage(key: key, value: value)
-            else {
-                continue
+            guard let key = stringColumn(statement, index: 0) else { continue }
+            let value = dataColumn(statement, index: 1)
+
+            switch key {
+            case "cursorAuth/accessToken":
+                if let data = value, let token = stringValue(from: data), !token.isEmpty {
+                    isAuthenticated = true
+                }
+            case "cursorAuth/stripeMembershipType":
+                membershipType = value.flatMap { stringValue(from: $0) }
+            case "cursorAuth/stripeSubscriptionStatus":
+                subscriptionStatus = value.flatMap { stringValue(from: $0) }
+            case "cursorAuth/cachedEmail":
+                email = value.flatMap { stringValue(from: $0) }
+            default:
+                if key.hasPrefix("aiCodeTracking.dailyStats.v1.5."),
+                   let data = value,
+                   let dateSuffix = dateSuffix(from: key),
+                   let date = date(fromDayString: dateSuffix),
+                   let acceptedLines = parseAcceptedLines(from: data) {
+                    acceptedLinesByDate[date, default: 0] += acceptedLines
+                }
             }
-
-            foundTokenMetrics = true
-            windows.accumulate(
-                usage.tokenUsage,
-                timestamp: usage.date,
-                dailyTotal: usage.tokenUsage.totalTokens ?? 0
-            )
         }
 
-        guard foundTokenMetrics else {
-            return Self.noLocalTokenMetrics()
+        var warnings: [ProviderWarning] = []
+        if membershipType != nil || subscriptionStatus != nil {
+            let plan = [membershipType?.capitalized, subscriptionStatus.map { "(\($0))" }]
+                .compactMap { $0 }
+                .joined(separator: " ")
+            warnings.append(ProviderWarning(message: "Plan: \(plan)", level: .info))
         }
 
-        let snapshot = windows.snapshot()
-        return AggregateUsage(
-            today: snapshot.today,
-            week: snapshot.week,
-            month: snapshot.month,
-            lifetime: snapshot.lifetime,
-            dailyTotals: snapshot.dailyTotals,
-            warnings: []
+        return OfflineState(
+            isAuthenticated: isAuthenticated,
+            membershipType: membershipType,
+            subscriptionStatus: subscriptionStatus,
+            email: email,
+            acceptedLinesByDate: acceptedLinesByDate,
+            warnings: warnings
         )
     }
 
-    private func datedTokenUsage(key: String, value: Data) -> CursorDatedTokenUsage? {
-        guard
-            let object = try? JSONSerialization.jsonObject(with: value) as? [String: Any],
-            let tokenObject = tokenObject(in: object),
-            let tokenUsage = tokenUsage(from: tokenObject)
-        else {
-            return nil
+    private func readAccessTokenValue(at url: URL) throws -> String? {
+        var database: OpaquePointer?
+        let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        guard openResult == SQLITE_OK, let database else {
+            let message = database.map { sqliteMessage($0) } ?? "unable to open copied Cursor state database"
+            if let database { sqlite3_close(database) }
+            throw SQLiteReadError(message: message)
         }
+        defer { sqlite3_close(database) }
 
-        guard let date = date(from: object, tokenObject: tokenObject, key: key) else {
-            return nil
+        var statement: OpaquePointer?
+        let prepareResult = sqlite3_prepare_v2(database, Self.accessTokenSQL, -1, &statement, nil)
+        guard prepareResult == SQLITE_OK, let statement else {
+            throw SQLiteReadError(message: sqliteMessage(database))
         }
+        defer { sqlite3_finalize(statement) }
 
-        return CursorDatedTokenUsage(date: date, tokenUsage: tokenUsage)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        guard let data = dataColumn(statement, index: 0) else { return nil }
+        let token = stringValue(from: data)
+        return token?.isEmpty == false ? token : nil
     }
 
-    private func tokenObject(in object: [String: Any], depth: Int = 0) -> [String: Any]? {
-        guard depth <= 2 else { return nil }
-        if hasTokenComponent(in: object) {
-            return object
+    private func stringValue(from data: Data) -> String? {
+        if let json = try? JSONSerialization.jsonObject(with: data, options: .allowFragments),
+           let string = json as? String {
+            return string
         }
-
-        for value in object.values {
-            if let nested = value as? [String: Any],
-               let match = tokenObject(in: nested, depth: depth + 1) {
-                return match
-            }
+        if let string = String(data: data, encoding: .utf8) {
+            return string.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return nil
     }
 
-    private func hasTokenComponent(in object: [String: Any]) -> Bool {
-        intValue(for: Self.inputTokenKeys, in: object) != nil ||
-            intValue(for: Self.outputTokenKeys, in: object) != nil ||
-            intValue(for: Self.cacheReadTokenKeys, in: object) != nil ||
-            intValue(for: Self.cacheCreationTokenKeys, in: object) != nil ||
-            intValue(for: Self.reasoningTokenKeys, in: object) != nil
+    private func parseAcceptedLines(from data: Data) -> Int? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let tabAccepted = intValue(json["tabAcceptedLines"])
+        let composerAccepted = intValue(json["composerAcceptedLines"])
+        guard tabAccepted != nil || composerAccepted != nil else { return nil }
+        return (tabAccepted ?? 0) + (composerAccepted ?? 0)
     }
 
-    private func tokenUsage(from object: [String: Any]) -> TokenUsage? {
-        let input = intValue(for: Self.inputTokenKeys, in: object)
-        let output = intValue(for: Self.outputTokenKeys, in: object)
-        let cacheRead = intValue(for: Self.cacheReadTokenKeys, in: object)
-        let cacheCreation = intValue(for: Self.cacheCreationTokenKeys, in: object)
-        let reasoning = intValue(for: Self.reasoningTokenKeys, in: object)
-
-        guard [input, output, cacheRead, cacheCreation, reasoning].contains(where: { $0 != nil }) else {
-            return nil
-        }
-
-        return TokenUsage(
-            inputTokens: max(0, input ?? 0),
-            outputTokens: max(0, output ?? 0),
-            cacheReadTokens: max(0, cacheRead ?? 0),
-            cacheCreationTokens: max(0, cacheCreation ?? 0),
-            reasoningTokens: max(0, reasoning ?? 0),
-            confidence: .localParsed
-        )
-    }
-
-    private func date(from object: [String: Any], tokenObject: [String: Any], key: String) -> Date? {
-        let dateString = stringValue(object["date"]) ??
-            stringValue(object["day"]) ??
-            stringValue(tokenObject["date"]) ??
-            stringValue(tokenObject["day"]) ??
-            dateSuffix(from: key)
-
-        guard let dateString else { return nil }
-        return date(fromDayString: dateString)
+    private func intValue(_ value: Any?) -> Int? {
+        guard let value else { return nil }
+        if let int = value as? Int { return int }
+        if let double = value as? Double { return Int(double) }
+        if let number = value as? NSNumber { return number.intValue }
+        if let string = value as? String { return Int(string) }
+        return nil
     }
 
     private func date(fromDayString dayString: String) -> Date? {
@@ -197,33 +228,10 @@ public actor CursorStateDBParser {
     }
 
     private func dateSuffix(from key: String) -> String? {
-        guard let match = key.range(
-            of: #"\d{4}-\d{2}-\d{2}$"#,
-            options: .regularExpression
-        ) else {
+        guard let match = key.range(of: #"\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) else {
             return nil
         }
         return String(key[match])
-    }
-
-    private func intValue(for aliases: Set<String>, in object: [String: Any]) -> Int? {
-        for (key, value) in object where aliases.contains(key.lowercased()) {
-            return intValue(value)
-        }
-        return nil
-    }
-
-    private func intValue(_ value: Any) -> Int? {
-        if let int = value as? Int { return int }
-        if let double = value as? Double { return Int(double) }
-        if let number = value as? NSNumber { return number.intValue }
-        if let string = value as? String { return Int(string) }
-        return nil
-    }
-
-    private func stringValue(_ value: Any?) -> String? {
-        if let string = value as? String { return string }
-        return nil
     }
 
     private func stringColumn(_ statement: OpaquePointer, index: Int32) -> String? {
@@ -240,85 +248,22 @@ public actor CursorStateDBParser {
     }
 
     private func sqliteMessage(_ database: OpaquePointer) -> String {
-        guard let message = sqlite3_errmsg(database) else {
-            return "unknown SQLite error"
-        }
+        guard let message = sqlite3_errmsg(database) else { return "unknown SQLite error" }
         return String(cString: message)
     }
 
-    private static func noLocalTokenMetrics() -> AggregateUsage {
-        unavailable(warnings: [
-            ProviderWarning(
-                message: "Cursor token metrics were not found in the local state database",
-                level: .info
-            )
-        ])
-    }
-
-    private static func unavailable(warnings: [ProviderWarning]) -> AggregateUsage {
-        AggregateUsage(
-            today: .unavailable,
-            week: .unavailable,
-            month: nil,
-            lifetime: nil,
-            dailyTotals: [:],
-            warnings: warnings
-        )
-    }
-
-    private static let usageRowsSQL = """
+    private static let offlineStateSQL = """
         SELECT key, value FROM ItemTable
-        WHERE lower(key) NOT LIKE 'secret://%'
-          AND lower(key) NOT LIKE 'cursorauth/%'
-          AND lower(key) NOT LIKE '%accesstoken%'
-          AND lower(key) NOT LIKE '%refreshtoken%'
-          AND (
-            lower(key) LIKE '%usage%'
-            OR lower(key) LIKE '%quota%'
-            OR lower(key) LIKE '%limit%'
-            OR lower(key) LIKE '%token%'
-            OR lower(key) LIKE '%meter%'
-            OR lower(key) LIKE '%dailystats%'
-          )
+        WHERE key = 'cursorAuth/stripeMembershipType'
+           OR key = 'cursorAuth/stripeSubscriptionStatus'
+           OR key = 'cursorAuth/cachedEmail'
+           OR key = 'cursorAuth/accessToken'
+           OR key LIKE 'aiCodeTracking.dailyStats.v1.5.%'
         """
 
-    private static let inputTokenKeys: Set<String> = [
-        "inputtokens",
-        "input_tokens",
-        "prompttokens",
-        "prompt_tokens"
-    ]
-    private static let outputTokenKeys: Set<String> = [
-        "outputtokens",
-        "output_tokens",
-        "completiontokens",
-        "completion_tokens"
-    ]
-    private static let cacheReadTokenKeys: Set<String> = [
-        "cachereadtokens",
-        "cache_read_tokens",
-        "cachedinputtokens",
-        "cached_input_tokens",
-        "cache_read_input_tokens"
-    ]
-    private static let cacheCreationTokenKeys: Set<String> = [
-        "cachecreationtokens",
-        "cache_creation_tokens",
-        "cachewritetokens",
-        "cache_write_tokens",
-        "cache_creation_input_tokens"
-    ]
-    private static let reasoningTokenKeys: Set<String> = [
-        "reasoningtokens",
-        "reasoning_tokens",
-        "reasoningoutputtokens",
-        "reasoning_output_tokens"
-    ]
-}
-
-private struct CursorDatedTokenUsage {
-    let date: Date
-    let tokenUsage: TokenUsage
+    private static let accessTokenSQL = """
+        SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'
+        """
 }
 
 private struct SQLiteReadError: LocalizedError {
