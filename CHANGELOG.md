@@ -16,10 +16,16 @@ bump `MARKETING_VERSION` in `AIUsageDashboard/project.yml` at merge if adopted.
   `gpt-5.4`, `gpt-5.3-codex`) price under the verified `gpt-5` base rate via
   boundary-aligned family fallback; a slug with no known base family shows no cost
   (never a fabricated number).
-- **Cursor — local read layer.** Reads `state.vscdb` (SQLite) from a read-only temp
-  copy, excluding secret/auth rows, and surfaces real token windows at `.localParsed`
-  confidence when Cursor writes token-count rows locally. No network, no cookie/dashboard
-  auth. Falls back honestly to "unavailable" with an info warning otherwise.
+- **Cursor connector (A offline + B network toggle).** A: reads `state.vscdb` (read-only
+  temp copy) for plan/tier (`stripeMembershipType`/`stripeSubscriptionStatus`) and
+  accepted-code-lines/day (`aiCodeTracking.dailyStats`) — the local DB has NO token counts,
+  so token usage is honestly `.unavailable` offline. B: opt-in `@AppStorage("cursorNetworkUsageEnabled")`
+  (default OFF) → one authenticated `GET api2.cursor.sh/auth/usage` (JWT as Bearer over TLS only)
+  for real quota at `.providerReported`; defensive decode falls back to A on any drift, never crashes.
+- **Antigravity connector — offline protobuf.** Zero-dependency `MiniProtobufReader` decodes
+  `state.vscdb` `userStatusProtoBinaryBase64` (plan "Pro" + raw quota fields) and `modelCredits`
+  (available/min) via read-only SQLite `json_extract` — the `apiKey`/OAuth token never enters
+  Swift memory. Surfaces plan + a `.credits` quota window at `.localParsed`. Fully offline.
 - **In-app Settings pane.** Settings now render inside the dashboard window's right
   pane, reached from a bottom-pinned `SETTINGS` entry in the provider sidebar (and the
   menu-bar `SETTINGS` button). Sections: `QUOTA ALERTS`, `REFRESH INTERVAL`, `ABOUT`.

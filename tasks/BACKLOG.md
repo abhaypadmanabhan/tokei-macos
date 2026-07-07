@@ -57,6 +57,13 @@ move finished items to DONE with date + commit.
       security-scoped bookmarks UX), notarized DMG pipeline.
 
 ## DONE
+- 2026-07-06 — **Cursor real metrics (#3)** + **Antigravity data source (#4/#13)** connectors
+  (patch Round 2, dev @ f78c1f8): Cursor A offline plan/tier + accepted-lines / B network
+  quota behind `cursorNetworkUsageEnabled` toggle (default off); Antigravity offline protobuf
+  (plan "Pro" + credits) via zero-dep `MiniProtobufReader` + `json_extract` (token never in
+  memory); connection UX (per-provider show/hide toggles, honest capability tiers, local-path
+  disclosure). 85 tests green, security pass (no credential leak vectors). Merges:
+  dcfb832 (antigravity) · f78c1f8 (cursor) · fad1dd4 (connection-ux).
 - 2026-07-06 — MVP: Claude parser + dashboard + menu bar + persistence +
   watcher (commit 1ccf4d1); Tokei rebrand + icon + hero UI (db5f421);
   Relay legs 1-4: Codex quotas, Cline cost, multi-provider UI, notifications
