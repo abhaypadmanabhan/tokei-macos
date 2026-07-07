@@ -68,7 +68,15 @@ public final class DashboardViewModel: ObservableObject {
         let nonUnavailableQuotaWindows = snapshot.quotaWindows.filter { $0.confidence != .unavailable }
         let hasTokens = snapshot.todayUsage.totalTokens != nil && snapshot.todayUsage.confidence != .unavailable && snapshot.todayUsage.totalTokens! > 0
         let hasCost = snapshot.costUsage?.amount != nil && snapshot.costUsage?.confidence != .unavailable
-        return hasTokens || !nonUnavailableQuotaWindows.isEmpty || hasCost
+        // A provider is also "available" when it exposes a plan/tier signal (a `"Plan:"`
+        // info warning) or local daily-activity totals, even with no token/quota/cost data —
+        // e.g. Cursor offline (plan + accepted-lines). Without this, plan-only providers
+        // render as UNAVAILABLE despite being connected.
+        let hasPlanSignal = snapshot.warnings.contains {
+            $0.level == .info && $0.message.range(of: "Plan:", options: [.caseInsensitive]) != nil
+        }
+        let hasDailyTotals = !(snapshot.dailyTotals?.isEmpty ?? true)
+        return hasTokens || !nonUnavailableQuotaWindows.isEmpty || hasCost || hasPlanSignal || hasDailyTotals
     }
 
     public func selectNextProvider() {
