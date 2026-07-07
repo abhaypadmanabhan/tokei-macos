@@ -11,6 +11,10 @@ struct SettingsPane: View {
     /// Default OFF: Cursor never makes a network request unless the user opts in here.
     @AppStorage("cursorNetworkUsageEnabled") private var cursorNetworkUsageEnabled = false
 
+    /// Same environment view model as the dashboard (SettingsPane renders inside it),
+    /// so toggling a data-source setting can immediately re-run the providers.
+    @EnvironmentObject private var viewModel: DashboardViewModel
+
     // Bundle version can't change at runtime — compute once.
     private static let appVersion: String =
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
@@ -53,6 +57,13 @@ struct SettingsPane: View {
                         }
                         .toggleStyle(.switch)
                         .tint(PadzyTheme.accent)
+                        // The Cursor connector reads this flag at fetch time; a plain
+                        // UserDefaults write triggers no sync, so re-run the providers
+                        // now — otherwise flipping the switch appears to "do nothing"
+                        // until the next file-watcher event.
+                        .onChange(of: cursorNetworkUsageEnabled) {
+                            Task { await viewModel.refresh() }
+                        }
 
                         Text("Makes an authenticated request to Cursor's servers using your local session token to fetch real token/quota usage. Off by default — Cursor otherwise reports plan/tier and accepted-lines from local data only, with no network access.")
                             .font(.system(size: 11))
