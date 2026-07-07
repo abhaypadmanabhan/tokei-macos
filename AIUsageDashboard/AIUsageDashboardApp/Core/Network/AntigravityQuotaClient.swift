@@ -224,7 +224,7 @@ public struct DefaultAntigravityQuotaEndpointDiscoverer: AntigravityQuotaEndpoin
         }
     }
 
-    private func run(_ executableURL: URL, arguments: [String]) -> String? {
+    func run(_ executableURL: URL, arguments: [String], timeout: TimeInterval = 5) -> String? {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
@@ -235,13 +235,26 @@ public struct DefaultAntigravityQuotaEndpointDiscoverer: AntigravityQuotaEndpoin
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return nil
         }
 
-        guard process.terminationStatus == 0 else { return nil }
+        // Defense-in-depth: terminate a stuck subprocess so it can never block the
+        // sync (which awaits every provider). Belt to the read-ordering suspenders below.
+        let watchdog = DispatchWorkItem { [weak process] in
+            if process?.isRunning == true { process?.terminate() }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
+
+        // Drain stdout to EOF BEFORE waiting for exit. `ps -axo command=` can emit well
+        // over the ~64KB pipe buffer; if we waitUntilExit() first, the child blocks writing
+        // to a full pipe while we block waiting for it — a permanent deadlock. Reading to
+        // EOF consumes output as it is produced, so the child can always make progress.
         let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+
+        guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
     }
 

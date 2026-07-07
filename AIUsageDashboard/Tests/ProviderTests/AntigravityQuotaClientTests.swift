@@ -69,6 +69,47 @@ final class AntigravityQuotaClientTests: XCTestCase {
         XCTAssertEqual(thirdPartyFiveHour.label, "Claude and GPT models")
     }
 
+    // Regression: `ps -axo command=` on a busy machine emits well over the ~64KB pipe
+    // buffer. If run() calls waitUntilExit() before draining stdout, the child blocks
+    // writing to the full pipe while the app blocks waiting — a permanent deadlock that
+    // stalls the whole sync (snapshotAll awaits every provider). Drive run() with a
+    // large-output command and require the FULL output back promptly. The pre-fix code
+    // hangs here → the timeout makes this fail cleanly instead of hanging the suite.
+    func testRunDrainsLargeSubprocessOutputWithoutDeadlock() throws {
+        let discoverer = DefaultAntigravityQuotaEndpointDiscoverer()
+        let box = OutputBox()
+        let done = expectation(description: "run() returns without deadlocking on large output")
+
+        DispatchQueue.global().async {
+            box.value = discoverer.run(URL(fileURLWithPath: "/usr/bin/seq"), arguments: ["1", "200000"])
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 20)
+
+        let output = try XCTUnwrap(box.value, "run() hung or returned nil on >64KB output")
+        XCTAssertGreaterThan(output.utf8.count, 65_536, "test must exceed the pipe buffer to exercise the deadlock path")
+        XCTAssertTrue(output.hasPrefix("1\n"), "output should start at the first line")
+        XCTAssertTrue(output.contains("\n200000"), "output should include the final line — proof it was fully drained, not truncated")
+    }
+
+    func testRunTerminatesRunawaySubprocessWithinTimeout() throws {
+        // Defense-in-depth: an unexpectedly long-running probe must not block the sync.
+        let discoverer = DefaultAntigravityQuotaEndpointDiscoverer()
+        let box = OutputBox()
+        let done = expectation(description: "run() returns after the watchdog terminates a hung child")
+
+        DispatchQueue.global().async {
+            // `sleep 30` would block far past the timeout; the watchdog must kill it.
+            box.value = discoverer.run(URL(fileURLWithPath: "/bin/sleep"), arguments: ["30"], timeout: 1)
+            box.returned = true
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+
+        XCTAssertTrue(box.returned, "run() should return promptly after the watchdog fires, not block for 30s")
+        XCTAssertNil(box.value, "a terminated (non-zero exit) subprocess yields no output")
+    }
+
     func testProviderFallsBackSilentlyWhenOnlineDiscoveryFails() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())
@@ -140,4 +181,11 @@ private struct NoProcessAntigravityQuotaClient: AntigravityQuotaClient {
     func fetchQuotaWindows() async throws -> [QuotaWindow] {
         throw AntigravityQuotaError.discoveryUnavailable
     }
+}
+
+/// Reference holder so a background `run()` result can be read after the expectation
+/// resolves (the `wait` establishes the happens-before ordering).
+private final class OutputBox: @unchecked Sendable {
+    var value: String?
+    var returned = false
 }
