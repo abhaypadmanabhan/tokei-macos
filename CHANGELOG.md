@@ -43,6 +43,24 @@ bump `MARKETING_VERSION` in `AIUsageDashboard/project.yml` at merge if adopted.
   The separate macOS Settings (⌘,) dialog was removed.
 - Reusable `SurfaceStateView` — real loading / empty / error states across dashboard
   and menu bar.
+- **Value engine (internal, no UI yet).** New `Core/Pricing` layer — `PricingEngine`
+  turns `(model, token counts)` into API-equivalent USD for *every* provider (not just
+  Cline's provider-supplied `$`), pricing input / cache-creation / cache-read / output at
+  distinct rates, folding reasoning into output. Dated bundled offline `PricingSeed`
+  (Anthropic / OpenAI-Codex / curated Cursor·Kimi·Cline·GLM overrides), boundary-prefix
+  fuzzy model matcher, and an `APIEquivalentCost` value type carrying `MetricConfidence`
+  plus an unpriced-token coverage flag. Unknown slugs yield `nil`, never a guessed number.
+  A `refresh()` seam is stubbed for a future daily LiteLLM pull (no network this cycle).
+  Not yet surfaced in the UI (the "value multiple" hero lands with #23). (#22)
+- **Utilization spine (internal, no UI yet).** New `Core/Utilization` layer — a unified
+  `Utilization` / `AggregateUtilization` contract and a pure `UtilizationEngine` that maps
+  the snapshots Tokei already collects to a live-quota `usedPercent` per window (omitting,
+  never zero-filling, providers with no computable quota) plus a single "today's
+  utilization across plans" aggregate (mean of each provider's peak window). Ships a fully
+  tested `UtilizationCache` actor (TTL expiring early at the next reset, a **global** 429
+  cooldown marker, and a token-free last-good sidecar) — the robustness primitives the
+  Claude live fetch (#5) will reuse. `DashboardViewModel` gains read-only `utilization` /
+  `aggregateUtilization` accessors. Not yet wired to any fetch path or view. (#21)
 
 ### Changed
 - **Padzy "aitracker" design-system compliance:** accent reserved to state/action only

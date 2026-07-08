@@ -78,6 +78,12 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 - **Antigravity** remains a non-interactive skeleton pending data-source research.
 - WidgetKit target deferred (source exists, not in `project.yml`).
 - App icon and additional settings functionality minimal.
+- **Value engine + utilization spine landed as internal Core layers, not yet surfaced.**
+  `Core/Pricing` computes API-equivalent USD for every provider, and `Core/Utilization`
+  unifies live-quota % into one `Utilization` contract + aggregate (with a tested TTL /
+  429-cooldown cache). Both are fully tested but have **no UI** and change no existing
+  behavior — the "am I using the tokens I pay for" surface (value multiple + Maxxer score)
+  that consumes them is the next cycle (#23).
 
 ## Post-MVP Roadmap
 
