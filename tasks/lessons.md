@@ -27,3 +27,18 @@
 
 - **Unit Testing Date-Sensitive Filtering**:
   - *Rule*: When unit-testing components that filter data based on system time (e.g. dropping cached buckets whose resetTime is in the past, or checking cache expiry), always inject a mock clock/date provider returning a fixed test date instead of using `Date()`. This ensures tests are stable across execution environments and prevents failures due to real-time differences relative to fixed test fixtures.
+
+## 2026-07-08 — Quota UI: consolidate, don't duplicate; ship the enable control
+
+- **Don't build a "dashboard" that repeats the detail tabs.** The quota strip (P1.1) re-rendered
+  every provider window that each per-provider tab already showed → rejected. A real overview is a
+  *different altitude*: one glanceable line per provider (tightest window only), logos, aggregate
+  headline — not repeated tiles. **How to apply:** before adding a summary surface, ask "what does
+  this show that the detail view doesn't?"
+- **A backend toggle with no UI is not shippable.** P0.3 added `claudeNetworkUsageEnabled` but no
+  control → a public user cannot enable Claude live. **How to apply:** any feature flag meant for
+  end users ships with an in-app, friendly enable path (guided Connections screen), same commit/wave.
+- **Fit-to-window is a requirement, not polish.** Fixed frames / high minWidth cropped content.
+  Overview/detail must reflow + scroll; test at narrow width in previews.
+- **Logos: monochrome template assets** (Render As = Template, tinted to ink) — on-theme + low
+  trademark risk for public ship. Full-color brand logos clash with aitracker and add legal risk.
