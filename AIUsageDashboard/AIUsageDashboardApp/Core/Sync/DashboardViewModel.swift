@@ -104,5 +104,29 @@ public final class DashboardViewModel: ObservableObject {
     public var menuBarTodayTotal: Int {
         snapshots.compactMap { isAvailable($0.providerID) ? $0.todayUsage.totalTokens : nil }.reduce(0, +)
     }
+
+    // MARK: - Utilization spine (additive, read-only — derived from `snapshots`)
+
+    /// The unified live-quota % across providers, mapped from the current snapshots.
+    /// Purely derived; does not change any published state.
+    public var utilization: [Utilization] {
+        UtilizationEngine.utilizations(from: snapshots)
+    }
+
+    /// The single "today's utilization across plans" aggregate, with the context
+    /// (covered providers, coverage flag) needed to explain it. `nil` when no
+    /// provider reports usable quota.
+    public var aggregateUtilization: AggregateUtilization? {
+        UtilizationEngine.aggregate(from: snapshots)
+    }
+
+    /// Convenience: just the aggregate percentage, `nil` when no coverage.
+    /// "Today" is the product framing (the denominator of "am I maxxing today"),
+    /// not a daily window — the underlying value is a horizon-agnostic peak across
+    /// each provider's windows (see `AggregateUtilization`). The Maxxer Score (#23)
+    /// owns whether to weight or split by horizon.
+    public var aggregateUtilizationToday: Double? {
+        aggregateUtilization?.usedPercent
+    }
 }
 
