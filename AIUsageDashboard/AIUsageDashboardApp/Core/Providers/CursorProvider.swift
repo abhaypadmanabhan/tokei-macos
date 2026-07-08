@@ -15,6 +15,8 @@ public actor CursorProvider: UsageProvider {
     private let stateDatabaseURL: URL
     private let parser: CursorStateDBParser
     private let usageClient: CursorUsageClient
+    private let calendar: Calendar
+    private let now: @Sendable () -> Date
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
@@ -22,6 +24,8 @@ public actor CursorProvider: UsageProvider {
         stateDatabaseURL: URL? = nil,
         parser: CursorStateDBParser = .init(),
         usageClient: CursorUsageClient? = nil,
+        calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = { Date() },
         userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
@@ -29,6 +33,8 @@ public actor CursorProvider: UsageProvider {
             .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
         self.parser = parser
         self.usageClient = usageClient ?? CursorUsageClientImpl()
+        self.calendar = calendar
+        self.now = now
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
@@ -45,34 +51,48 @@ public actor CursorProvider: UsageProvider {
         let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
         var warnings = state.warnings
 
+        // Offline baseline: the state DB carries only accepted code-line counts, never
+        // token counts. These stay as the fallback if the online path is off or fails.
         var quotaWindows: [QuotaWindow] = []
+        var todayUsage: TokenUsage = .unavailable
+        var weekUsage: TokenUsage = .unavailable
+        var monthUsage: TokenUsage?
+        var lifetimeUsage: TokenUsage?
+        var costUsage: CostUsage?
+        var dailyTotals: [Date: Int]? = state.acceptedLinesByDate.isEmpty
+            ? nil : state.acceptedLinesByDate
 
         if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
-            if let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL) {
-                // Independent calls to the same host — run them concurrently.
-                async let usageResult = usageClient.fetchUsage(bearerToken: token)
-                async let stripeResult = usageClient.fetchStripeProfile(bearerToken: token)
-
-                do {
-                    let response = try await usageResult
-                    quotaWindows = response.quotaWindows
-                    warnings.append(contentsOf: response.warnings)
-                } catch {
-                    warnings.append(ProviderWarning(
-                        message: "Cursor online usage request failed: \(error.localizedDescription). Falling back to offline data.",
-                        level: .warning
-                    ))
+            switch await fetchOnlineUsage() {
+            case .success(let online):
+                // Real token usage supersedes the offline code-line stats.
+                todayUsage = online.today
+                weekUsage = online.week
+                monthUsage = online.month
+                lifetimeUsage = nil // the export may not span all history — don't claim lifetime.
+                costUsage = online.cost
+                if !online.dailyTotals.isEmpty { dailyTotals = online.dailyTotals }
+                if let summary = online.summary, let percent = summary.usedPercent {
+                    quotaWindows = [QuotaWindow(
+                        providerID: id,
+                        type: .monthly,
+                        used: percent,
+                        limit: 100,
+                        remaining: max(0, 100 - percent),
+                        resetAt: summary.resetAt,
+                        confidence: .providerReported,
+                        source: "cursor.com/api/usage-summary",
+                        label: planLabel(from: warnings) ?? summary.membershipType
+                    )]
                 }
-
-                if let stripeProfile = try? await stripeResult {
-                    warnings.removeAll { warning in
-                        warning.level == .info && warning.message.hasPrefix("Plan: ")
-                    }
-                    warnings.append(stripeProfile.planWarning)
-                }
-            } else {
+            case .missingSession:
                 warnings.append(ProviderWarning(
-                    message: "Cursor online usage is enabled but no access token was found.",
+                    message: "Cursor online usage is enabled but no Cursor session could be read.",
+                    level: .warning
+                ))
+            case .failure(let message):
+                warnings.append(ProviderWarning(
+                    message: "Cursor online usage request failed: \(message). Falling back to offline data.",
                     level: .warning
                 ))
             }
@@ -83,15 +103,104 @@ public actor CursorProvider: UsageProvider {
             displayName: displayName,
             authStatus: state.isAuthenticated ? .authenticated : .unauthenticated,
             quotaWindows: quotaWindows,
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: nil,
-            lifetimeUsage: nil,
-            costUsage: nil,
+            todayUsage: todayUsage,
+            weekUsage: weekUsage,
+            monthUsage: monthUsage,
+            lifetimeUsage: lifetimeUsage,
+            costUsage: costUsage,
             warnings: warnings,
             lastSyncedAt: Date(),
-            dailyTotals: state.acceptedLinesByDate.isEmpty ? nil : state.acceptedLinesByDate
+            dailyTotals: dailyTotals
         )
     }
-}
 
+    // MARK: - Online usage
+
+    private enum OnlineFetch {
+        case success(OnlineUsage)
+        case missingSession
+        case failure(String)
+    }
+
+    private struct OnlineUsage {
+        let today: TokenUsage
+        let week: TokenUsage
+        let month: TokenUsage
+        let cost: CostUsage?
+        let dailyTotals: [Date: Int]
+        let summary: CursorUsageSummary?
+    }
+
+    private func fetchOnlineUsage() async -> OnlineFetch {
+        guard let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL),
+              let cookie = CursorSession.cookie(jwt: token) else {
+            return .missingSession
+        }
+
+        do {
+            // Tokens (fatal on failure) and the quota summary (best-effort) run together.
+            async let csvResult = usageClient.fetchUsageEventsCSV(cookie: cookie)
+            async let summaryData = fetchSummarySafely(cookie: cookie)
+
+            let events = CursorUsageCSV.parseEvents(try await csvResult)
+            let summary = (await summaryData).flatMap(CursorUsageSummary.decode)
+
+            var windows = UsageWindows(
+                calendar: calendar,
+                referenceDate: now(),
+                emptyConfidence: .providerReported
+            )
+            for event in events {
+                windows.accumulate(
+                    TokenUsage(
+                        inputTokens: event.inputTokens,
+                        outputTokens: event.outputTokens,
+                        cacheReadTokens: event.cacheReadTokens,
+                        cacheCreationTokens: event.cacheWriteTokens,
+                        reasoningTokens: 0,
+                        confidence: .providerReported
+                    ),
+                    timestamp: event.date,
+                    dailyTotal: event.totalTokens
+                )
+            }
+            let windowed = windows.snapshot()
+            let totalCost = events.reduce(0) { $0 + $1.cost }
+
+            return .success(OnlineUsage(
+                today: windowed.today,
+                week: windowed.week,
+                month: windowed.month,
+                // Cursor's CSV `Cost` is the amount actually billed; on included-usage
+                // plans that is $0, so surface a cost only when there's real spend.
+                // API-equivalent value (what these tokens would cost at API rates) is
+                // the value engine's job, not this billed figure.
+                cost: totalCost > 0 ? CostUsage(
+                    amount: totalCost, currency: "USD", confidence: .providerReported
+                ) : nil,
+                dailyTotals: windowed.dailyTotals,
+                summary: summary
+            ))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    /// The quota summary is enrichment, not the headline — a failure here must not
+    /// discard the token usage we did fetch, so it never throws.
+    private func fetchSummarySafely(cookie: String) async -> Data? {
+        try? await usageClient.fetchUsageSummary(cookie: cookie)
+    }
+
+    /// Pulls the label out of the offline `"Plan: <text>"` info warning, the one
+    /// sanctioned channel for plan/tier (no new `ProviderSnapshot` field).
+    private func planLabel(from warnings: [ProviderWarning]) -> String? {
+        for warning in warnings where warning.level == .info {
+            if let range = warning.message.range(of: "Plan:", options: [.caseInsensitive]) {
+                let label = warning.message[range.upperBound...].trimmingCharacters(in: .whitespaces)
+                if !label.isEmpty { return label }
+            }
+        }
+        return nil
+    }
+}

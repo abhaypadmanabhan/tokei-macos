@@ -6,8 +6,24 @@ extension CursorFixtures {
     static let activeStatus = "\"active\""
     static let cachedEmail = "\"user@example.com\""
 
-    // Public-sample JWT (not a real secret). Used only for presence/value tests.
-    static let jwtPlaceholder = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" + "." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "dozjgNryP4J3jVmNHl0w5N_XgL0n3l9AqItYoO5JmA"
+    /// A JWT whose `sub` normalizes to a WorkOS user id (`auth0|user_01TEST` →
+    /// `user_01TEST`), so `CursorSession` can assemble a cookie. Not a real secret —
+    /// the signature segment is a placeholder.
+    static let jwtPlaceholder = jwt(sub: "auth0|user_01TEST")
+
+    /// Builds a syntactically valid, unsigned JWT carrying the given `sub`.
+    static func jwt(sub: String) -> String {
+        let header = base64URL(#"{"alg":"HS256","typ":"JWT"}"#)
+        let payload = base64URL("{\"sub\":\"\(sub)\"}")
+        return "\(header).\(payload).signature"
+    }
+
+    private static func base64URL(_ string: String) -> String {
+        Data(string.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 
     static func acceptedLines(
         date: String,
@@ -25,34 +41,58 @@ extension CursorFixtures {
         "aiCodeTracking.dailyStats.v1.5.\(date)"
     }
 
-    // Real api2.cursor.sh/auth/usage shape (verified 2026-07-06): per-model
-    // request/token usage keyed by model name, plus billing-cycle start. This model
-    // carries a request cap, so the decoder emits a monthly percent gauge.
-    static let cursorUsageSuccess = """
+    // MARK: - cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens
+
+    /// Header-then-rows export. Columns are looked up by name, and Cursor inserts
+    /// extra columns over time (here `Cloud Agent ID`, `Automation ID`, `Kind`,
+    /// `Max Mode`) — the parser must ignore position and unknown columns.
+    /// Token math per row: cacheWrite = Input(w/ Cache Write) − Input(w/o).
+    static let usageEventsCSV = """
+    Date,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost
+    2026-07-08T09:00:00.000Z,,,Included,claude-opus-4-8,No,1200,1000,500,300,2000,$0.05
+    2026-07-04T10:30:00.000Z,,,On-Demand,claude-sonnet-5,Yes,600,500,100,200,900,"$1,234.56"
+    2026-06-20T12:00:00.000Z,agent-1,,Included,gpt-5,No,400,400,0,100,500,$0.01
+    2026-07-08T23:59:59.999Z,,,"Errored, No Charge",claude-opus-4-8,No,0,0,0,0,0,$0.00
+    """
+
+    /// An export with none of the required columns → parser yields zero events.
+    static let usageEventsCSVMissingColumns = """
+    Date,Model,Something Else
+    2026-07-08T09:00:00.000Z,claude-opus-4-8,42
+    """
+
+    // MARK: - cursor.com/api/usage-summary
+
+    /// Plan carries `totalPercentUsed` (the preferred headline) + a billing cycle end.
+    static let usageSummary = """
     {
-      "gpt-4": {
-        "numRequests": 150,
-        "numRequestsTotal": 150,
-        "numTokens": 1000,
-        "maxTokenUsage": null,
-        "maxRequestUsage": 500
-      },
-      "startOfMonth": "2026-06-11T08:06:30.000Z"
+      "membershipType": "pro",
+      "limitType": "individual",
+      "billingCycleEnd": "2026-07-31T00:00:00.000Z",
+      "individualUsage": {
+        "plan": {
+          "totalPercentUsed": 42.5,
+          "autoPercentUsed": 40,
+          "apiPercentUsed": 45,
+          "used": 4250,
+          "limit": 10000
+        },
+        "onDemand": { "used": 0, "limit": 5000 }
+      }
     }
     """
 
-    // Shape-drifted response: the client should emit a single warning and no quota windows.
-    static let cursorUsageMalformed = """
+    /// Plan with no percent fields but cents `used`/`limit` → percent = used/limit*100.
+    static let usageSummaryCentsOnly = """
     {
-      "unexpected": "shape",
-      "nested": { "foo": "bar" }
+      "membershipType": "pro",
+      "billingCycleEnd": "2026-07-31T00:00:00.000Z",
+      "individualUsage": { "plan": { "used": 3000, "limit": 12000 } }
     }
     """
 
-    static let cursorStripeProfileSuccess = """
-    {"membershipType":"pro","subscriptionStatus":"active","individualMembershipType":"pro",
-     "isYearlyPlan":false,"isOnBillableAuto":true,"customerBalance":null,"isTeamMember":false,
-     "teamMembershipType":null,"trialEligible":false,"trialLengthDays":7,"verifiedStudent":false,
-     "lastPaymentFailed":false,"pendingCancellationDate":null,"paymentRecoveryAction":null}
+    /// No individual plan usage at all → decoder returns nil percent (no fake gauge).
+    static let usageSummaryEmpty = """
+    { "membershipType": "free", "individualUsage": { "plan": {} } }
     """
 }

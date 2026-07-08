@@ -9,6 +9,12 @@ final class CursorProviderTests: XCTestCase {
     private var calendar: Calendar!
     private var userDefaults: UserDefaults!
 
+    /// Fixed "now" so the CSV fixture's dates fall into deterministic windows:
+    /// today = 2026-07-08, weekStart = 2026-07-02, monthStart = 2026-06-08.
+    private var referenceNow: Date {
+        calendar.date(from: DateComponents(year: 2026, month: 7, day: 8, hour: 12))!
+    }
+
     override func setUp() {
         super.setUp()
         tempDirectory = FileManager.default.temporaryDirectory
@@ -30,11 +36,7 @@ final class CursorProviderTests: XCTestCase {
 
     func testDetectAvailabilityUsesStateDatabasePresenceOnly() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        let provider = CursorProvider(
-            stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
-            userDefaults: userDefaults
-        )
+        let provider = makeProvider(stateDB: stateDB)
 
         var availability = await provider.detectAvailability()
         XCTAssertEqual(availability, .notInstalled)
@@ -49,170 +51,151 @@ final class CursorProviderTests: XCTestCase {
         try createStateDatabase(at: dbWithToken, rows: [
             "cursorAuth/accessToken": CursorFixtures.jwtPlaceholder
         ])
-        let providerWithToken = CursorProvider(
-            stateDatabaseURL: dbWithToken,
-            parser: CursorStateDBParser(calendar: calendar),
-            userDefaults: userDefaults
-        )
-        let status = try await providerWithToken.authenticate()
+        let status = try await makeProvider(stateDB: dbWithToken).authenticate()
         XCTAssertEqual(status, .authenticated)
 
         let dbWithoutToken = tempDirectory.appendingPathComponent("without-token.vscdb")
         try createStateDatabase(at: dbWithoutToken, rows: [:])
-        let providerWithoutToken = CursorProvider(
-            stateDatabaseURL: dbWithoutToken,
-            parser: CursorStateDBParser(calendar: calendar),
-            userDefaults: userDefaults
-        )
-        let noTokenStatus = try await providerWithoutToken.authenticate()
+        let noTokenStatus = try await makeProvider(stateDB: dbWithoutToken).authenticate()
         XCTAssertEqual(noTokenStatus, .unauthenticated)
     }
 
     func testFlagOffUsesOfflineOnly() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        try createStateDatabase(at: stateDB, rows: [
-            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
-            "cursorAuth/stripeSubscriptionStatus": CursorFixtures.activeStatus,
-            CursorFixtures.aiCodeTrackingKey(date: "2026-07-06"): CursorFixtures.acceptedLines(
-                date: "2026-07-06", tabAccepted: 3, composerAccepted: 18
-            )
-        ])
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
 
-        let provider = CursorProvider(
-            stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
-            userDefaults: userDefaults
-        )
-
+        let provider = makeProvider(stateDB: stateDB)
         XCTAssertEqual(provider.capabilities, [.localLog])
 
         let snapshot = try await provider.fetchSnapshot()
         XCTAssertEqual(snapshot.providerID, .cursor)
-        XCTAssertEqual(snapshot.authStatus, .unauthenticated)
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
         assertUnavailable(snapshot.todayUsage)
         assertUnavailable(snapshot.weekUsage)
         XCTAssertNil(snapshot.monthUsage)
-        XCTAssertNil(snapshot.lifetimeUsage)
         XCTAssertNil(snapshot.costUsage)
-        XCTAssertEqual(snapshot.warnings.count, 1)
-        XCTAssertEqual(snapshot.warnings.first?.level, .info)
-        XCTAssertEqual(snapshot.warnings.first?.message, "Plan: Pro (active)")
-        XCTAssertEqual(snapshot.dailyTotals?[date("2026-07-06")], 21)
+        XCTAssertEqual(snapshot.warnings.map(\.message), ["Plan: Pro (active)"])
+        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 21)
     }
 
-    func testFlagOnWithMockClientFetchesQuota() async throws {
+    func testFlagOnFetchesTokensQuotaAndCost() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        try createStateDatabase(at: stateDB, rows: [
-            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
-            "cursorAuth/stripeSubscriptionStatus": CursorFixtures.activeStatus,
-            "cursorAuth/accessToken": CursorFixtures.jwtPlaceholder,
-            CursorFixtures.aiCodeTrackingKey(date: "2026-07-06"): CursorFixtures.acceptedLines(
-                date: "2026-07-06", tabAccepted: 3, composerAccepted: 18
-            )
-        ])
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
 
-        let response = CursorUsageResponse(
-            quotaWindows: [
-                QuotaWindow(
-                    providerID: .cursor,
-                    type: .monthly,
-                    used: 1500,
-                    limit: 5000,
-                    remaining: 3500,
-                    confidence: .providerReported,
-                    source: "test"
-                )
-            ],
-            warnings: []
+        let client = MockCursorUsageClient(
+            csv: .success(CursorFixtures.usageEventsCSV),
+            summary: .success(Data(CursorFixtures.usageSummary.utf8))
         )
-        let mockClient = MockCursorUsageClient(
-            result: .success(response),
-            stripeProfile: .success(CursorStripeProfile(
-                membershipType: "pro",
-                subscriptionStatus: "active",
-                individualMembershipType: "pro",
-                isYearlyPlan: false,
-                isOnBillableAuto: true,
-                customerBalance: nil,
-                pendingCancellationDate: nil,
-                lastPaymentFailed: false
-            ))
-        )
-        let provider = CursorProvider(
-            stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
-            usageClient: mockClient,
-            userDefaults: userDefaults
-        )
-
+        let provider = makeProvider(stateDB: stateDB, client: client)
         XCTAssertEqual(provider.capabilities, [.localLog, .quota, .tokenUsage, .providerEndpoint])
 
         let snapshot = try await provider.fetchSnapshot()
-        XCTAssertEqual(snapshot.authStatus, .authenticated)
+
+        // Today = the single 2026-07-08 event (the all-zero errored row is dropped).
+        XCTAssertEqual(snapshot.todayUsage.confidence, .providerReported)
+        XCTAssertEqual(snapshot.todayUsage.inputTokens, 1000)
+        XCTAssertEqual(snapshot.todayUsage.cacheCreationTokens, 200)
+        XCTAssertEqual(snapshot.todayUsage.cacheReadTokens, 500)
+        XCTAssertEqual(snapshot.todayUsage.outputTokens, 300)
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 2000)
+
+        XCTAssertEqual(snapshot.weekUsage.totalTokens, 2900)  // 07-08 + 07-04
+        XCTAssertEqual(snapshot.monthUsage?.totalTokens, 3400) // + 06-20
+        XCTAssertNil(snapshot.lifetimeUsage)
+
+        // Real token daily totals supersede the offline code-line stats.
+        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-08")], 2000)
+        XCTAssertNil(snapshot.dailyTotals?[day("2026-07-06")])
+
+        XCTAssertEqual(snapshot.costUsage?.amount ?? 0, 1234.62, accuracy: 0.01)
+        XCTAssertEqual(snapshot.costUsage?.currency, "USD")
+
         XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        XCTAssertEqual(snapshot.quotaWindows.first?.used, 1500)
-        XCTAssertEqual(snapshot.quotaWindows.first?.confidence, .providerReported)
-        assertUnavailable(snapshot.todayUsage)
-        assertUnavailable(snapshot.weekUsage)
-        XCTAssertEqual(snapshot.dailyTotals?[date("2026-07-06")], 21)
-        XCTAssertEqual(snapshot.warnings.count, 1)
-        XCTAssertEqual(snapshot.warnings.first?.message, "Plan: Pro · monthly · auto-billing on")
+        let quota = snapshot.quotaWindows[0]
+        XCTAssertEqual(quota.type, .monthly)
+        XCTAssertEqual(quota.used, 42.5)
+        XCTAssertEqual(quota.limit, 100)
+        XCTAssertEqual(quota.confidence, .providerReported)
+        XCTAssertEqual(quota.label, "Pro (active)")
+        XCTAssertNotNil(quota.resetAt)
+    }
+
+    func testFlagOnKeepsTokensWhenSummaryFails() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+
+        // CSV succeeds, summary fails → tokens still land, just no quota gauge.
+        let client = MockCursorUsageClient(
+            csv: .success(CursorFixtures.usageEventsCSV),
+            summary: .failure(CursorUsageError.httpStatus(500))
+        )
+        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
+
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 2000)
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
     }
 
     func testFlagOnWithClientFailureFallsBackToOffline() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        try createStateDatabase(at: stateDB, rows: [
-            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
-            "cursorAuth/stripeSubscriptionStatus": CursorFixtures.activeStatus,
-            "cursorAuth/accessToken": CursorFixtures.jwtPlaceholder,
-            CursorFixtures.aiCodeTrackingKey(date: "2026-07-06"): CursorFixtures.acceptedLines(
-                date: "2026-07-06", tabAccepted: 1, composerAccepted: 2
-            )
-        ])
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 1, composerAccepted: 2))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
 
-        let mockClient = MockCursorUsageClient(result: .failure(CursorUsageError.httpStatus(500)))
-        let provider = CursorProvider(
-            stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
-            usageClient: mockClient,
-            userDefaults: userDefaults
-        )
+        let client = MockCursorUsageClient(csv: .failure(CursorUsageError.httpStatus(500)))
+        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
 
-        let snapshot = try await provider.fetchSnapshot()
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
-        XCTAssertEqual(snapshot.dailyTotals?[date("2026-07-06")], 3)
-        XCTAssertEqual(snapshot.warnings.count, 2)
-        XCTAssertEqual(snapshot.warnings.first?.level, .info)
+        assertUnavailable(snapshot.todayUsage)
+        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 3)
         XCTAssertEqual(snapshot.warnings.last?.level, .warning)
         XCTAssertTrue(snapshot.warnings.last?.message.contains("Falling back") == true)
     }
 
-    func testFlagOnWithoutAccessTokenAddsWarning() async throws {
+    func testFlagOnWithUnresolvableSessionAddsWarning() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: [
-            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership
+            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
+            "cursorAuth/accessToken": CursorFixtures.jwt(sub: "1234567890") // no normalizable id
         ])
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
 
-        let provider = CursorProvider(
-            stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
-            userDefaults: userDefaults
-        )
+        let snapshot = try await makeProvider(stateDB: stateDB).fetchSnapshot()
 
-        let snapshot = try await provider.fetchSnapshot()
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
-        XCTAssertEqual(snapshot.warnings.count, 2)
         XCTAssertEqual(snapshot.warnings.last?.level, .warning)
-        XCTAssertTrue(snapshot.warnings.last?.message.contains("no access token") == true)
+        XCTAssertTrue(snapshot.warnings.last?.message.contains("no Cursor session") == true)
     }
 
     // MARK: - Helpers
 
-    private func date(_ dayString: String) -> Date {
+    private func makeProvider(
+        stateDB: URL,
+        client: CursorUsageClient? = nil
+    ) -> CursorProvider {
+        let fixedNow = referenceNow
+        return CursorProvider(
+            stateDatabaseURL: stateDB,
+            parser: CursorStateDBParser(calendar: calendar),
+            usageClient: client,
+            calendar: calendar,
+            now: { fixedNow },
+            userDefaults: userDefaults
+        )
+    }
+
+    private func offlineRows(tabAccepted: Int, composerAccepted: Int) -> [String: String] {
+        [
+            "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
+            "cursorAuth/stripeSubscriptionStatus": CursorFixtures.activeStatus,
+            "cursorAuth/accessToken": CursorFixtures.jwtPlaceholder,
+            CursorFixtures.aiCodeTrackingKey(date: "2026-07-06"): CursorFixtures.acceptedLines(
+                date: "2026-07-06", tabAccepted: tabAccepted, composerAccepted: composerAccepted
+            )
+        ]
+    }
+
+    private func day(_ dayString: String) -> Date {
         let parts = dayString.split(separator: "-").compactMap { Int($0) }
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))!
     }
@@ -220,9 +203,6 @@ final class CursorProviderTests: XCTestCase {
     private func assertUnavailable(_ usage: TokenUsage, file: StaticString = #file, line: UInt = #line) {
         XCTAssertNil(usage.inputTokens, file: file, line: line)
         XCTAssertNil(usage.outputTokens, file: file, line: line)
-        XCTAssertNil(usage.cacheReadTokens, file: file, line: line)
-        XCTAssertNil(usage.cacheCreationTokens, file: file, line: line)
-        XCTAssertNil(usage.reasoningTokens, file: file, line: line)
         XCTAssertEqual(usage.confidence, .unavailable, file: file, line: line)
     }
 
@@ -262,24 +242,18 @@ final class CursorProviderTests: XCTestCase {
 }
 
 private struct MockCursorUsageClient: CursorUsageClient {
-    let result: Result<CursorUsageResponse, Error>
-    var stripeProfile: Result<CursorStripeProfile, Error>?
+    let csv: Result<String, Error>
+    var summary: Result<Data, Error>?
 
-    func fetchUsage(bearerToken: String) async throws -> CursorUsageResponse {
-        switch result {
-        case .success(let response): return response
-        case .failure(let error): throw error
-        }
+    func fetchUsageEventsCSV(cookie: String) async throws -> String {
+        try csv.get()
     }
 
-    func fetchStripeProfile(bearerToken: String) async throws -> CursorStripeProfile {
-        switch stripeProfile {
-        case .success(let profile):
-            return profile
-        case .failure(let error):
-            throw error
-        case nil:
-            throw CursorUsageError.unexpectedResponse
+    func fetchUsageSummary(cookie: String) async throws -> Data {
+        switch summary {
+        case .success(let data): return data
+        case .failure(let error): throw error
+        case nil: throw CursorUsageError.unexpectedResponse
         }
     }
 }

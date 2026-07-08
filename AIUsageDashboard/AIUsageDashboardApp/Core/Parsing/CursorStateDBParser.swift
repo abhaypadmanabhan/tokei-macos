@@ -63,8 +63,8 @@ public actor CursorStateDBParser {
     }
 
     /// Reads the JWT value for the network path. The value is returned to the caller
-    /// and must leave the process only as the `Authorization: Bearer` header to
-    /// `api2.cursor.sh` over TLS.
+    /// and must leave the process only inside the WorkOS session cookie sent to
+    /// `cursor.com` over TLS (`CursorSession` / `CursorUsageClientImpl`).
     public func readAccessToken(stateDatabaseURL: URL) async -> String? {
         do {
             let tempDirectory = try temporaryCopyDirectory()
