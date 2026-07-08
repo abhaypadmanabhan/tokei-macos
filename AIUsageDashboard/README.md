@@ -69,12 +69,12 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 - **Auto-refresh**: FSEvents watcher on provider log directories, 2 s debounce → SyncEngine → AsyncStream → shared view model. Manual refresh via ⌘R.
 - **Persistence**: `~/Library/Application Support/AIUsageDashboard/usage-store.json` (snapshots + per-day rollups that survive log rotation).
 - **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
-- **Cursor** local read layer reads `state.vscdb` (SQLite) via a read-only temp copy, excluding secret/auth rows, and surfaces real token windows at `.localParsed` confidence **when Cursor writes token-count rows locally**; otherwise falls back honestly to unavailable with an info warning. No network, no cookie/dashboard auth.
+- **Cursor** real token usage + live quota (opt-in). With `cursorNetworkUsageEnabled` on, Tokei reads the Cursor web dashboard the way the dashboard itself does — `cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens` for per-event token usage (today/week/month with input/cache/output split + daily totals) and `cursor.com/api/usage-summary` for plan utilisation %, authenticating with the WorkOS session cookie (userId from the JWT `sub`; token never logged or persisted). Verified live: today 1.38M tokens, quota 7% "Pro (active)". Toggle off (or any network failure) falls back to the offline `state.vscdb` code-line read, no crash.
 - 67 unit tests green, incl. real-logs smoke tests (skip on machines without logs).
 
 ## What Is Stubbed (post-MVP)
 
-- **Cursor** token metrics are unavailable on machines where Cursor stores only local code-line stats (no token counters in `state.vscdb`) — the read layer is in place and will light up if/when those rows exist. Quota/cost and the dashboard-API (cookie) path remain out.
+- **Cursor** token usage + quota require the opt-in online toggle (they come from `cursor.com`, not local storage — `state.vscdb` holds only code-line stats). Offline, Cursor shows accepted code-lines only.
 - **Antigravity** remains a non-interactive skeleton pending data-source research.
 - WidgetKit target deferred (source exists, not in `project.yml`).
 - App icon and additional settings functionality minimal.

@@ -61,6 +61,16 @@ bump `MARKETING_VERSION` in `AIUsageDashboard/project.yml` at merge if adopted.
   cooldown marker, and a token-free last-good sidecar) — the robustness primitives the
   Claude live fetch (#5) will reuse. `DashboardViewModel` gains read-only `utilization` /
   `aggregateUtilization` accessors. Not yet wired to any fetch path or view. (#21)
+- **Cursor — real token usage + live quota (opt-in, user-visible).** Re-pointed the
+  Cursor connector off `api2.cursor.sh` (which returns only a request count, empty for
+  uncapped Pro) onto the `cursor.com` dashboard endpoints, authenticating with the WorkOS
+  session cookie: `export-usage-events-csv?strategy=tokens` → per-event token usage parsed
+  into today / week / month (input / cache-read / cache-write / output split) + daily
+  totals; `usage-summary` → plan utilisation % (reset = billing-cycle end). Cookie userId
+  is derived from the JWT `sub` (normalized like the Cursor CLI); the token is never logged
+  or persisted. Gated behind `cursorNetworkUsageEnabled` (default OFF); any failure falls
+  back to the offline code-line read. Verified live: today 1.38M tokens, quota 7%
+  "Pro (active)". Closes the "Cursor detection-only" gap in #13. (#3)
 
 ### Changed
 - **Padzy "aitracker" design-system compliance:** accent reserved to state/action only
