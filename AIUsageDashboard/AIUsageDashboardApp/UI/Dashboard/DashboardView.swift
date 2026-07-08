@@ -210,7 +210,14 @@ struct DashboardView: View {
     private var rightPane: some View {
         switch section {
         case .overview:
-            OverviewView()
+            OverviewView(
+                onOpen: { providerID in
+                    section = .provider(providerID)
+                    viewModel.selectedProvider = providerID
+                    viewModel.showingSettings = false
+                },
+                onConnect: { section = .connections }
+            )
         case .connections:
             ConnectionsView()
         case .settings:
