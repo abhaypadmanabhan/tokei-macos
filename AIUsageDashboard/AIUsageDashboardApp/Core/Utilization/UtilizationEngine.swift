@@ -81,8 +81,8 @@ public enum UtilizationEngine {
     // MARK: - Plan extraction
 
     /// Providers surface their plan as an `.info` warning like `"Plan: Pro · yearly"`
-    /// (see `CursorStripeProfile.planWarning`). Pull the label out of the first such
-    /// warning; return `nil` when none is present.
+    /// (the sanctioned plan/tier channel — see `CursorProvider` / `AntigravityProvider`).
+    /// Pull the label out of the first such warning; return `nil` when none is present.
     private static func planLabel(from warnings: [ProviderWarning]) -> String? {
         for warning in warnings where warning.level == .info {
             guard let range = warning.message.range(of: "Plan:", options: [.caseInsensitive]) else {

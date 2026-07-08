@@ -1,7 +1,99 @@
 import XCTest
 @testable import AIUsageDashboardCore
 
-final class CursorUsageClientTests: XCTestCase {
+final class CursorSessionTests: XCTestCase {
+    func testUserIDStripsProviderPrefixForNativeSubject() {
+        let jwt = CursorFixtures.jwt(sub: "auth0|user_01ABCdef")
+        XCTAssertEqual(CursorSession.userID(fromJWT: jwt), "user_01ABCdef")
+    }
+
+    func testUserIDKeepsWorkOSOAuthSubjectVerbatim() {
+        let jwt = CursorFixtures.jwt(sub: "google-oauth2|105551234567890")
+        XCTAssertEqual(CursorSession.userID(fromJWT: jwt), "google-oauth2|105551234567890")
+    }
+
+    func testUserIDRejectsUnrecognizedSubject() {
+        XCTAssertNil(CursorSession.userID(fromJWT: CursorFixtures.jwt(sub: "1234567890")))
+        XCTAssertNil(CursorSession.userID(fromJWT: "not-a-jwt"))
+        XCTAssertNil(CursorSession.userID(fromJWT: ""))
+    }
+
+    func testCookieEncodesSeparatorAndCarriesToken() {
+        let jwt = CursorFixtures.jwt(sub: "auth0|user_01ABCdef")
+        let cookie = CursorSession.cookie(jwt: jwt)
+        XCTAssertEqual(cookie, "WorkosCursorSessionToken=user_01ABCdef%3A%3A\(jwt)")
+    }
+
+    func testCookieNilWhenSubjectUnresolvable() {
+        XCTAssertNil(CursorSession.cookie(jwt: CursorFixtures.jwt(sub: "1234567890")))
+    }
+}
+
+final class CursorUsageCSVTests: XCTestCase {
+    func testParsesEventsWithHeaderNameLookupAndCacheWriteArithmetic() {
+        let events = CursorUsageCSV.parseEvents(CursorFixtures.usageEventsCSV)
+
+        // Four rows, but the all-zero "Errored, No Charge" row is dropped.
+        XCTAssertEqual(events.count, 3)
+
+        let first = events[0]
+        XCTAssertEqual(first.model, "claude-opus-4-8")
+        XCTAssertEqual(first.inputTokens, 1000)          // Input (w/o Cache Write)
+        XCTAssertEqual(first.cacheWriteTokens, 200)      // 1200 − 1000
+        XCTAssertEqual(first.cacheReadTokens, 500)
+        XCTAssertEqual(first.outputTokens, 300)
+        XCTAssertEqual(first.totalTokens, 2000)
+        XCTAssertEqual(first.cost, 0.05, accuracy: 0.0001)
+    }
+
+    func testParsesQuotedCostWithEmbeddedComma() {
+        let events = CursorUsageCSV.parseEvents(CursorFixtures.usageEventsCSV)
+        let sonnet = events.first { $0.model == "claude-sonnet-5" }
+        XCTAssertEqual(sonnet?.cost ?? 0, 1234.56, accuracy: 0.01)
+    }
+
+    func testMissingRequiredColumnsYieldsNoEvents() {
+        XCTAssertTrue(CursorUsageCSV.parseEvents(CursorFixtures.usageEventsCSVMissingColumns).isEmpty)
+        XCTAssertTrue(CursorUsageCSV.parseEvents("").isEmpty)
+    }
+
+    func testParsesFractionalISOAndBareDay() {
+        XCTAssertNotNil(CursorUsageCSV.parseDate("2026-07-08T09:00:00.000Z"))
+        XCTAssertNotNil(CursorUsageCSV.parseDate("2026-07-08T09:00:00Z"))
+        XCTAssertNotNil(CursorUsageCSV.parseDate("2026-07-08"))
+        XCTAssertNil(CursorUsageCSV.parseDate("nonsense"))
+    }
+
+    func testSplitFieldsHonoursQuotesAndEscapes() {
+        let fields = CursorUsageCSV.splitFields(#"a,"b,c","d""e",f"#)
+        XCTAssertEqual(fields, ["a", "b,c", "d\"e", "f"])
+    }
+}
+
+final class CursorUsageSummaryTests: XCTestCase {
+    func testDecodesTotalPercentAndReset() {
+        let summary = CursorUsageSummary.decode(Data(CursorFixtures.usageSummary.utf8))
+        XCTAssertEqual(summary?.usedPercent, 42.5)
+        XCTAssertEqual(summary?.membershipType, "pro")
+        XCTAssertNotNil(summary?.resetAt)
+    }
+
+    func testFallsBackToCentsRatioWhenNoPercent() {
+        let summary = CursorUsageSummary.decode(Data(CursorFixtures.usageSummaryCentsOnly.utf8))
+        XCTAssertEqual(summary?.usedPercent ?? 0, 25, accuracy: 0.0001) // 3000 / 12000
+    }
+
+    func testNilPercentWhenPlanEmpty() {
+        let summary = CursorUsageSummary.decode(Data(CursorFixtures.usageSummaryEmpty.utf8))
+        XCTAssertNil(summary?.usedPercent)
+    }
+
+    func testMalformedJSONReturnsNil() {
+        XCTAssertNil(CursorUsageSummary.decode(Data("not json".utf8)))
+    }
+}
+
+final class CursorUsageClientImplTests: XCTestCase {
     private var session: URLSession!
     private var client: CursorUsageClientImpl!
 
@@ -20,62 +112,36 @@ final class CursorUsageClientTests: XCTestCase {
         super.tearDown()
     }
 
-    func testSuccessfulResponseProducesProviderReportedQuotaWindows() async throws {
-        MockCursorURLProtocol.mockResponse = (
-            data: CursorFixtures.cursorUsageSuccess.data(using: .utf8)!,
-            statusCode: 200
+    func testCSVRequestUsesCookieAuthAndCorrectURL() async throws {
+        MockCursorURLProtocol.mockResponse = (Data(CursorFixtures.usageEventsCSV.utf8), 200)
+
+        let csv = try await client.fetchUsageEventsCSV(cookie: "WorkosCursorSessionToken=user_1%3A%3Ajwt")
+
+        XCTAssertTrue(csv.contains("claude-opus-4-8"))
+        XCTAssertEqual(
+            MockCursorURLProtocol.lastRequest?.url?.absoluteString,
+            "https://cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens"
         )
-
-        let response = try await client.fetchUsage(bearerToken: "test-token")
-
-        XCTAssertEqual(response.quotaWindows.count, 1)
-        let window = response.quotaWindows[0]
-        XCTAssertEqual(window.providerID, .cursor)
-        XCTAssertEqual(window.type, .monthly)
-        // 150 of 500 requests → 30% used (convention: used is a percent, limit == 100).
-        XCTAssertEqual(window.used, 30)
-        XCTAssertEqual(window.limit, 100)
-        XCTAssertEqual(window.remaining, 70)
-        XCTAssertEqual(window.confidence, .providerReported)
-        XCTAssertEqual(window.source, "api2.cursor.sh/auth/usage (gpt-4)")
-        // Honest request-count info is always surfaced.
-        XCTAssertTrue(response.warnings.contains {
-            $0.level == .info && $0.message.contains("150 requests this billing month")
-        })
+        XCTAssertEqual(
+            MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Cookie"),
+            "WorkosCursorSessionToken=user_1%3A%3Ajwt"
+        )
+        XCTAssertEqual(
+            MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"),
+            "https://www.cursor.com/settings"
+        )
     }
 
-    func testMalformedResponseReturnsWarningWithoutThrowing() async throws {
-        MockCursorURLProtocol.mockResponse = (
-            data: CursorFixtures.cursorUsageMalformed.data(using: .utf8)!,
-            statusCode: 200
-        )
-
-        let response = try await client.fetchUsage(bearerToken: "test-token")
-
-        XCTAssertTrue(response.quotaWindows.isEmpty)
-        XCTAssertEqual(response.warnings.count, 1)
-        XCTAssertEqual(response.warnings.first?.level, .warning)
-    }
-
-    func testStripeProfileResponseProducesPlanWarning() async throws {
-        MockCursorURLProtocol.mockResponse = (
-            data: CursorFixtures.cursorStripeProfileSuccess.data(using: .utf8)!,
-            statusCode: 200
-        )
-
-        let profile = try await client.fetchStripeProfile(bearerToken: "test-token")
-
-        XCTAssertEqual(MockCursorURLProtocol.lastRequest?.url?.absoluteString, "https://api2.cursor.sh/auth/full_stripe_profile")
-        XCTAssertEqual(MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
-        XCTAssertEqual(profile.membershipType, "pro")
-        XCTAssertEqual(profile.subscriptionStatus, "active")
-        XCTAssertEqual(profile.isYearlyPlan, false)
-        XCTAssertEqual(profile.isOnBillableAuto, true)
-        XCTAssertEqual(profile.customerBalance, nil)
-        XCTAssertEqual(profile.pendingCancellationDate, nil)
-        XCTAssertEqual(profile.lastPaymentFailed, false)
-        XCTAssertEqual(profile.planWarning.message, "Plan: Pro · monthly · auto-billing on")
-        XCTAssertEqual(profile.planWarning.level, .info)
+    func testNon2xxThrowsHTTPStatus() async {
+        MockCursorURLProtocol.mockResponse = (Data(), 403)
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected throw")
+        } catch let CursorUsageError.httpStatus(code) {
+            XCTAssertEqual(code, 403)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
     }
 }
 
