@@ -122,12 +122,43 @@ struct CodexRateLimitSnapshot: Sendable {
     let planType: String?
     let primary: CodexRateLimit?
     let secondary: CodexRateLimit?
+    let spendControlIndividualLimit: CodexSpendControlLimit?
+    let credits: CodexCreditsSnapshot?
+    let rateLimitResetCredits: CodexResetBankSnapshot?
 }
 
 struct CodexRateLimit: Sendable {
     let usedPercent: Double?
     let windowMinutes: Int?
+    let limitWindowSeconds: Int?
+    let windowDurationMins: Int?
     let resetsAt: Date?
+    let resetsInSeconds: Int?
+}
+
+struct CodexSpendControlLimit: Sendable {
+    let limit: String?
+    let used: String?
+    let usedPercent: Double?
+    let remainingPercent: Double?
+    let resetsAt: Date?
+}
+
+struct CodexCreditsSnapshot: Sendable {
+    let usedPercent: Double?
+    let balance: Double?
+    let limit: Double?
+}
+
+struct CodexResetBankSnapshot: Sendable {
+    let available: Int?
+    let count: Int?
+}
+
+private enum CodexWindowDuration {
+    static let sessionSeconds = 18_000
+    static let weeklySeconds = 604_800
+    static let toleranceSeconds = 3_600
 }
 
 extension CodexJSONLParser {
@@ -233,23 +264,87 @@ extension CodexJSONLParser {
             return nil
         }
 
+        let spendControl = json["spend_control"] as? [String: Any]
         return CodexRateLimitSnapshot(
             timestamp: timestamp,
             planType: json["plan_type"] as? String,
-            primary: rateLimit(from: json["primary"]),
-            secondary: rateLimit(from: json["secondary"])
+            primary: rateLimit(from: json["primary"], eventTimestamp: timestamp),
+            secondary: rateLimit(from: json["secondary"], eventTimestamp: timestamp),
+            spendControlIndividualLimit: spendControlLimit(from: spendControl?["individual_limit"]),
+            credits: creditsSnapshot(from: json["credits"]),
+            rateLimitResetCredits: resetBankSnapshot(from: json["rate_limit_reset_credits"])
         )
     }
 
-    private func rateLimit(from value: Any?) -> CodexRateLimit? {
+    private func rateLimit(from value: Any?, eventTimestamp: Date) -> CodexRateLimit? {
         guard let json = value as? [String: Any] else {
             return nil
         }
+        let resetsInSeconds = intValue(json["resets_in_seconds"])
+        let resetsAt = intValue(json["resets_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            ?? resetsInSeconds.map { eventTimestamp.addingTimeInterval(TimeInterval($0)) }
         return CodexRateLimit(
             usedPercent: doubleValue(json["used_percent"]),
             windowMinutes: intValue(json["window_minutes"]),
-            resetsAt: intValue(json["resets_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+            limitWindowSeconds: intValue(json["limit_window_seconds"]),
+            windowDurationMins: intValue(json["window_duration_mins"]),
+            resetsAt: resetsAt,
+            resetsInSeconds: resetsInSeconds
         )
+    }
+
+    private func spendControlLimit(from value: Any?) -> CodexSpendControlLimit? {
+        guard let json = value as? [String: Any] else { return nil }
+        return CodexSpendControlLimit(
+            limit: json["limit"] as? String,
+            used: json["used"] as? String,
+            usedPercent: doubleValue(json["used_percent"]),
+            remainingPercent: doubleValue(json["remaining_percent"]),
+            resetsAt: intValue(json["reset_at"]).map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        )
+    }
+
+    private func creditsSnapshot(from value: Any?) -> CodexCreditsSnapshot? {
+        guard let json = value as? [String: Any] else { return nil }
+        return CodexCreditsSnapshot(
+            usedPercent: doubleValue(json["used_percent"]),
+            balance: doubleValue(json["balance"]),
+            limit: doubleValue(json["limit"])
+        )
+    }
+
+    private func resetBankSnapshot(from value: Any?) -> CodexResetBankSnapshot? {
+        guard let json = value as? [String: Any] else { return nil }
+        return CodexResetBankSnapshot(
+            available: intValue(json["available"]),
+            count: intValue(json["count"])
+        )
+    }
+
+    private func windowDurationSeconds(for rateLimit: CodexRateLimit) -> Int? {
+        if let seconds = rateLimit.limitWindowSeconds { return seconds }
+        if let minutes = rateLimit.windowMinutes { return minutes * 60 }
+        if let minutes = rateLimit.windowDurationMins { return minutes * 60 }
+        return nil
+    }
+
+    private func quotaWindowType(
+        for rateLimit: CodexRateLimit,
+        positionalFallback: QuotaWindowType
+    ) -> QuotaWindowType {
+        guard let seconds = windowDurationSeconds(for: rateLimit) else {
+            return positionalFallback
+        }
+        let sessionDistance = abs(seconds - CodexWindowDuration.sessionSeconds)
+        let weeklyDistance = abs(seconds - CodexWindowDuration.weeklySeconds)
+        if sessionDistance <= CodexWindowDuration.toleranceSeconds,
+           sessionDistance <= weeklyDistance {
+            return .session
+        }
+        if weeklyDistance <= CodexWindowDuration.toleranceSeconds {
+            return .weekly
+        }
+        return positionalFallback
     }
 
     private func quotaWindows(
@@ -262,21 +357,66 @@ extension CodexJSONLParser {
             : .providerReported
 
         var windows: [QuotaWindow] = []
+        var sessionWindow: QuotaWindow?
+        var weeklyWindow: QuotaWindow?
+
         if let primary = snapshot.primary {
-            windows.append(quotaWindow(
-                type: .session,
+            let type = quotaWindowType(for: primary, positionalFallback: .session)
+            let window = quotaWindow(
+                type: type,
                 rateLimit: primary,
+                planType: snapshot.planType,
+                confidence: confidence
+            )
+            switch type {
+            case .session: sessionWindow = window
+            case .weekly: weeklyWindow = window
+            default: windows.append(window)
+            }
+        }
+        if let secondary = snapshot.secondary {
+            let type = quotaWindowType(for: secondary, positionalFallback: .weekly)
+            let window = quotaWindow(
+                type: type,
+                rateLimit: secondary,
+                planType: snapshot.planType,
+                confidence: confidence
+            )
+            switch type {
+            case .session where sessionWindow == nil: sessionWindow = window
+            case .weekly where weeklyWindow == nil: weeklyWindow = window
+            case .session: sessionWindow = window
+            case .weekly: weeklyWindow = window
+            default: windows.append(window)
+            }
+        }
+        if let sessionWindow { windows.append(sessionWindow) }
+        if let weeklyWindow { windows.append(weeklyWindow) }
+
+        if let individualLimit = snapshot.spendControlIndividualLimit {
+            windows.append(individualLimitWindow(
+                from: individualLimit,
                 planType: snapshot.planType,
                 confidence: confidence
             ))
         }
-        if let secondary = snapshot.secondary {
-            windows.append(quotaWindow(
-                type: .weekly,
-                rateLimit: secondary,
+        if let credits = snapshot.credits {
+            if let window = purchasableCreditsWindow(
+                from: credits,
                 planType: snapshot.planType,
                 confidence: confidence
-            ))
+            ) {
+                windows.append(window)
+            }
+        }
+        if let resetBank = snapshot.rateLimitResetCredits {
+            if let window = resetBankWindow(
+                from: resetBank,
+                planType: snapshot.planType,
+                confidence: confidence
+            ) {
+                windows.append(window)
+            }
         }
         return windows
     }
@@ -295,8 +435,97 @@ extension CodexJSONLParser {
             remaining: rateLimit.usedPercent.map { 100 - $0 },
             resetAt: rateLimit.resetsAt,
             confidence: confidence,
-            source: "Codex CLI rate_limits (\(sourcePlan(planType)), \(sourceWindow(type: type, minutes: rateLimit.windowMinutes)))"
+            source: "Codex CLI rate_limits (\(sourcePlan(planType)), \(sourceWindowLabel(for: rateLimit, type: type)))"
         )
+    }
+
+    private func individualLimitWindow(
+        from limit: CodexSpendControlLimit,
+        planType: String?,
+        confidence: MetricConfidence
+    ) -> QuotaWindow {
+        QuotaWindow(
+            providerID: .codex,
+            type: .credits,
+            used: limit.usedPercent,
+            limit: 100,
+            remaining: limit.remainingPercent,
+            resetAt: limit.resetsAt,
+            confidence: confidence,
+            source: "Codex CLI rate_limits (\(sourcePlan(planType)), monthly credit limit)",
+            label: "Monthly credit limit",
+            bucketKey: "spend_control_individual_limit"
+        )
+    }
+
+    private func purchasableCreditsWindow(
+        from credits: CodexCreditsSnapshot,
+        planType: String?,
+        confidence: MetricConfidence
+    ) -> QuotaWindow? {
+        guard credits.usedPercent != nil || credits.balance != nil || credits.limit != nil else {
+            return nil
+        }
+        let used = credits.usedPercent
+        let limit = credits.limit ?? (used != nil ? 100 : nil)
+        let remaining: Double?
+        if let used, let limit {
+            remaining = limit - used
+        } else {
+            remaining = credits.balance
+        }
+        return QuotaWindow(
+            providerID: .codex,
+            type: .credits,
+            used: used ?? credits.balance,
+            limit: limit,
+            remaining: remaining,
+            resetAt: nil,
+            confidence: confidence,
+            source: "Codex CLI rate_limits (\(sourcePlan(planType)), purchasable credits)",
+            label: "Purchasable credits",
+            bucketKey: "credits"
+        )
+    }
+
+    private func resetBankWindow(
+        from resetBank: CodexResetBankSnapshot,
+        planType: String?,
+        confidence: MetricConfidence
+    ) -> QuotaWindow? {
+        guard let count = resetBank.available ?? resetBank.count else { return nil }
+        let available = Double(count)
+        return QuotaWindow(
+            providerID: .codex,
+            type: .credits,
+            used: nil,
+            limit: available,
+            remaining: available,
+            resetAt: nil,
+            confidence: confidence,
+            source: "Codex CLI rate_limits (\(sourcePlan(planType)), reset bank)",
+            label: "Reset bank",
+            bucketKey: "reset_bank"
+        )
+    }
+
+    private func sourceWindowLabel(for rateLimit: CodexRateLimit, type: QuotaWindowType) -> String {
+        if let seconds = windowDurationSeconds(for: rateLimit) {
+            if abs(seconds - CodexWindowDuration.sessionSeconds) <= CodexWindowDuration.toleranceSeconds {
+                return "5h window"
+            }
+            if abs(seconds - CodexWindowDuration.weeklySeconds) <= CodexWindowDuration.toleranceSeconds {
+                return "weekly window"
+            }
+            if seconds.isMultiple(of: 3600) {
+                return "\(seconds / 3600)h window"
+            }
+            return "\(seconds)s window"
+        }
+        if let minutes = rateLimit.windowMinutes {
+            return sourceWindow(type: type, minutes: minutes)
+        }
+        return type == .weekly ? "weekly window" : "session window"
     }
 
     private func sourcePlan(_ planType: String?) -> String {
