@@ -42,3 +42,16 @@
   Overview/detail must reflow + scroll; test at narrow width in previews.
 - **Logos: monochrome template assets** (Render As = Template, tinted to ink) — on-theme + low
   trademark risk for public ship. Full-color brand logos clash with aitracker and add legal risk.
+
+## 2026-07-08 — Async connect needs a "fetching" state, not a silent empty
+
+- **Symptom:** user enabled Claude live quota, allowed the Keychain prompt, but the Overview row
+  still said "Connect live quota" and looked broken. Root cause (systematic-debug): the data path
+  was fine — the live fetch is async (~seconds + Keychain-allow delay); the row's unavailable
+  branch showed the "Connect →" affordance the whole time, indistinguishable from "not connected".
+- **Fix:** row reads the provider's enable flag (@AppStorage, same key the toggle writes). Flag ON
+  + no window yet → "FETCHING QUOTA…"; flag OFF → "Connect live quota →". A connected-but-waiting
+  state must never render as the not-connected call-to-action.
+- **How to apply:** any enable→async-fetch flow needs three visible states (off / fetching / live),
+  not two. Verify the transient, not just the settled state. Don't debug-by-guess — the store/cache
+  files proved the fetch worked before touching UI.

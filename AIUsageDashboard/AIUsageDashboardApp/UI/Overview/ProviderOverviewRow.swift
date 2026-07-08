@@ -20,10 +20,27 @@ struct ProviderOverviewRow: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Mirrors the provider's live-quota enable flag (same UserDefaults key the
+    /// Connections toggle writes). When it's ON but no window has arrived yet the
+    /// row reads as "fetching", never as "not connected" — so the seconds-long
+    /// first fetch after enabling can't masquerade as a broken/unconnected state.
+    @AppStorage private var liveEnabled: Bool
+
     /// Providers that have a live-quota connector on the Connections screen. Only
     /// these get the "Connect live quota →" affordance when unavailable; the rest
     /// (codex, cline) surface via local logs only and show a muted state instead.
     static let connectableProviders: Set<ProviderID> = [.claudeCode, .cursor, .antigravity]
+
+    /// The UserDefaults key the Connections toggle writes for a connectable
+    /// provider, or `nil` for local-only providers (codex, cline).
+    static func liveEnabledKey(for providerID: ProviderID) -> String? {
+        switch providerID {
+        case .claudeCode: return "claudeNetworkUsageEnabled"
+        case .cursor: return "cursorNetworkUsageEnabled"
+        case .antigravity: return "antigravityOnlineQuotaEnabled"
+        default: return nil
+        }
+    }
 
     init(
         providerID: ProviderID,
@@ -39,6 +56,12 @@ struct ProviderOverviewRow: View {
         self.tightest = tightest
         self.onOpen = onOpen
         self.onConnect = onConnect
+        // Non-connectable providers have no flag; a sentinel key keeps @AppStorage
+        // valid and simply always reads false for them (they use the local-only row).
+        _liveEnabled = AppStorage(
+            wrappedValue: false,
+            Self.liveEnabledKey(for: providerID) ?? "overview.noLiveConnector.\(providerID.rawValue)"
+        )
     }
 
     // MARK: Threshold color (shared quota semantics — reused by Overview)
@@ -107,16 +130,27 @@ struct ProviderOverviewRow: View {
             Spacer(minLength: 8)
 
             if Self.connectableProviders.contains(providerID) {
-                Button(action: onConnect) {
-                    Text("Connect live quota →")
+                if liveEnabled {
+                    // Already connected — the first live fetch just hasn't landed
+                    // yet (or is briefly cooling down). Read as fetching, not as an
+                    // un-connected "Connect" prompt, so enabling never looks broken.
+                    Text("FETCHING QUOTA…")
                         .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.accent)
+                        .foregroundColor(PadzyTheme.muted)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .contentShape(Rectangle())
+                } else {
+                    Button(action: onConnect) {
+                        Text("Connect live quota →")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.accent)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens Connections")
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens Connections")
             } else {
                 // codex / cline expose no online connector — honest muted state, no
                 // dead-end Connect button routing to a screen without their row.
