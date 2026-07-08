@@ -58,6 +58,10 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if !viewModel.showingSettings {
+                quotaHubStrip
+                HairlineDivider()
+            }
             HStack(spacing: 0) {
                 sidebar
                 Rectangle()
@@ -88,6 +92,46 @@ struct DashboardView: View {
             viewModel.beginAutoSync()
             await viewModel.refresh()
         }
+    }
+
+    // MARK: 00 / QUOTA
+
+    /// Cross-provider quota hub — one live tile per visible provider, driven by
+    /// the Wave-1 utilization spine (`viewModel.utilization`), never a recomputed
+    /// percentage. Makes quota parity visible at a glance instead of buried one
+    /// provider at a time in the detail pane.
+    private var quotaHubStrip: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EditorialKicker(number: "00", title: "QUOTA")
+                .padding(.horizontal, 20)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(ProviderID.allCases.filter { !ProviderVisibility.isHidden($0) }, id: \.self) { providerID in
+                        Button(action: {
+                            if viewModel.isAvailable(providerID) {
+                                viewModel.selectedProvider = providerID
+                            }
+                        }) {
+                            ProviderQuotaTile(
+                                providerID: providerID,
+                                displayName: viewModel.snapshot(for: providerID)?.displayName
+                                    ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").uppercased(),
+                                plan: viewModel.snapshot(for: providerID).flatMap { ProviderMetadata.planText(from: $0.warnings) },
+                                windows: viewModel.utilization.filter { $0.providerID == providerID },
+                                isSelected: viewModel.selectedProvider == providerID && !viewModel.showingSettings,
+                                isLoading: viewModel.isLoading && viewModel.snapshot(for: providerID) == nil
+                            )
+                            .frame(width: 260)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(.isButton)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .padding(.top, 20)
+        .padding(.bottom, 4)
     }
 
     // MARK: 01 / PROVIDERS
