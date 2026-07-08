@@ -52,7 +52,9 @@ struct OverviewView: View {
         guard let agg = viewModel.aggregateUtilization else {
             return "— NO LIVE QUOTA CONNECTED"
         }
-        return "\(Int(round(agg.usedPercent)))% PEAK · \(agg.coveredProviders.count) LIVE"
+        // `aggregateUtilization` is the MEAN of per-provider peaks (Core), so label
+        // it "AVG" — "PEAK" would misread as the single highest window.
+        return "\(Int(round(agg.usedPercent)))% AVG · \(agg.coveredProviders.count) LIVE"
     }
 
     var body: some View {

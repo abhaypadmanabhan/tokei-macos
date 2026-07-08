@@ -10,7 +10,7 @@ struct ConnectionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                EditorialKicker(number: "00", title: "CONNECTIONS")
+                EditorialKicker(title: "CONNECTIONS")
                 Text("Connect a coding agent to read its live quota. Local-first — off by default.")
                     .font(.system(size: 12))
                     .foregroundColor(PadzyTheme.muted)

@@ -20,6 +20,11 @@ struct ProviderOverviewRow: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Providers that have a live-quota connector on the Connections screen. Only
+    /// these get the "Connect live quota →" affordance when unavailable; the rest
+    /// (codex, cline) surface via local logs only and show a muted state instead.
+    static let connectableProviders: Set<ProviderID> = [.claudeCode, .cursor, .antigravity]
+
     init(
         providerID: ProviderID,
         displayName: String,
@@ -101,16 +106,26 @@ struct ProviderOverviewRow: View {
 
             Spacer(minLength: 8)
 
-            Button(action: onConnect) {
-                Text("Connect live quota →")
+            if Self.connectableProviders.contains(providerID) {
+                Button(action: onConnect) {
+                    Text("Connect live quota →")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.accent)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens Connections")
+            } else {
+                // codex / cline expose no online connector — honest muted state, no
+                // dead-end Connect button routing to a screen without their row.
+                Text("LOCAL LOGS ONLY")
                     .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.accent)
+                    .foregroundColor(PadzyTheme.muted)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens Connections")
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 14)

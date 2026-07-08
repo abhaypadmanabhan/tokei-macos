@@ -36,6 +36,12 @@ struct DashboardView: View {
         ProviderCapabilityTier.classify(selectedSnapshot)
     }
 
+    /// First non-hidden provider in sidebar order — the row that up-arrow escapes
+    /// upward from (into Overview) and that down-arrow from Overview lands on.
+    private var firstVisibleProvider: ProviderID? {
+        ProviderID.allCases.first { !ProviderVisibility.isHidden($0) }
+    }
+
     /// Advances selection, skipping hidden providers. Bounded by the provider
     /// count so an all-hidden state can never loop forever.
     private func selectNextVisible() {
@@ -78,16 +84,47 @@ struct DashboardView: View {
         .onMoveCommand { direction in
             switch direction {
             case .up:
-                selectPreviousVisible()
-                section = .provider(viewModel.selectedProvider)
-                viewModel.showingSettings = false
+                // Only meaningful from within the provider list: escape to Overview
+                // when already on the top provider, otherwise step up one row.
+                if case .provider = section {
+                    if viewModel.selectedProvider == firstVisibleProvider {
+                        section = .overview
+                    } else {
+                        selectPreviousVisible()
+                        section = .provider(viewModel.selectedProvider)
+                    }
+                    viewModel.showingSettings = false
+                }
             case .down:
-                selectNextVisible()
-                section = .provider(viewModel.selectedProvider)
-                viewModel.showingSettings = false
+                switch section {
+                case .overview:
+                    // Enter the provider list at its top row.
+                    if let first = firstVisibleProvider {
+                        viewModel.selectedProvider = first
+                        section = .provider(first)
+                        viewModel.showingSettings = false
+                    }
+                case .provider:
+                    selectNextVisible()
+                    section = .provider(viewModel.selectedProvider)
+                    viewModel.showingSettings = false
+                default:
+                    break
+                }
             default:
                 break
             }
+        }
+        // Menu-bar Settings sets `viewModel.showingSettings`; route the pane there on
+        // the RISING edge only, so section-driven writes back to `false` don't fight it.
+        .onChange(of: viewModel.showingSettings) { _, isShowing in
+            if isShowing { section = .settings }
+        }
+        // Catch the case where the flag was already true before this view appeared —
+        // e.g. the dashboard window is created fresh by the menu-bar Settings action,
+        // so `onChange` never sees the transition.
+        .onAppear {
+            if viewModel.showingSettings { section = .settings }
         }
         .onReceive(countdownTimer) { _ in
             countdownTick = Date()
@@ -216,12 +253,18 @@ struct DashboardView: View {
                     viewModel.selectedProvider = providerID
                     viewModel.showingSettings = false
                 },
-                onConnect: { section = .connections }
+                onConnect: {
+                    section = .connections
+                    viewModel.showingSettings = false
+                }
             )
         case .connections:
             ConnectionsView()
         case .settings:
-            SettingsPane(onOpenConnections: { section = .connections })
+            SettingsPane(onOpenConnections: {
+                section = .connections
+                viewModel.showingSettings = false
+            })
         case .provider:
             providerDetailPane
         }
