@@ -3,20 +3,37 @@ import Foundation
 public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     public let id: ProviderID = .claudeCode
     public let displayName: String = "Claude Code"
-    public let capabilities: ProviderCapabilities = [.localLog, .tokenUsage]
+
+    public nonisolated var capabilities: ProviderCapabilities {
+        if userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled") {
+            return [.localLog, .tokenUsage, .quota, .providerEndpoint]
+        }
+        return [.localLog, .tokenUsage]
+    }
 
     private let fileManager: FileManager
     private let parser: ClaudeJSONLParser
+    private let claudeDirectoryURL: URL
+    private let usageClient: ClaudeUsageClient
+    private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
-    public init(fileManager: FileManager = .default, parser: ClaudeJSONLParser = .init()) {
+    public init(
+        fileManager: FileManager = .default,
+        parser: ClaudeJSONLParser = .init(),
+        claudeDirectoryURL: URL? = nil,
+        usageClient: ClaudeUsageClient? = nil,
+        userDefaults: UserDefaults = .standard
+    ) {
         self.fileManager = fileManager
         self.parser = parser
+        self.claudeDirectoryURL = claudeDirectoryURL ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude", isDirectory: true)
+        self.usageClient = usageClient ?? ClaudeUsageClientImpl()
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
     public func detectAvailability() async -> ProviderAvailability {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let claudeDir = home.appendingPathComponent(".claude", isDirectory: true)
-        return fileManager.fileExists(atPath: claudeDir.path) ? .installed : .notInstalled
+        fileManager.fileExists(atPath: claudeDirectoryURL.path) ? .installed : .notInstalled
     }
 
     public func authenticate() async throws -> AuthStatus {
@@ -40,7 +57,22 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let usage = await parser.parse(logSources: logs)
         warnings.append(contentsOf: usage.warnings)
 
-        if warnings.isEmpty {
+        var quotaWindows = Self.unavailableQuotaWindows(providerID: id)
+        if userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled") {
+            do {
+                let liveWindows = try await usageClient.fetchQuotaWindows()
+                if !liveWindows.isEmpty {
+                    quotaWindows = liveWindows
+                }
+            } catch {
+                warnings.append(ProviderWarning(
+                    message: "Claude online usage request failed: \(error.localizedDescription). Falling back to local logs only.",
+                    level: .warning
+                ))
+            }
+        }
+
+        if warnings.isEmpty && quotaWindows.allSatisfy({ $0.confidence == .unavailable }) {
             warnings.append(ProviderWarning(message: "Local logs only; quotas unavailable", level: .info))
         }
 
@@ -48,28 +80,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             providerID: id,
             displayName: displayName,
             authStatus: .unknown,
-            quotaWindows: [
-                QuotaWindow(
-                    providerID: id,
-                    type: .session,
-                    used: nil,
-                    limit: nil,
-                    remaining: nil,
-                    resetAt: nil,
-                    confidence: .unavailable,
-                    source: "Claude session limits not available from local logs"
-                ),
-                QuotaWindow(
-                    providerID: id,
-                    type: .weekly,
-                    used: nil,
-                    limit: nil,
-                    remaining: nil,
-                    resetAt: nil,
-                    confidence: .unavailable,
-                    source: "Claude weekly limits not available from local logs"
-                )
-            ],
+            quotaWindows: quotaWindows,
             todayUsage: usage.today,
             weekUsage: usage.week,
             monthUsage: usage.month,
@@ -82,8 +93,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     }
 
     public func discoverLogSources() async throws -> [LogSource] {
-        let home = fileManager.homeDirectoryForCurrentUser
-        let projectsDir = home.appendingPathComponent(".claude/projects", isDirectory: true)
+        let projectsDir = claudeDirectoryURL.appendingPathComponent("projects", isDirectory: true)
         var sources: [LogSource] = []
 
         let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.isDirectoryKey])
@@ -105,5 +115,30 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         }
 
         return sources
+    }
+
+    private static func unavailableQuotaWindows(providerID: ProviderID) -> [QuotaWindow] {
+        [
+            QuotaWindow(
+                providerID: providerID,
+                type: .session,
+                used: nil,
+                limit: nil,
+                remaining: nil,
+                resetAt: nil,
+                confidence: .unavailable,
+                source: "Claude session limits not available from local logs"
+            ),
+            QuotaWindow(
+                providerID: providerID,
+                type: .weekly,
+                used: nil,
+                limit: nil,
+                remaining: nil,
+                resetAt: nil,
+                confidence: .unavailable,
+                source: "Claude weekly limits not available from local logs"
+            )
+        ]
     }
 }
