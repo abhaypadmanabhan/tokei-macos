@@ -15,7 +15,7 @@ enum CursorSession {
     /// `nil` (no request) is deliberately preferred over sending a malformed cookie
     /// that Cursor would reject.
     static func cookie(jwt: String) -> String? {
-        guard let userID = userID(fromJWT: jwt), !jwt.isEmpty else { return nil }
+        guard let userID = userID(fromJWT: jwt) else { return nil }
         return "WorkosCursorSessionToken=\(userID)%3A%3A\(jwt)"
     }
 

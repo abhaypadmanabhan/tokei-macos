@@ -25,6 +25,21 @@ public actor CursorStateDBParser {
             self.acceptedLinesByDate = acceptedLinesByDate
             self.warnings = warnings
         }
+
+        /// Display plan label composed from the structured membership/subscription
+        /// fields (e.g. "Pro (active)"), or nil when neither is present. The "Plan:"
+        /// info warning is built from this — callers read it directly rather than
+        /// re-parsing the warning string.
+        public var planLabel: String? {
+            Self.composePlanLabel(membershipType: membershipType, subscriptionStatus: subscriptionStatus)
+        }
+
+        static func composePlanLabel(membershipType: String?, subscriptionStatus: String?) -> String? {
+            guard membershipType != nil || subscriptionStatus != nil else { return nil }
+            return [membershipType?.capitalized, subscriptionStatus.map { "(\($0))" }]
+                .compactMap { $0 }
+                .joined(separator: " ")
+        }
     }
 
     private let fileManager: FileManager
@@ -148,10 +163,9 @@ public actor CursorStateDBParser {
         }
 
         var warnings: [ProviderWarning] = []
-        if membershipType != nil || subscriptionStatus != nil {
-            let plan = [membershipType?.capitalized, subscriptionStatus.map { "(\($0))" }]
-                .compactMap { $0 }
-                .joined(separator: " ")
+        if let plan = OfflineState.composePlanLabel(
+            membershipType: membershipType, subscriptionStatus: subscriptionStatus
+        ) {
             warnings.append(ProviderWarning(message: "Plan: \(plan)", level: .info))
         }
 

@@ -57,7 +57,7 @@ struct UsageWindows: Sendable {
         )
     }
 
-    static func emptyUsage(_ confidence: MetricConfidence = .localParsed) -> TokenUsage {
+    static func emptyUsage(_ confidence: MetricConfidence) -> TokenUsage {
         TokenUsage(
             inputTokens: 0,
             outputTokens: 0,
@@ -81,6 +81,11 @@ enum JSONLDateParsing {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
+
+    /// Parse an ISO8601 instant string, tolerating fractional seconds.
+    static func iso8601(_ string: String) -> Date? {
+        fractional.date(from: string) ?? standard.date(from: string)
+    }
 
     static func parseTimestamp(from json: [String: Any]) -> Date? {
         if let ts = json["timestamp"] as? TimeInterval {

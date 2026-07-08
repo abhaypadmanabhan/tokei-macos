@@ -82,7 +82,7 @@ public actor CursorProvider: UsageProvider {
                         resetAt: summary.resetAt,
                         confidence: .providerReported,
                         source: "cursor.com/api/usage-summary",
-                        label: planLabel(from: warnings) ?? summary.membershipType
+                        label: state.planLabel ?? summary.membershipType
                     )]
                 }
             case .missingSession:
@@ -150,6 +150,7 @@ public actor CursorProvider: UsageProvider {
                 referenceDate: now(),
                 emptyConfidence: .providerReported
             )
+            var totalCost = 0.0
             for event in events {
                 windows.accumulate(
                     TokenUsage(
@@ -163,9 +164,9 @@ public actor CursorProvider: UsageProvider {
                     timestamp: event.date,
                     dailyTotal: event.totalTokens
                 )
+                totalCost += event.cost
             }
             let windowed = windows.snapshot()
-            let totalCost = events.reduce(0) { $0 + $1.cost }
 
             return .success(OnlineUsage(
                 today: windowed.today,
@@ -190,17 +191,5 @@ public actor CursorProvider: UsageProvider {
     /// discard the token usage we did fetch, so it never throws.
     private func fetchSummarySafely(cookie: String) async -> Data? {
         try? await usageClient.fetchUsageSummary(cookie: cookie)
-    }
-
-    /// Pulls the label out of the offline `"Plan: <text>"` info warning, the one
-    /// sanctioned channel for plan/tier (no new `ProviderSnapshot` field).
-    private func planLabel(from warnings: [ProviderWarning]) -> String? {
-        for warning in warnings where warning.level == .info {
-            if let range = warning.message.range(of: "Plan:", options: [.caseInsensitive]) {
-                let label = warning.message[range.upperBound...].trimmingCharacters(in: .whitespaces)
-                if !label.isEmpty { return label }
-            }
-        }
-        return nil
     }
 }

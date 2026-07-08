@@ -109,57 +109,59 @@ public struct CursorUsageEvent: Sendable, Equatable {
 /// (Cursor reorders/inserts columns over time), so only the required header
 /// strings matter, not their positions.
 public enum CursorUsageCSV {
-    private static let requiredColumns = [
-        "Date", "Model", "Input (w/ Cache Write)", "Input (w/o Cache Write)",
-        "Cache Read", "Output Tokens", "Cost"
-    ]
-
     public static func parseEvents(_ csv: String) -> [CursorUsageEvent] {
-        var rows = csv.split(whereSeparator: \.isNewline).map(String.init)
-        guard !rows.isEmpty else { return [] }
+        let rows = csv.split(whereSeparator: \.isNewline)
+        guard let headerRow = rows.first else { return [] }
 
-        let header = splitFields(rows.removeFirst())
         var index: [String: Int] = [:]
-        for (position, name) in header.enumerated() where index[name] == nil {
+        for (position, name) in splitFields(headerRow).enumerated() where index[name] == nil {
             index[name] = position
         }
-        guard requiredColumns.allSatisfy({ index[$0] != nil }) else { return [] }
+        // Resolve the required column positions once; positions are stable per file.
+        guard let dateCol = index["Date"],
+              let modelCol = index["Model"],
+              let inputWithCol = index["Input (w/ Cache Write)"],
+              let inputWithoutCol = index["Input (w/o Cache Write)"],
+              let cacheReadCol = index["Cache Read"],
+              let outputCol = index["Output Tokens"],
+              let costCol = index["Cost"] else { return [] }
 
-        func field(_ fields: [String], _ column: String) -> String? {
-            guard let position = index[column], position < fields.count else { return nil }
-            return fields[position]
+        func field(_ fields: [String], _ column: Int) -> String? {
+            column < fields.count ? fields[column] : nil
         }
 
-        return rows.compactMap { row -> CursorUsageEvent? in
+        return rows.dropFirst().compactMap { row -> CursorUsageEvent? in
             let fields = splitFields(row)
-            guard let dateString = field(fields, "Date"), let date = parseDate(dateString) else {
+            guard let dateString = field(fields, dateCol), let date = parseDate(dateString) else {
                 return nil
             }
-            let inputWithout = intValue(field(fields, "Input (w/o Cache Write)"))
-            let inputWith = intValue(field(fields, "Input (w/ Cache Write)"))
+            let inputWithout = intValue(field(fields, inputWithoutCol))
+            let inputWith = intValue(field(fields, inputWithCol))
             let cacheWrite = max(0, inputWith - inputWithout)
-            let cacheRead = intValue(field(fields, "Cache Read"))
-            let output = intValue(field(fields, "Output Tokens"))
+            let cacheRead = intValue(field(fields, cacheReadCol))
+            let output = intValue(field(fields, outputCol))
 
-            // Drop rows with no usage at all; keep non-billable rows (they are real usage).
+            // Every term is non-negative, so total > 0 already means "some usage" —
+            // drops all-zero rows (e.g. errored/no-charge), keeps non-billable usage.
             let total = inputWithout + cacheWrite + cacheRead + output
-            guard total > 0 || inputWithout > 0 || output > 0 else { return nil }
+            guard total > 0 else { return nil }
 
             return CursorUsageEvent(
                 date: date,
-                model: field(fields, "Model") ?? "",
+                model: field(fields, modelCol) ?? "",
                 inputTokens: inputWithout,
                 cacheWriteTokens: cacheWrite,
                 cacheReadTokens: cacheRead,
                 outputTokens: output,
-                cost: floatValue(field(fields, "Cost"))
+                cost: floatValue(field(fields, costCol))
             )
         }
     }
 
     /// RFC4180-ish field split: honours double-quoted fields (which may contain
     /// commas) and `""` escapes. Trims surrounding whitespace on unquoted fields.
-    static func splitFields(_ line: String) -> [String] {
+    /// Takes `StringProtocol` so it can split `Substring` rows without copying them.
+    static func splitFields<S: StringProtocol>(_ line: S) -> [String] {
         var fields: [String] = []
         var current = ""
         var inQuotes = false
@@ -214,9 +216,7 @@ public enum CursorUsageCSV {
     /// `yyyy-MM-dd` is also accepted. All treated as UTC instants.
     static func parseDate(_ raw: String) -> Date? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if let date = JSONLDateParsing.fractional.date(from: trimmed) { return date }
-        if let date = JSONLDateParsing.standard.date(from: trimmed) { return date }
-        return dayOnlyFormatter.date(from: trimmed)
+        return JSONLDateParsing.iso8601(trimmed) ?? dayOnlyFormatter.date(from: trimmed)
     }
 
     private static let dayOnlyFormatter: DateFormatter = {
@@ -254,7 +254,7 @@ public struct CursorUsageSummary: Sendable, Equatable {
         let individual = root["individualUsage"] as? [String: Any]
         let plan = individual?["plan"] as? [String: Any]
 
-        let reset = (root["billingCycleEnd"] as? String).flatMap(parseISODate)
+        let reset = (root["billingCycleEnd"] as? String).flatMap(JSONLDateParsing.iso8601)
         return CursorUsageSummary(
             usedPercent: percentUsed(plan: plan),
             resetAt: reset,
@@ -286,10 +286,5 @@ public struct CursorUsageSummary: Sendable, Equatable {
         if let number = value as? NSNumber { return number.doubleValue }
         if let string = value as? String { return Double(string) }
         return nil
-    }
-
-    private static func parseISODate(_ string: String) -> Date? {
-        if let date = JSONLDateParsing.fractional.date(from: string) { return date }
-        return JSONLDateParsing.standard.date(from: string)
     }
 }
