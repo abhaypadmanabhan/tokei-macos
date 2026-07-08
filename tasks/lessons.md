@@ -22,3 +22,8 @@
 - **Set `request.httpShouldHandleCookies = false` when sending an explicit `Cookie` header** — otherwise URLSession's cookie storage can override/strip it and the authenticated call silently fails.
 - **CSV `Date` is UTC ISO8601-with-ms**; bucket to the user's local day via `Calendar.current` for consistency with the other providers (they window on local calendar days).
 - **Read structured fields, don't regex-scrape a display string.** First cut recovered the plan label by matching the `"Plan: <text>"` info warning; the structured `membershipType`/`subscriptionStatus` were already on the parsed state. `/simplify`'s altitude lens caught the layering inversion — expose a computed `planLabel` on the state instead.
+
+## Antigravity Stale-Serve Quota Cache — 2026-07-08
+
+- **Unit Testing Date-Sensitive Filtering**:
+  - *Rule*: When unit-testing components that filter data based on system time (e.g. dropping cached buckets whose resetTime is in the past, or checking cache expiry), always inject a mock clock/date provider returning a fixed test date instead of using `Date()`. This ensures tests are stable across execution environments and prevents failures due to real-time differences relative to fixed test fixtures.
