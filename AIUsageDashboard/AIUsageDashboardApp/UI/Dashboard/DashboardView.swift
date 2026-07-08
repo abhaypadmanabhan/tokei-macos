@@ -73,7 +73,7 @@ struct DashboardView: View {
         }
         .background(PadzyTheme.ground)
         .preferredColorScheme(.dark)
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: 640, minHeight: 480)
         .focusable()
         .onMoveCommand { direction in
             switch direction {
@@ -221,7 +221,7 @@ struct DashboardView: View {
         case .connections:
             ConnectionsView()
         case .settings:
-            SettingsPane()
+            SettingsPane(onOpenConnections: { section = .connections })
         case .provider:
             providerDetailPane
         }
