@@ -20,6 +20,8 @@ final class AntigravityQuotaClientTests: XCTestCase {
 
     override func tearDown() {
         userDefaults.removeObject(forKey: "antigravityOnlineQuotaEnabled")
+        MockURLProtocol.mockResponse = nil
+        MockURLProtocol.mockError = nil
         try? FileManager.default.removeItem(at: tempDirectory)
         super.tearDown()
     }
@@ -175,6 +177,176 @@ final class AntigravityQuotaClientTests: XCTestCase {
         sqlite3_bind_text(statement, 2, value, -1, sqliteTransient)
         XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
     }
+
+    func testCacheSavesOnSuccessfulFetch() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let payloadData = AntigravityFixtures.quotaSummaryJSON.data(using: .utf8)!
+        MockURLProtocol.mockResponse = (payloadData, 200)
+        MockURLProtocol.mockError = nil
+
+        let discoverer = MockDiscoverer(endpoint: AntigravityQuotaEndpoint(csrfToken: "csrf", listenPorts: [1234]))
+        let client = AntigravityQuotaClientImpl(
+            urlSession: session,
+            discoverer: discoverer,
+            cacheDirectory: tempDirectory,
+            cacheFileName: "test-quota-cache.json"
+        )
+
+        let windows = try await client.fetchQuotaWindows()
+        XCTAssertEqual(windows.count, 4)
+
+        // Verify file is saved
+        let cacheFile = tempDirectory.appendingPathComponent("test-quota-cache.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheFile.path))
+
+        let data = try Data(contentsOf: cacheFile)
+        // Check structure
+        struct ExpectedCachedQuota: Codable {
+            let timestamp: Date
+            let rawPayload: Data
+        }
+        let cached = try JSONDecoder().decode(ExpectedCachedQuota.self, from: data)
+        XCTAssertEqual(cached.rawPayload, payloadData)
+    }
+
+    func testServeStaleCacheWhenRPCUnreachable() async throws {
+        let cacheFile = tempDirectory.appendingPathComponent("test-quota-cache.json")
+        let payloadData = AntigravityFixtures.quotaSummaryJSON.data(using: .utf8)!
+        
+        struct ExpectedCachedQuota: Codable {
+            let timestamp: Date
+            let rawPayload: Data
+        }
+        
+        let testNow = isoDate("2026-07-06T12:00:00Z")!
+        let cached = ExpectedCachedQuota(timestamp: testNow, rawPayload: payloadData)
+        let encoded = try JSONEncoder().encode(cached)
+        try encoded.write(to: cacheFile)
+
+        let discoverer = MockDiscoverer(endpoint: nil) // Discovery fails
+        let client = AntigravityQuotaClientImpl(
+            urlSession: nil,
+            discoverer: discoverer,
+            now: { testNow },
+            cacheDirectory: tempDirectory,
+            cacheFileName: "test-quota-cache.json"
+        )
+
+        let windows = try await client.fetchQuotaWindows()
+        XCTAssertEqual(windows.count, 4)
+
+        for window in windows {
+            XCTAssertEqual(window.source, "antigravity-local-rpc (stale)")
+            XCTAssertEqual(window.confidence, .estimated)
+        }
+    }
+
+    func testStaleCacheIgnoredIfOlderThanSevenDays() async throws {
+        let cacheFile = tempDirectory.appendingPathComponent("test-quota-cache.json")
+        let payloadData = AntigravityFixtures.quotaSummaryJSON.data(using: .utf8)!
+        
+        struct ExpectedCachedQuota: Codable {
+            let timestamp: Date
+            let rawPayload: Data
+        }
+        
+        let testNow = isoDate("2026-07-08T12:00:00Z")!
+        let eightDaysAgo = testNow.addingTimeInterval(-8 * 24 * 3600)
+        let cached = ExpectedCachedQuota(timestamp: eightDaysAgo, rawPayload: payloadData)
+        let encoded = try JSONEncoder().encode(cached)
+        try encoded.write(to: cacheFile)
+
+        let discoverer = MockDiscoverer(endpoint: nil) // Discovery fails
+        let client = AntigravityQuotaClientImpl(
+            urlSession: nil,
+            discoverer: discoverer,
+            now: { testNow },
+            cacheDirectory: tempDirectory,
+            cacheFileName: "test-quota-cache.json"
+        )
+
+        do {
+            _ = try await client.fetchQuotaWindows()
+            XCTFail("Expected fetch to throw discovery error because cache is expired")
+        } catch AntigravityQuotaError.discoveryUnavailable {
+            // Expected
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testExpiredBucketsAreDroppedFromStaleCache() async throws {
+        let cacheFile = tempDirectory.appendingPathComponent("test-quota-cache.json")
+        let payloadData = AntigravityFixtures.quotaSummaryJSON.data(using: .utf8)!
+        
+        struct ExpectedCachedQuota: Codable {
+            let timestamp: Date
+            let rawPayload: Data
+        }
+        
+        let testNow = isoDate("2026-07-08T12:00:00Z")!
+        let cached = ExpectedCachedQuota(timestamp: testNow, rawPayload: payloadData)
+        let encoded = try JSONEncoder().encode(cached)
+        try encoded.write(to: cacheFile)
+
+        let discoverer = MockDiscoverer(endpoint: nil) // Discovery fails
+        let client = AntigravityQuotaClientImpl(
+            urlSession: nil,
+            discoverer: discoverer,
+            now: { testNow },
+            cacheDirectory: tempDirectory,
+            cacheFileName: "test-quota-cache.json"
+        )
+
+        let windows = try await client.fetchQuotaWindows()
+        // Only 2 windows should be returned (the weekly ones, since the 5h ones reset on 2026-07-07)
+        XCTAssertEqual(windows.count, 2)
+        XCTAssertTrue(windows.contains { $0.bucketKey == "gemini-weekly" })
+        XCTAssertTrue(windows.contains { $0.bucketKey == "3p-weekly" })
+        XCTAssertFalse(windows.contains { $0.bucketKey == "gemini-5h" })
+        XCTAssertFalse(windows.contains { $0.bucketKey == "3p-5h" })
+    }
+}
+
+private struct MockDiscoverer: AntigravityQuotaEndpointDiscovering {
+    let endpoint: AntigravityQuotaEndpoint?
+    func discoverEndpoint() async -> AntigravityQuotaEndpoint? {
+        endpoint
+    }
+}
+
+private final class MockURLProtocol: URLProtocol {
+    static var mockResponse: (data: Data, statusCode: Int)?
+    static var mockError: Error?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        if let error = Self.mockError {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+        guard let (data, statusCode) = Self.mockResponse else {
+            client?.urlProtocol(self, didFailWithError: NSError(domain: "MockURLProtocol", code: -1))
+            return
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: statusCode,
+            httpVersion: "HTTP/1.1",
+            headerFields: nil
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private struct NoProcessAntigravityQuotaClient: AntigravityQuotaClient {
