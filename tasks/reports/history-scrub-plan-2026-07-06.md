@@ -44,7 +44,7 @@ git filter-repo --replace-text \
 git remote add origin https://github.com/abhaypadmanabhan/tokei-macos.git
 
 # 5. VERIFY the fragment is gone from all history (expect empty output)
-git rev-list --all | while read c; do git grep -lI 'sk-ant-oat01-qCV5O13G' "$c"; done
+git rev-list --all | while read c; do git grep -lI 'sk-ant-oat01-<HEAD-FRAG>' "$c"; done  # head fragment kept in scratchpad only
 
 # 6. Force-push the rewritten history to the PUBLIC repo  ← DESTRUCTIVE, point of no return
 git push --force origin main
