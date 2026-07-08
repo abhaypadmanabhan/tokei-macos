@@ -7,7 +7,14 @@ public final class DashboardViewModel: ObservableObject {
     @Published public var isLoading = false
     @Published public var errorMessage: String?
     @Published public var lastSyncedAt: Date?
-    @Published public var selectedProvider: ProviderID = .claudeCode
+    /// Selecting any provider always exits the Settings pane (they are one right-pane
+    /// selection), so the invariant lives here rather than at every call site.
+    @Published public var selectedProvider: ProviderID = .claudeCode {
+        didSet { showingSettings = false }
+    }
+    /// When true the dashboard's right pane shows the in-app Settings surface instead
+    /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
+    @Published public var showingSettings = false
 
     private let syncEngine: SyncEngine
     private var updatesTask: Task<Void, Never>?
@@ -61,7 +68,15 @@ public final class DashboardViewModel: ObservableObject {
         let nonUnavailableQuotaWindows = snapshot.quotaWindows.filter { $0.confidence != .unavailable }
         let hasTokens = snapshot.todayUsage.totalTokens != nil && snapshot.todayUsage.confidence != .unavailable && snapshot.todayUsage.totalTokens! > 0
         let hasCost = snapshot.costUsage?.amount != nil && snapshot.costUsage?.confidence != .unavailable
-        return hasTokens || !nonUnavailableQuotaWindows.isEmpty || hasCost
+        // A provider is also "available" when it exposes a plan/tier signal (a `"Plan:"`
+        // info warning) or local daily-activity totals, even with no token/quota/cost data —
+        // e.g. Cursor offline (plan + accepted-lines). Without this, plan-only providers
+        // render as UNAVAILABLE despite being connected.
+        let hasPlanSignal = snapshot.warnings.contains {
+            $0.level == .info && $0.message.range(of: "Plan:", options: [.caseInsensitive]) != nil
+        }
+        let hasDailyTotals = !(snapshot.dailyTotals?.isEmpty ?? true)
+        return hasTokens || !nonUnavailableQuotaWindows.isEmpty || hasCost || hasPlanSignal || hasDailyTotals
     }
 
     public func selectNextProvider() {
@@ -88,6 +103,30 @@ public final class DashboardViewModel: ObservableObject {
 
     public var menuBarTodayTotal: Int {
         snapshots.compactMap { isAvailable($0.providerID) ? $0.todayUsage.totalTokens : nil }.reduce(0, +)
+    }
+
+    // MARK: - Utilization spine (additive, read-only — derived from `snapshots`)
+
+    /// The unified live-quota % across providers, mapped from the current snapshots.
+    /// Purely derived; does not change any published state.
+    public var utilization: [Utilization] {
+        UtilizationEngine.utilizations(from: snapshots)
+    }
+
+    /// The single "today's utilization across plans" aggregate, with the context
+    /// (covered providers, coverage flag) needed to explain it. `nil` when no
+    /// provider reports usable quota.
+    public var aggregateUtilization: AggregateUtilization? {
+        UtilizationEngine.aggregate(from: snapshots)
+    }
+
+    /// Convenience: just the aggregate percentage, `nil` when no coverage.
+    /// "Today" is the product framing (the denominator of "am I maxxing today"),
+    /// not a daily window — the underlying value is a horizon-agnostic peak across
+    /// each provider's windows (see `AggregateUtilization`). The Maxxer Score (#23)
+    /// owns whether to weight or split by horizon.
+    public var aggregateUtilizationToday: Double? {
+        aggregateUtilization?.usedPercent
     }
 }
 

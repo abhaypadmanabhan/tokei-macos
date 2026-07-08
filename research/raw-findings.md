@@ -918,7 +918,7 @@
   },
   {
    "claim": "The stored Keychain credential is a JSON object containing accessToken (prefixed sk-ant-oat01-), refreshToken, and expiresAt (ISO 8601 timestamp) fields.",
-   "quote": "{\"accessToken\":\"sk-ant-oat01-[REDACTED]\",\"refreshToken\":\"...\",\"expiresAt\":\"[REDACTED]\"}",
+   "quote": "{\"accessToken\":\"sk-ant-oat01-[REDACTED]\",\"refreshToken\":\"[REDACTED]\",\"expiresAt\":\"[REDACTED]\"}",
    "importance": "supporting"
   },
   {

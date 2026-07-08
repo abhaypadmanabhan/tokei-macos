@@ -45,7 +45,7 @@
 
 - **Auth (macOS)**: Keychain item service name `Claude Code-credentials`
   - Retrieve: `security find-generic-password -s 'Claude Code-credentials' -w`
-  - Returns JSON: `{accessToken: "sk-ant-oat01-...", refreshToken: "...", expiresAt: "[REDACTED]"}`
+  - Returns JSON: `{accessToken: "sk-ant-oat01-[REDACTED]", refreshToken: "[REDACTED]", expiresAt: "[REDACTED]"}`
   - Fallback: `~/.claude/.credentials.json` (Linux/Windows) or `CLAUDE_CODE_OAUTH_TOKEN` env var
 
 ### Network Endpoints

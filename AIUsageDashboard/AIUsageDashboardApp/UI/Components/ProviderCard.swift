@@ -5,6 +5,7 @@ struct ProviderCard: View {
     let providerID: ProviderID
     let displayName: String
     let todayUsage: TokenUsage?
+    let tier: ProviderCapabilityTier
     let isSelected: Bool
     let isAvailable: Bool
 
@@ -29,19 +30,25 @@ struct ProviderCard: View {
                         .font(.display(size: 13, weight: .bold))
                         .foregroundColor(isAvailable ? PadzyTheme.ink : PadzyTheme.muted)
 
-                    if isAvailable, let usage = todayUsage {
+                    if !isAvailable {
+                        Text("UNAVAILABLE")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.muted)
+                    } else if tier == .fullMetrics, let usage = todayUsage {
                         Text("TODAY: \(TokenFormatter.format(usage.totalTokens))")
                             .font(.mono(size: 11))
                             .foregroundColor(PadzyTheme.muted)
                     } else {
-                        Text("UNAVAILABLE")
+                        // Honest label for a provider that is installed/detected but
+                        // has no token-usage signal yet — never reads as broken.
+                        Text(tier.label)
                             .font(.mono(size: 11))
                             .foregroundColor(PadzyTheme.muted)
                     }
                 }
                 Spacer()
 
-                if isAvailable, let usage = todayUsage {
+                if isAvailable, tier == .fullMetrics, let usage = todayUsage {
                     ConfidenceBadge(confidence: usage.confidence)
                 }
             }

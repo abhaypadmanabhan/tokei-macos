@@ -125,6 +125,8 @@ extension QuotaWindow: Codable {
         case resetAt
         case confidence
         case source
+        case label
+        case bucketKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -137,6 +139,8 @@ extension QuotaWindow: Codable {
         resetAt = try container.decodeIfPresent(Date.self, forKey: .resetAt)
         confidence = try container.decode(MetricConfidence.self, forKey: .confidence)
         source = try container.decode(String.self, forKey: .source)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        bucketKey = try container.decodeIfPresent(String.self, forKey: .bucketKey)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -149,6 +153,8 @@ extension QuotaWindow: Codable {
         try container.encodeIfPresent(resetAt, forKey: .resetAt)
         try container.encode(confidence, forKey: .confidence)
         try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(label, forKey: .label)
+        try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
     }
 }
 

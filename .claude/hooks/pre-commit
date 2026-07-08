@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Tokei worktree pre-commit hook.
+# Installed into each agent worktree's .git/hooks/pre-commit by /morning-patch.
+# Runs the FAST, cheap gates so bad commits never enter an agent branch.
+# Heavy gates (build/test) run at /agents-done merge time, not per-commit.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+common="$(git rev-parse --path-format=absolute --git-common-dir)"
+gates="$(dirname "$common")/.claude/gates"
+# In a worktree, --git-common-dir points at the MAIN repo's .git, so gates
+# resolve to the main checkout's .claude/gates (single source of truth).
+if [ ! -d "$gates" ]; then gates="$root/.claude/gates"; fi
+
+echo "[pre-commit] running fast gates from $gates"
+for g in no-secret no-large-artifact; do
+  bash "$gates/$g.sh" || { echo "[pre-commit] BLOCKED by $g"; exit 1; }
+done
+# format is advisory here (skips cleanly if swiftformat absent)
+bash "$gates/format.sh" || { echo "[pre-commit] format check failed"; exit 1; }
+echo "[pre-commit] ok"

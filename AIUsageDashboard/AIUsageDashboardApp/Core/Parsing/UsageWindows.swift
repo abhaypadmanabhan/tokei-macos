@@ -14,17 +14,27 @@ struct UsageWindows: Sendable {
     private let weekStart: Date
     private let monthStart: Date
 
-    private var today = Self.emptyUsage
-    private var week = Self.emptyUsage
-    private var month = Self.emptyUsage
-    private var lifetime = Self.emptyUsage
+    private var today: TokenUsage
+    private var week: TokenUsage
+    private var month: TokenUsage
+    private var lifetime: TokenUsage
     private var dailyTotals: [Date: Int] = [:]
 
-    init(calendar: Calendar, referenceDate: Date) {
+    /// `emptyConfidence` seeds the accumulators, so it becomes the floor for the
+    /// resulting windows (`TokenUsage.merging` keeps the least-trustworthy input).
+    /// Local log parsers keep the `.localParsed` default; a provider whose numbers
+    /// come straight from its own backend (e.g. Cursor's web usage export) passes
+    /// `.providerReported` so the windows aren't under-labelled.
+    init(calendar: Calendar, referenceDate: Date, emptyConfidence: MetricConfidence = .localParsed) {
         self.calendar = calendar
         self.todayStart = calendar.startOfDay(for: referenceDate)
         self.weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
         self.monthStart = calendar.date(byAdding: .month, value: -1, to: todayStart) ?? todayStart
+        let seed = Self.emptyUsage(emptyConfidence)
+        self.today = seed
+        self.week = seed
+        self.month = seed
+        self.lifetime = seed
     }
 
     mutating func accumulate(_ usage: TokenUsage, timestamp: Date?, dailyTotal: Int) {
@@ -47,14 +57,14 @@ struct UsageWindows: Sendable {
         )
     }
 
-    static var emptyUsage: TokenUsage {
+    static func emptyUsage(_ confidence: MetricConfidence) -> TokenUsage {
         TokenUsage(
             inputTokens: 0,
             outputTokens: 0,
             cacheReadTokens: 0,
             cacheCreationTokens: 0,
             reasoningTokens: 0,
-            confidence: .localParsed
+            confidence: confidence
         )
     }
 }
@@ -71,6 +81,11 @@ enum JSONLDateParsing {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter
     }()
+
+    /// Parse an ISO8601 instant string, tolerating fractional seconds.
+    static func iso8601(_ string: String) -> Date? {
+        fractional.date(from: string) ?? standard.date(from: string)
+    }
 
     static func parseTimestamp(from json: [String: Any]) -> Date? {
         if let ts = json["timestamp"] as? TimeInterval {

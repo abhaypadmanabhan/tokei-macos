@@ -17,14 +17,28 @@ struct MenuBarView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 let activeSnapshots = ProviderID.allCases.compactMap { providerID -> ProviderSnapshot? in
-                    guard viewModel.isAvailable(providerID), let snapshot = viewModel.snapshot(for: providerID) else { return nil }
+                    guard !ProviderVisibility.isHidden(providerID),
+                          viewModel.isAvailable(providerID),
+                          let snapshot = viewModel.snapshot(for: providerID) else { return nil }
                     return snapshot
                 }
 
-                if activeSnapshots.isEmpty {
-                    Text("NO ACTIVE PROVIDERS")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
+                if let errorMessage = viewModel.errorMessage {
+                    SurfaceStateView(
+                        kind: .error(headline: "Sync failed", detail: errorMessage),
+                        compact: true,
+                        onRetry: { Task { await viewModel.refresh() } }
+                    )
+                } else if activeSnapshots.isEmpty && viewModel.isLoading {
+                    SurfaceStateView(kind: .loading(message: "Syncing"), compact: true)
+                } else if activeSnapshots.isEmpty {
+                    SurfaceStateView(
+                        kind: .empty(
+                            headline: "No active providers",
+                            hint: "Run an AI CLI, then it shows up here."
+                        ),
+                        compact: true
+                    )
                 } else {
                     ForEach(activeSnapshots) { snapshot in
                         HStack {
@@ -85,6 +99,23 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Settings — opens the in-app Settings pane inside the dashboard window
+                // (there is no separate Settings dialog; a menu-bar-extra app has no ⌘, menu).
+                Button(action: {
+                    viewModel.showingSettings = true
+                    openWindow(id: "dashboard-window")
+                    NSApp.activate(ignoringOtherApps: true)
+                }) {
+                    Text("SETTINGS")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(Color.clear)
+                        .border(PadzyTheme.muted, width: 1)
+                }
+                .buttonStyle(.plain)
+
                 // Quit
                 Button(action: {
                     NSApp.terminate(nil)
@@ -103,6 +134,7 @@ struct MenuBarView: View {
         .padding(16)
         .frame(width: 250)
         .background(PadzyTheme.ground)
+        .preferredColorScheme(.dark)
         .task {
             viewModel.beginAutoSync()
             if viewModel.lastSyncedAt == nil {

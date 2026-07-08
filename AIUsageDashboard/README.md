@@ -62,21 +62,28 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 ## What Works (MVP, verified 2026-07-06)
 
 - **Claude Code** tracking end-to-end from local JSONL (`~/.claude/projects`): real schema, dedupe by `message.id`/`requestId`/`uuid`, fractional-second ISO8601 timestamps, malformed-line warnings. Verified against an independent baseline (<0.1% divergence).
-- **OpenAI Codex** adapter reads `~/.codex/sessions/**/*.jsonl` and reports real token windows plus session/weekly quota windows with reset times.
+- **OpenAI Codex** adapter reads `~/.codex/sessions/**/*.jsonl` and reports real token windows plus session/weekly quota windows with reset times, plus an **estimated USD cost** (static per-model pricing table, `.estimated` confidence; unknown model slugs yield no cost, never a guessed number).
 - **Cline / Cline Pass** adapter reads `~/.cline/data/sessions/*/*.messages.json`, reports lifetime tokens and dollar cost.
 - **Multi-provider dashboard** with dynamic provider selection, quota gauges, visual hairline meters, >90% warning indicators, and live countdown timers.
 - **Menu bar extra** with summed today total and dense per-provider rows.
 - **Auto-refresh**: FSEvents watcher on provider log directories, 2 s debounce → SyncEngine → AsyncStream → shared view model. Manual refresh via ⌘R.
 - **Persistence**: `~/Library/Application Support/AIUsageDashboard/usage-store.json` (snapshots + per-day rollups that survive log rotation).
 - **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
-- 48+ unit tests green, incl. real-logs smoke tests (skip on machines without logs).
+- **Cursor** real token usage + live quota (opt-in). With `cursorNetworkUsageEnabled` on, Tokei reads the Cursor web dashboard the way the dashboard itself does — `cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens` for per-event token usage (today/week/month with input/cache/output split + daily totals) and `cursor.com/api/usage-summary` for plan utilisation %, authenticating with the WorkOS session cookie (userId from the JWT `sub`; token never logged or persisted). Verified live: today 1.38M tokens, quota 7% "Pro (active)". Toggle off (or any network failure) falls back to the offline `state.vscdb` code-line read, no crash.
+- 67 unit tests green, incl. real-logs smoke tests (skip on machines without logs).
 
 ## What Is Stubbed (post-MVP)
 
-- **Cursor** detection (`state.vscdb` presence) is implemented; metrics and quota remain unavailable.
+- **Cursor** token usage + quota require the opt-in online toggle (they come from `cursor.com`, not local storage — `state.vscdb` holds only code-line stats). Offline, Cursor shows accepted code-lines only.
 - **Antigravity** remains a non-interactive skeleton pending data-source research.
 - WidgetKit target deferred (source exists, not in `project.yml`).
 - App icon and additional settings functionality minimal.
+- **Value engine + utilization spine landed as internal Core layers, not yet surfaced.**
+  `Core/Pricing` computes API-equivalent USD for every provider, and `Core/Utilization`
+  unifies live-quota % into one `Utilization` contract + aggregate (with a tested TTL /
+  429-cooldown cache). Both are fully tested but have **no UI** and change no existing
+  behavior — the "am I using the tokens I pay for" surface (value multiple + Maxxer score)
+  that consumes them is the next cycle (#23).
 
 ## Post-MVP Roadmap
 

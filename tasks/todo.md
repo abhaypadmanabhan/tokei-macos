@@ -92,3 +92,78 @@ Known limitations (accepted for MVP):
 - [x] Leg 4 Kimi — notification thresholds 80/95% (11 tests, no-spam re-arm), QUOTA ALERTS toggle, docs
 - [x] Fable final: accent-as-data cost fix, full verification — 59/59 tests, build green
 Remaining post-relay: Cursor metrics (dashboard API auth), Antigravity data source, WidgetKit, app polish.
+
+## padzy-os skill enhancement — 2026-07-06
+
+Gap analysis done (baseline: current skill cannot answer these build questions):
+dataviz/charts absent (Tokei IS a dashboard); anti-slop = one phrase; no data-formatting
+spec; focus-visible contradiction ("no glow ring" vs a11y); no overlay/scrim/toast spec;
+no dark-ground rules; no empty/error/destructive patterns; decks/PDF promised but missing;
+stale theme lists; no responsive/metrics/voice/perf thresholds.
+
+- [x] NEW `references/antislop.md` — AI-slop tell taxonomy (visual/layout/copy/motion/dataviz) + Padzy replacement per tell
+- [x] NEW `references/dataviz.md` — chart rules: one-accent series logic, hairline axes, mono ticks, stat tiles, sparklines, chart states
+- [x] NEW `references/decks-print.md` — decks, PDFs, docs surface rules
+- [x] `language.md` — data formatting, measure cap, focus-visible spec, dark-ground rules, responsive degradation, voice
+- [x] `components.md` — modal/scrim, toast, command palette, empty state, destructive pattern, control metrics
+- [x] `ux-principles.md` — perceived-performance thresholds
+- [x] `themes.md` — fix stale: volini + aitracker now locked
+- [x] `SKILL.md` — wire new refs, fix stale theme list, extend shipping checklist
+- [x] Verify: subagent probe PASSED — agent routed to dataviz.md + antislop.md via SKILL.md alone; all 5 specs compliant (focus+context series, tile anatomy, empty state, slop-free hero, focus-visible outline)
+- [x] NEW `references/image-mockups.md` — GPT Images mockup loop (prompt recipe + image→code reconciliation); wired as SKILL.md step 4
+- [x] Verify: Auto Coach probe PASSED — agent hit image-mockups.md via routing, produced full-recipe prompt (theme hexes, positive invariants, negative slop bans, aspect, single-variable variations) + correct reconciliation plan
+
+## Cursor + Antigravity connections — 2026-07-06 (active)
+
+Decision: Cursor = **A + B behind toggle**. Antigravity = offline (no decision needed).
+Data shapes machine-verified today; see [[usage-data-sources]].
+
+### Ground truth (verified on this Mac)
+- **Cursor `state.vscdb` has NO tokens.** Only `aiCodeTracking.dailyStats.v1.5.<date>` =
+  `{date, tabSuggestedLines, tabAcceptedLines, composerSuggestedLines, composerAcceptedLines}` (LINES).
+  Current `CursorStateDBParser` hunts token keys that don't exist → Cursor card empty. That's the bug.
+  Real tokens/quota = network only: `GET https://api2.cursor.sh/auth/usage`, `Authorization: Bearer <JWT>`,
+  JWT = `ItemTable['cursorAuth/accessToken']`.
+- **Antigravity `state.vscdb` fully offline.** `antigravityAuthStatus` JSON → `userStatusProtoBinaryBase64`
+  protobuf: plan at `13→1→2` = "Pro", quota ints (50000/150000/25000…). `modelCredits` protobuf →
+  available 1000 / min 50. protoc decode_raw confirmed.
+- No network layer in app yet. `ProviderSnapshot` has NO plan/email field. Settings uses `@AppStorage`.
+  New stored props MUST be mirrored in `ModelCodableExtensions.swift` (else persistence breaks).
+
+### Phase 1 — Antigravity (offline, unblocked)
+- [ ] `Core/Parsing/AntigravityStateDBParser.swift` — reuse Cursor's read-only temp-copy SQLite pattern;
+      read `antigravityAuthStatus` (JSON) + `antigravityUnifiedStateSync.modelCredits`.
+- [ ] `Core/Parsing/Protobuf/MiniProtobuf.swift` — ~120-line varint/wiretype walker, zero deps.
+      Extract plan string (13→1→2), quota ints, credits (available/min; values are nested base64).
+- [ ] Fill `AntigravityProvider`: `detectAvailability` = DB exists; `authStatus = .authenticated`;
+      `quotaWindows` = `.credits` (used/limit/remaining) + `.monthly` from quota ints;
+      `capabilities = [.localLog, .quota]`; confidence `.localParsed`.
+- [ ] Surface plan "Pro" — start with `ProviderWarning(.info)` (no schema churn); add `planName` field only
+      if UI needs it (then update `ModelCodableExtensions.swift`).
+- [ ] Tests: `AntigravityStateDBParserTests` (fixed protobuf fixture) + `AntigravityRealLogsSmokeTests`
+      (live DB: plan=="Pro", credits>0). NEVER log `apiKey`/OAuth token.
+
+### Phase 2 — Cursor A (offline lines; fix empty card)
+- [ ] Rewrite `CursorStateDBParser`: parse `aiCodeTracking.dailyStats.v1.5.<date>` → per-day accepted/
+      suggested lines (tab + composer). Stop scanning nonexistent token keys.
+- [ ] Metric surface: lines ≠ tokens. `dailyTotals` = accepted lines/day; today/week = accepted lines.
+      Card copy "lines accepted". `capabilities = [.localLog]`, confidence `.localParsed`.
+- [ ] `CursorProvider.authStatus = .authenticated` if `cursorAuth/accessToken` present (presence only).
+- [ ] Tests: update `CursorProviderTests` + parser vs real `dailyStats` shape; live smoke test.
+
+### Phase 3 — Cursor B (network quota, toggle OFF by default)
+- [ ] `Core/Network/CursorUsageClient.swift` — minimal URLSession `GET api2.cursor.sh/auth/usage`,
+      Bearer JWT from state.vscdb. Timeout + graceful failure → warning, never crash.
+- [ ] Settings: `@AppStorage("cursorNetworkUsageEnabled") = false` toggle ("Fetch Cursor usage online");
+      copy warns it makes an authenticated request to Cursor.
+- [ ] `CursorProvider.fetchSnapshot`: toggle on → call client → real request/token quota →
+      `quotaWindows` (`.monthly`/`.session`), `capabilities += [.quota,.tokenUsage,.providerEndpoint]`,
+      confidence `.providerReported`. Toggle off or call fails → Phase-2 offline path unchanged.
+- [ ] Tests: client via mocked URLProtocol (no live CI hit); provider both toggle states.
+      Manual: flip once vs live endpoint, verify vs cursor.com dashboard.
+
+### Gates / done
+- [ ] `cd AIUsageDashboard && xcodegen generate` before build (.xcodeproj gitignored).
+- [ ] `.claude/gates/run-all.sh` green (build/format/lint/test/no-secret).
+- [ ] BACKLOG.md: move "Cursor real metrics" + "Antigravity data source" → DONE.
+- [ ] Verify per CLAUDE.md: run the real app; Cursor + Antigravity cards populate with live data.

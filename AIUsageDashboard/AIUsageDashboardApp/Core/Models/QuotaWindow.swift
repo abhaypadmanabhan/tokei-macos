@@ -1,7 +1,7 @@
 import Foundation
 
 public struct QuotaWindow: Sendable, Identifiable {
-    public var id: String { "\(providerID.rawValue)_\(type.rawValue)" }
+    public var id: String { bucketKey ?? "\(providerID.rawValue)_\(type.rawValue)" }
     public let providerID: ProviderID
     public let type: QuotaWindowType
     public let used: Double?
@@ -10,6 +10,8 @@ public struct QuotaWindow: Sendable, Identifiable {
     public let resetAt: Date?
     public let confidence: MetricConfidence
     public let source: String
+    public let label: String?
+    public let bucketKey: String?
 
     public init(
         providerID: ProviderID,
@@ -19,7 +21,9 @@ public struct QuotaWindow: Sendable, Identifiable {
         remaining: Double? = nil,
         resetAt: Date? = nil,
         confidence: MetricConfidence,
-        source: String
+        source: String,
+        label: String? = nil,
+        bucketKey: String? = nil
     ) {
         self.providerID = providerID
         self.type = type
@@ -29,6 +33,7 @@ public struct QuotaWindow: Sendable, Identifiable {
         self.resetAt = resetAt
         self.confidence = confidence
         self.source = source
+        self.label = label
+        self.bucketKey = bucketKey
     }
 }
-

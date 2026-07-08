@@ -63,7 +63,8 @@ struct Sparkline: View {
                         else { path.addLine(to: CGPoint(x: x, y: y)) }
                     }
                 }
-                .stroke(PadzyTheme.accent, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+                // Data trend, not a state — rendered in ink so the accent stays reserved.
+                .stroke(PadzyTheme.ink.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
             } else {
                 Rectangle()
                     .fill(PadzyTheme.muted.opacity(0.4))
