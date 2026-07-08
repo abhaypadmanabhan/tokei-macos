@@ -153,6 +153,27 @@ enum CodexFixtures {
     """
   }
 
+  /// Free/lower-tier layout: weekly window sits in the primary slot (not 5h).
+  static func weeklyInPrimarySlot() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":60},"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":60}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":42.0,"window_minutes":10080,"resets_at":1783457462},"secondary":null,"credits":null,"plan_type":"free","rate_limit_reached_type":null}}}
+    """
+  }
+
+  /// Duration classification via limit_window_seconds instead of window_minutes.
+  static func limitWindowSecondsEvents() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":100},"last_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":100}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":15.0,"limit_window_seconds":18000,"resets_at":1783324383},"secondary":{"used_percent":25.0,"limit_window_seconds":604800,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    """
+  }
+
+  /// Enterprise monthly credit limit + reset-bank counts when present in local JSONL.
+  static func creditsAndResetBank() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35},"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"pro","rate_limit_reached_type":null,"spend_control":{"individual_limit":{"limit":"25000","used":"8000","used_percent":32,"remaining_percent":68,"reset_at":1783457462}},"rate_limit_reset_credits":{"available":3}}}}
+    """
+  }
+
   private static func isoString(_ date: Date, utc: Calendar) -> String {
     let comps = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
     return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",

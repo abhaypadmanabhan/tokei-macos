@@ -112,6 +112,58 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertTrue(weekly?.source.contains("weekly window") == true)
     }
 
+    func testClassifiesWeeklyWindowInPrimarySlotByDuration() async {
+        let url = writeFixture(CodexFixtures.weeklyInPrimarySlot(), named: "weekly-primary.jsonl")
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.quotaWindows.count, 1)
+        let weekly = usage.quotaWindows.first { $0.type == .weekly }
+        XCTAssertNotNil(weekly)
+        XCTAssertNil(usage.quotaWindows.first { $0.type == .session })
+        XCTAssertEqual(weekly?.used, 42.0)
+        XCTAssertEqual(weekly?.remaining, 58.0)
+        XCTAssertEqual(weekly?.resetAt, Date(timeIntervalSince1970: 1_783_457_462))
+        XCTAssertTrue(weekly?.source.contains("free plan") == true)
+        XCTAssertTrue(weekly?.source.contains("weekly window") == true)
+    }
+
+    func testClassifiesWindowsByLimitWindowSeconds() async {
+        let url = writeFixture(CodexFixtures.limitWindowSecondsEvents(), named: "limit-seconds.jsonl")
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.quotaWindows.count, 2)
+        let session = usage.quotaWindows.first { $0.type == .session }
+        let weekly = usage.quotaWindows.first { $0.type == .weekly }
+        XCTAssertEqual(session?.used, 15.0)
+        XCTAssertEqual(weekly?.used, 25.0)
+        XCTAssertTrue(session?.source.contains("5h window") == true)
+        XCTAssertTrue(weekly?.source.contains("weekly window") == true)
+    }
+
+    func testSurfacesCreditsAndResetBankWhenPresent() async {
+        let url = writeFixture(CodexFixtures.creditsAndResetBank(), named: "credits-reset.jsonl")
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.quotaWindows.count, 4)
+        XCTAssertNotNil(usage.quotaWindows.first { $0.type == .session })
+        XCTAssertNotNil(usage.quotaWindows.first { $0.type == .weekly })
+
+        let monthlyCredits = usage.quotaWindows.first {
+            $0.type == .credits && $0.bucketKey == "spend_control_individual_limit"
+        }
+        XCTAssertEqual(monthlyCredits?.label, "Monthly credit limit")
+        XCTAssertEqual(monthlyCredits?.used, 32)
+        XCTAssertEqual(monthlyCredits?.remaining, 68)
+        XCTAssertEqual(monthlyCredits?.resetAt, Date(timeIntervalSince1970: 1_783_457_462))
+
+        let resetBank = usage.quotaWindows.first {
+            $0.type == .credits && $0.bucketKey == "reset_bank"
+        }
+        XCTAssertEqual(resetBank?.label, "Reset bank")
+        XCTAssertEqual(resetBank?.remaining, 3)
+        XCTAssertEqual(resetBank?.limit, 3)
+    }
+
     func testStaleQuotaWindowsAreEstimated() async {
         let url = writeFixture(CodexFixtures.staleRateLimits(), named: "stale.jsonl")
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])
