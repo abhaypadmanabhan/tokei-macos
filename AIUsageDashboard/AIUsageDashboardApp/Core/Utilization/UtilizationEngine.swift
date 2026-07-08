@@ -28,13 +28,8 @@ public enum UtilizationEngine {
     /// it is omitted from the mean, never zero-filled.
     public static func aggregate(from snapshots: [ProviderSnapshot]) -> AggregateUtilization? {
         // Peak utilization per provider (the reading that drives the number).
-        var peakByProvider: [ProviderID: Utilization] = [:]
-        for u in utilizations(from: snapshots) {
-            if let existing = peakByProvider[u.providerID], existing.usedPercent >= u.usedPercent {
-                continue
-            }
-            peakByProvider[u.providerID] = u
-        }
+        let peakByProvider = Dictionary(grouping: utilizations(from: snapshots), by: \.providerID)
+            .compactMapValues { $0.max(by: { $0.usedPercent < $1.usedPercent }) }
 
         guard !peakByProvider.isEmpty else { return nil }
 
@@ -48,9 +43,7 @@ public enum UtilizationEngine {
         let peaks = Array(peakByProvider.values)
         let mean = peaks.reduce(0) { $0 + $1.usedPercent } / Double(peaks.count)
         let coveredProviders = ProviderID.allCases.filter { peakByProvider[$0] != nil }
-        let confidence = peaks
-            .map(\.confidence)
-            .min(by: { rank($0) < rank($1) }) ?? .unavailable
+        let confidence = peaks.min(by: { rank($0.confidence) < rank($1.confidence) })?.confidence ?? .unavailable
 
         return AggregateUtilization(
             usedPercent: mean,

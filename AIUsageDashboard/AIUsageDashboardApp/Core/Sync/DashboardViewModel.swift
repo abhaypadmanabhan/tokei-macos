@@ -121,6 +121,10 @@ public final class DashboardViewModel: ObservableObject {
     }
 
     /// Convenience: just the aggregate percentage, `nil` when no coverage.
+    /// "Today" is the product framing (the denominator of "am I maxxing today"),
+    /// not a daily window — the underlying value is a horizon-agnostic peak across
+    /// each provider's windows (see `AggregateUtilization`). The Maxxer Score (#23)
+    /// owns whether to weight or split by horizon.
     public var aggregateUtilizationToday: Double? {
         aggregateUtilization?.usedPercent
     }

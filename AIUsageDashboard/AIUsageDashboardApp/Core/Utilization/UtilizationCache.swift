@@ -1,9 +1,16 @@
 import Foundation
 
-/// Robustness layer for live utilization: a TTL cache that expires early at the
-/// next quota reset, a persisted last-good read per provider, and a **global** 429
-/// cooldown marker so every surface stops hammering a shared-budget endpoint and
+/// Robustness *primitives* for live utilization: a TTL cache that expires early at
+/// the next quota reset, a persisted last-good read per provider, and a **global**
+/// 429 cooldown marker. The intent: a surface consults `fresh`/`isCoolingDown`
+/// before fetching, and on a shared-budget 429 every surface sharing this instance
 /// serves stale instead of flashing red.
+///
+/// NOTE: this ships the primitives fully tested but **not yet wired** into the
+/// fetch paths (`AntigravityQuotaClient` / `CursorUsageClient` still throw on 429).
+/// Wiring the clients to `noteRateLimited`/`isCoolingDown` lands with the Claude
+/// live-quota fetch (#5) that reuses this layer — this cycle changes no existing
+/// behavior. Until then nothing calls these methods outside tests.
 ///
 /// An `actor` with an **injected clock** — the shared mutable state (entries,
 /// cooldown) is serialized by the actor, and time is a parameter so the
@@ -130,17 +137,9 @@ public actor UtilizationCache {
         let lastGood = entries.mapValues(\.utilizations)
         guard let data = try? JSONEncoder().encode(lastGood) else { return }
 
+        // `.atomic` writes to a sibling temp file and renames in place, so a crash
+        // mid-write leaves the previous good file intact — no manual temp dance needed.
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let tempURL = directory.appendingPathComponent(UUID().uuidString + ".tmp")
-        do {
-            try data.write(to: tempURL, options: .atomic)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
-            }
-            try FileManager.default.moveItem(at: tempURL, to: fileURL)
-        } catch {
-            try? FileManager.default.removeItem(at: tempURL)
-        }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }
