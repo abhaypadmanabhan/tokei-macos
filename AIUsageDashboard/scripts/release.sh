@@ -43,5 +43,10 @@ xcrun stapler staple "$DMG"
 spctl -a -vv -t install "$APP"
 spctl -a -vv -t open --context context:primary-signature "$DMG"
 
+# 5. Generate the signed Sparkle appcast for this release
+"$ROOT/scripts/gen-appcast.sh"
+
 echo ""
 echo "Release artifact: $DMG"
+echo "Appcast: $ROOT/dist/appcast.xml"
+echo "Next: upload $DMG to the GitHub release, copy dist/appcast.xml -> docs/appcast.xml, commit + push."

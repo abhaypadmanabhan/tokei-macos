@@ -1,5 +1,6 @@
 import SwiftUI
 import AIUsageDashboardCore
+import Sparkle
 
 @main
 struct AIUsageDashboardApp: App {
@@ -12,6 +13,13 @@ struct AIUsageDashboardApp: App {
                 .environmentObject(viewModel)
         }
         .windowStyle(.titleBar)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    AppDelegate.shared?.checkForUpdates()
+                }
+            }
+        }
 
         MenuBarExtra {
             MenuBarView()
@@ -29,8 +37,25 @@ struct AIUsageDashboardApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: AppDelegate?
+
+    // Feed URL + EdDSA key live in Info.plist (SUFeedURL/SUPublicEDKey); checks
+    // are background-only unless an update exists or checkForUpdates() is called.
+    private(set) lazy var updater = SPUStandardUpdaterController(
+        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil
+    )
+
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Additional app lifecycle setup can go here.
+        _ = updater // force-instantiate so Sparkle's scheduled background checks start
+    }
+
+    func checkForUpdates() {
+        updater.checkForUpdates(nil)
     }
 }
 

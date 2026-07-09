@@ -116,6 +116,20 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Check for Updates — Sparkle
+                Button(action: {
+                    AppDelegate.shared?.checkForUpdates()
+                }) {
+                    Text("CHECK FOR UPDATES")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(Color.clear)
+                        .border(PadzyTheme.muted, width: 1)
+                }
+                .buttonStyle(.plain)
+
                 // Quit
                 Button(action: {
                     NSApp.terminate(nil)
