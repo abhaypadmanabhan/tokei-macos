@@ -50,6 +50,13 @@ struct OverviewView: View {
         id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
+    /// The provider to nudge new work toward (emptiest plan with real headroom),
+    /// or `nil` when routing advice would be noise (#37). Computed from the same
+    /// live utilizations the rows render.
+    private var routeTargetID: ProviderID? {
+        MaxxerMath.routeTarget(in: viewModel.utilization)?.providerID
+    }
+
     private var aggregateLine: String {
         guard let agg = viewModel.aggregateUtilization else {
             return "— NO LIVE QUOTA CONNECTED"
@@ -92,6 +99,7 @@ struct OverviewView: View {
                                 displayName: entry.displayName,
                                 plan: entry.plan,
                                 tightest: entry.tightest,
+                                isRouteTarget: entry.providerID == routeTargetID,
                                 onOpen: { onOpen(entry.providerID) },
                                 onConnect: onConnect
                             )

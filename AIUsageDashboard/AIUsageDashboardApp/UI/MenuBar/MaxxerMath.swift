@@ -118,4 +118,31 @@ public enum MaxxerMath {
             return candidate.usedPercent > current.usedPercent ? candidate : current
         }
     }
+
+    // MARK: - Route-here target (#37)
+
+    /// The provider worth routing new work to: the least-filled window, but only
+    /// when the suggestion is actually useful. `nil` (no chip) unless
+    /// - there are at least two live readings (routing implies a choice), AND
+    /// - the least-filled has genuine headroom (`usedPercent <= maxUsedPercent`), AND
+    /// - it is meaningfully emptier than the tightest (`spread >= minSpread`),
+    ///   so we never nudge toward something that's also nearly full.
+    ///
+    /// Deterministic: on a tie for least-filled the first-seen reading wins.
+    public static func routeTarget(
+        in utilizations: [Utilization],
+        maxUsedPercent: Double = 70,
+        minSpread: Double = 15
+    ) -> Utilization? {
+        guard utilizations.count >= 2 else { return nil }
+
+        let least = utilizations.reduce(nil) { (current: Utilization?, candidate) in
+            guard let current else { return candidate }
+            return candidate.usedPercent < current.usedPercent ? candidate : current
+        }
+        guard let least, let tightest = tightestWindow(in: utilizations) else { return nil }
+        guard least.usedPercent <= maxUsedPercent,
+              tightest.usedPercent - least.usedPercent >= minSpread else { return nil }
+        return least
+    }
 }

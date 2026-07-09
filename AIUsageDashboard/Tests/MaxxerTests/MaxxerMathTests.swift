@@ -131,4 +131,45 @@ final class MaxxerMathTests: XCTestCase {
         ])
         XCTAssertEqual(picked?.providerID, .cursor)
     }
+
+    // MARK: - Route-here target (#37)
+
+    func testRouteTargetNilWithFewerThanTwoReadings() {
+        XCTAssertNil(MaxxerMath.routeTarget(in: []))
+        XCTAssertNil(MaxxerMath.routeTarget(in: [util(.cursor, .monthly, 10)]))
+    }
+
+    func testRouteTargetPicksLeastFilledWithHeadroomAndSpread() {
+        let target = MaxxerMath.routeTarget(in: [
+            util(.claudeCode, .weekly, 92),
+            util(.cursor, .monthly, 20),
+            util(.antigravity, .fiveHour, 55),
+        ])
+        XCTAssertEqual(target?.providerID, .cursor)
+    }
+
+    func testRouteTargetNilWhenSpreadTooSmall() {
+        // All bunched together → routing advice is noise → no chip.
+        XCTAssertNil(MaxxerMath.routeTarget(in: [
+            util(.cursor, .monthly, 60),
+            util(.claudeCode, .weekly, 68),
+        ]))
+    }
+
+    func testRouteTargetNilWhenLeastFilledStillTooFull() {
+        // Big spread, but even the emptiest (75%) is past the headroom bar → no chip.
+        XCTAssertNil(MaxxerMath.routeTarget(in: [
+            util(.claudeCode, .weekly, 98),
+            util(.cursor, .monthly, 75),
+        ]))
+    }
+
+    func testRouteTargetTieKeepsFirstSeen() {
+        let target = MaxxerMath.routeTarget(in: [
+            util(.cursor, .monthly, 10),
+            util(.antigravity, .fiveHour, 10),
+            util(.claudeCode, .weekly, 90),
+        ])
+        XCTAssertEqual(target?.providerID, .cursor)
+    }
 }

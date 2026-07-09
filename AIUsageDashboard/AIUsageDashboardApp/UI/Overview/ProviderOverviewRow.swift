@@ -15,6 +15,9 @@ struct ProviderOverviewRow: View {
     let plan: String?
     /// The provider's tightest window, or `nil` when it exposes no live quota.
     let tightest: Utilization?
+    /// When true this is the emptiest plan worth routing new work to (#37) — the
+    /// row shows a subtle accent "ROUTE HERE →" chip. Off by default.
+    let isRouteTarget: Bool
     let onOpen: () -> Void
     let onConnect: () -> Void
 
@@ -47,6 +50,7 @@ struct ProviderOverviewRow: View {
         displayName: String,
         plan: String?,
         tightest: Utilization?,
+        isRouteTarget: Bool = false,
         onOpen: @escaping () -> Void,
         onConnect: @escaping () -> Void
     ) {
@@ -54,6 +58,7 @@ struct ProviderOverviewRow: View {
         self.displayName = displayName
         self.plan = plan
         self.tightest = tightest
+        self.isRouteTarget = isRouteTarget
         self.onOpen = onOpen
         self.onConnect = onConnect
         // Non-connectable providers have no flag; a sentinel key keeps @AppStorage
@@ -215,8 +220,9 @@ struct ProviderOverviewRow: View {
 
     // MARK: Pieces
 
-    /// Provider name + optional plan, above a window-type (or blank) label.
-    /// Both lines truncate so the row never forces the window wider.
+    /// Provider name + optional plan, above a window-type (or blank) label with an
+    /// optional route-here chip. Both lines truncate so the row never forces the
+    /// window wider.
     private func identity(windowLabel: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
@@ -235,13 +241,34 @@ struct ProviderOverviewRow: View {
                 }
             }
 
-            Text(windowLabel ?? "NO LIVE QUOTA")
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            HStack(spacing: 8) {
+                Text(windowLabel ?? "NO LIVE QUOTA")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if isRouteTarget {
+                    routeChip.layoutPriority(1)
+                }
+            }
         }
         .frame(maxWidth: 220, alignment: .leading)
+    }
+
+    /// Subtle accent chip nudging new work toward the emptiest plan (#37). Accent
+    /// is used as an action hint (route here), paired with the "→" glyph so it
+    /// never rides on colour alone.
+    private var routeChip: some View {
+        Text("ROUTE HERE →")
+            .font(.mono(size: 9))
+            .tracking(0.4)
+            .foregroundColor(PadzyTheme.accent)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .overlay(Rectangle().stroke(PadzyTheme.accent.opacity(0.6), lineWidth: 1))
+            .fixedSize()
+            .accessibilityHidden(true)
     }
 
     /// 4pt-tall hairline gauge: full-width muted track with a threshold-colored
@@ -345,7 +372,8 @@ struct ProviderOverviewRow: View {
         case .headroom: pacePart = ", headroom to spare"
         case nil: pacePart = ""
         }
-        return "\(displayName)\(planPart), \(windowLabel(util.window)) \(pct) percent used\(pacePart)"
+        let routePart = isRouteTarget ? ", most headroom — route work here" : ""
+        return "\(displayName)\(planPart), \(windowLabel(util.window)) \(pct) percent used\(pacePart)\(routePart)"
     }
 }
 
