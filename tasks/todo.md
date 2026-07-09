@@ -175,3 +175,15 @@ Data shapes machine-verified today; see [[usage-data-sources]].
 - [ ] Run tests and verify
 - [ ] Update tasks/lessons.md with lessons
 - [ ] Append completion note to Patch Bible (§W2.6)
+
+## Tokei Website — 2026-07-08 (LIVE 2026-07-09)
+Marketing site, Display tier, aitracker theme + awwwards motion direction. Next.js 16 + Tailwind v4 + GSAP/ScrollTrigger/SplitText + Lenis + react-parallax-tilt.
+- [x] padzy-os skill + aitracker theme; mockup image received
+- [x] Abhay correction: numbered kickers dead → terminal `// section` eyebrows; wants scroll motion (lessons.md)
+- [x] Research: awwwards trends + motion stack (2 subagents)
+- [x] Scaffold `website/` (pnpm, shadcn base-nova)
+- [x] Built: nav / scramble eyebrow / SplitText char-reveal hero / live ticking DashboardCard (tilt) / data marquee / pinned horizontal features (4 panels, mobile+reduced-motion fallback) / privacy count-ups / magnetic download CTA / footer
+- [x] Deployed: https://tokei-website.vercel.app (project tokei-website, production target)
+- [x] Verified live via screenshots: hero, marquee, horizontal pin scrub, tickers ticking, footer; DMG link 200
+- [ ] Commit website/ (awaiting Abhay)
+- [ ] Optional: custom domain, OG image, real app screenshot in hero
