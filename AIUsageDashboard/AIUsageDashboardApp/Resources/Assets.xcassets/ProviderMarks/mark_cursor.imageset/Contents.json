@@ -1,16 +1,5 @@
 {
-  "images" : [
-    {
-      "filename" : "mark_cursor.pdf",
-      "idiom" : "universal"
-    }
-  ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
-  },
-  "properties" : {
-    "preserves-vector-representation" : true,
-    "template-rendering-intent" : "template"
-  }
+  "images" : [ { "filename" : "cursor.svg", "idiom" : "universal" } ],
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "preserves-vector-representation" : true, "template-rendering-intent" : "template" }
 }
