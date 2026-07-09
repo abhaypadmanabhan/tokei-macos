@@ -2,11 +2,14 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Tokei</title>
-    <!--
-      Placeholder — replaced by scripts/gen-appcast.sh output on every release.
-      Served at https://abhaypadmanabhan.github.io/tokei-macos/appcast.xml once
-      GitHub Pages is enabled (Settings -> Pages -> Source: main /docs) after
-      this branch merges to main.
-    -->
+    <item>
+      <title>Tokei 0.2.1</title>
+      <pubDate>Thu, 09 Jul 2026 02:46:08 +0000</pubDate>
+      <sparkle:version>2</sparkle:version>
+      <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/abhaypadmanabhan/tokei-macos/releases/tag/v0.2.1</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/abhaypadmanabhan/tokei-macos/releases/download/v0.2.1/Tokei-0.2.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="3Fdo6WbfytlGSFo7Iwl/o0Saq8drNxJXsTSqCyGe/znNithDE2WFbMpSUBlLiwWRcR7wlSZMWqZSjJI+5DWnBQ==" length="3715857" />
+    </item>
   </channel>
 </rss>
