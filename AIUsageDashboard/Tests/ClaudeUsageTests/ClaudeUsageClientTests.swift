@@ -69,6 +69,22 @@ final class DefaultClaudeUsageCredentialsReaderTests: XCTestCase {
         XCTAssertEqual(spawner.callCount, 0)
     }
 
+    func testExpiredFileCredentialFallsThroughToKeychain() async throws {
+        let fileURL = tempDirectory.appendingPathComponent(".credentials.json")
+        // A stale leftover file whose cred is already EXPIRED (expiresAt = epoch-ms in 2001).
+        // It must NOT shadow the fresh Keychain token — otherwise the reader wedges in a
+        // permanent expired state (the priority-inversion regression from the file-first order).
+        let expiredFile = "{\"claudeAiOauth\":{\"accessToken\":\"stale-file\",\"expiresAt\":1000000000000}}"
+        try Data(expiredFile.utf8).write(to: fileURL)
+        let spawner = RecordingKeychainReader(payload: credentialsPayload(accessToken: "fresh-keychain"))
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        let credentials = try await reader.readCredentials()
+
+        XCTAssertEqual(credentials.accessToken, "fresh-keychain")
+        XCTAssertEqual(spawner.callCount, 1) // Keychain WAS consulted despite the file existing
+    }
+
     func testFileAbsentParsesSpawnPayload() async throws {
         let fileURL = tempDirectory.appendingPathComponent("does-not-exist.json")
         let spawner = RecordingKeychainReader(payload: credentialsPayload(accessToken: "keychain-token"))

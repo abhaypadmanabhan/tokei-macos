@@ -52,17 +52,45 @@ enum AddAgentModel {
             .filter { !isAdded($0, defaults: defaults) }
     }
 
-    /// Idempotent first-run seed. Hides every provider whose install marker is
-    /// absent so a fresh install leads with `+`; leaves detected providers visible
-    /// (auto-added) so an existing user keeps the agents they actually use. Runs
-    /// exactly once, gated by `seededKey`.
+    /// Idempotent first-run seed. On a genuine **fresh install only**, hides every
+    /// provider whose install marker is absent so the user leads with `+` instead of
+    /// a wall of empty rows; detected providers stay visible. An **existing user**
+    /// (the app has persisted data before, or they already set any provider's
+    /// visibility) is left untouched — seeding would silently clobber their
+    /// deliberate show/hide choices on upgrade. Runs at most once, gated by `seededKey`.
     static func seedOnFirstLaunchIfNeeded(defaults: UserDefaults = .standard,
                                           fileManager: FileManager = .default) {
         guard !defaults.bool(forKey: seededKey) else { return }
+        // Run-once regardless of whether we actually seed below.
+        defaults.set(true, forKey: seededKey)
+
+        // Only a brand-new install gets seeded. If the app has run before — a
+        // persisted usage store exists, or the user already chose any provider's
+        // visibility — this is an upgrade; preserve their existing setup verbatim.
+        guard !hasExistingInstall(fileManager: fileManager),
+              !hasStoredVisibilityPreference(defaults: defaults) else { return }
+
         for providerID in ProviderID.allCases {
             let installed = AgentDetection.isInstalled(providerID, fileManager: fileManager)
             ProviderVisibility.setHidden(!installed, for: providerID, defaults: defaults)
         }
-        defaults.set(true, forKey: seededKey)
+    }
+
+    /// True once the app has persisted its usage store — i.e. it has run before.
+    /// The blank-canvas seed must not fire for such an (upgrading) user. Mirrors
+    /// `UsageStore`'s default path (`Application Support/AIUsageDashboard/usage-store.json`).
+    private static func hasExistingInstall(fileManager: FileManager) -> Bool {
+        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory,
+                                                in: .userDomainMask).first else { return false }
+        let store = appSupport
+            .appendingPathComponent("AIUsageDashboard", isDirectory: true)
+            .appendingPathComponent("usage-store.json")
+        return fileManager.fileExists(atPath: store.path)
+    }
+
+    /// True if the user has ever explicitly stored any provider's visibility — a
+    /// second "has configured before" signal so an upgrader is never re-seeded.
+    private static func hasStoredVisibilityPreference(defaults: UserDefaults) -> Bool {
+        ProviderID.allCases.contains { defaults.object(forKey: ProviderVisibility.key(for: $0)) != nil }
     }
 }

@@ -129,16 +129,29 @@ public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading
     public func readCredentials() async throws -> ClaudeUsageCredentials {
         // 1. File first — cheap, cross-platform. On macOS this file is absent (Claude Code stores
         //    credentials only in Keychain) so this is a no-op here, but it is the correct primary
-        //    path on Linux/Windows and future-proofs the reader.
+        //    path on Linux/Windows and future-proofs the reader. Only accept it when it is NOT
+        //    already expired: a stale leftover file would otherwise shadow a fresh Keychain token
+        //    and wedge the reader in a permanent `.expiredCredentials` state. An expired file cred
+        //    falls through to the Keychain read below.
         if let data = try? Data(contentsOf: credentialsURL),
-           let credentials = try? Self.decodeCredentials(data) {
+           let credentials = try? Self.decodeCredentials(data),
+           !credentials.isExpired(at: Date()) {
             return credentials
         }
 
         // 2. macOS load-bearing read — spawn `security -w` (see SecurityCLIKeychainReader) instead
-        //    of SecItemCopyMatching. No GUI prompt, survives the CLI recreating the item.
-        if let raw = keychainReader.readPassword(service: Self.keychainService),
-           let credentials = try? Self.decodeCredentials(Data(raw.utf8)) {
+        //    of SecItemCopyMatching. No GUI prompt, survives the CLI recreating the item. The spawn
+        //    blocks (up to its timeout) on a semaphore, so run it OFF the Swift-concurrency
+        //    cooperative pool — otherwise a hung `security` parks a cooperative thread and can
+        //    starve unrelated async work under concurrent syncs.
+        let reader = keychainReader
+        let service = Self.keychainService
+        let raw = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(returning: reader.readPassword(service: service))
+            }
+        }
+        if let raw, let credentials = try? Self.decodeCredentials(Data(raw.utf8)) {
             return credentials
         }
 
