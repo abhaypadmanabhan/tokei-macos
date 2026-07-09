@@ -12,6 +12,10 @@ struct DashboardView: View {
     /// into `viewModel.showingSettings` so existing Core consumers stay in sync.
     @State private var section: AppSection = .overview
 
+    /// Drives the `+` add-agent sheet, shared by the Overview header button and the
+    /// sidebar `+ ADD AGENT` row.
+    @State private var showingAddAgent = false
+
     @State private var pulseOpacity: Double = 1.0
     @State private var countdownTick = Date()
     private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
@@ -80,6 +84,10 @@ struct DashboardView: View {
         .background(PadzyTheme.ground)
         .preferredColorScheme(.dark)
         .frame(minWidth: 640, minHeight: 480)
+        .sheet(isPresented: $showingAddAgent) {
+            AddAgentSheet()
+                .environmentObject(viewModel)
+        }
         .focusable()
         .onMoveCommand { direction in
             switch direction {
@@ -124,6 +132,9 @@ struct DashboardView: View {
         // e.g. the dashboard window is created fresh by the menu-bar Settings action,
         // so `onChange` never sees the transition.
         .onAppear {
+            // Seed the canvas once so a brand-new user (no agents on disk) leads with
+            // the + instead of a wall of empty provider rows; idempotent thereafter.
+            AddAgentModel.seedOnFirstLaunchIfNeeded()
             if viewModel.showingSettings { section = .settings }
         }
         .onReceive(countdownTimer) { _ in
@@ -135,17 +146,20 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: 01 / PROVIDERS
+    // MARK: Providers
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             overviewSidebarRow
             HairlineDivider()
 
-            EditorialKicker(number: "01", title: "PROVIDERS")
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                .padding(.bottom, 16)
+            HStack {
+                SectionLabel("Providers")
+                AddAgentButton(compact: true) { showingAddAgent = true }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
             HairlineDivider()
 
             ForEach(ProviderID.allCases, id: \.self) { providerID in
@@ -169,7 +183,7 @@ struct DashboardView: View {
                 Rectangle()
                     .fill(isActive ? PadzyTheme.accent : Color.clear)
                     .frame(width: 2)
-                Text("00 / OVERVIEW")
+                Text("OVERVIEW")
                     .font(.display(size: 13, weight: .bold))
                     .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
                     .padding(.horizontal, 12)
@@ -256,7 +270,8 @@ struct DashboardView: View {
                 onConnect: {
                     section = .connections
                     viewModel.showingSettings = false
-                }
+                },
+                onAddAgent: { showingAddAgent = true }
             )
         case .connections:
             ConnectionsView()
@@ -264,7 +279,7 @@ struct DashboardView: View {
             SettingsPane(onOpenConnections: {
                 section = .connections
                 viewModel.showingSettings = false
-            })
+            }, onAddAgent: { showingAddAgent = true })
         case .provider:
             providerDetailPane
         }
@@ -274,7 +289,7 @@ struct DashboardView: View {
     private var providerDetailPane: some View {
         if let errorMessage = viewModel.errorMessage {
             SurfaceStateView(
-                kicker: ("02", "USAGE"),
+                header: "USAGE",
                 kind: .error(headline: "Sync failed", detail: errorMessage),
                 onRetry: { Task { await viewModel.refresh() } }
             )
@@ -282,12 +297,12 @@ struct DashboardView: View {
             emptyState
         } else if selectedSnapshot == nil && viewModel.isLoading {
             SurfaceStateView(
-                kicker: ("02", "USAGE"),
+                header: "USAGE",
                 kind: .loading(message: "Reading local logs")
             )
         } else if !selectedHasData {
             SurfaceStateView(
-                kicker: ("02", "USAGE"),
+                header: "USAGE",
                 kind: .empty(
                     headline: "No usage data",
                     hint: "No data yet at \(ProviderMetadata.localPaths(for: viewModel.selectedProvider).joined(separator: ", ")). Run it once, then use Sync Now below."
@@ -320,7 +335,7 @@ struct DashboardView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                EditorialKicker(number: "02", title: "USAGE")
+                SectionLabel("Usage")
                 Spacer()
             }
             .padding(.horizontal, 28)
@@ -400,7 +415,7 @@ struct DashboardView: View {
     private var usagePane: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
-                EditorialKicker(number: "02", title: "USAGE")
+                SectionLabel("Usage")
                 Spacer()
             }
             .padding(.horizontal, 28)
@@ -411,9 +426,9 @@ struct DashboardView: View {
                 .padding(.top, 8)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("01 / TODAY")
+                Text("TODAY")
                     .font(.mono(size: 12))
-                    .tracking(12 * 0.04)
+                    .tracking(12 * 0.08)
                     .foregroundColor(PadzyTheme.muted)
 
                 Text(TokenFormatter.format(selectedSnapshot?.todayUsage.totalTokens))
@@ -433,7 +448,7 @@ struct DashboardView: View {
             // Quota Limits Section (renders only if has active quota windows)
             if let activeWindows = selectedSnapshot?.quotaWindows.filter({ $0.confidence != .unavailable }), !activeWindows.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    EditorialKicker(number: limitsSectionNumber, title: "LIMITS")
+                    SectionLabel("Limits")
                         .padding(.horizontal, 28)
                         .padding(.top, 16)
 
@@ -452,27 +467,17 @@ struct DashboardView: View {
             }
 
             HStack(alignment: .top, spacing: 0) {
-                metricBlock(number: metricBlockNumber(baseNumber: 2), title: "7D ROLLING",
+                metricBlock(title: "7D ROLLING",
                             usage: selectedSnapshot?.weekUsage, series: dailySeries(days: 7))
                 verticalHairline
-                metricBlock(number: metricBlockNumber(baseNumber: 3), title: "30D ROLLING",
+                metricBlock(title: "30D ROLLING",
                             usage: selectedSnapshot?.monthUsage, series: dailySeries(days: 30))
                 verticalHairline
-                metricBlock(number: metricBlockNumber(baseNumber: 4), title: "LIFETIME",
+                metricBlock(title: "LIFETIME",
                             usage: selectedSnapshot?.lifetimeUsage, series: dailySeries(days: nil), cost: selectedSnapshot?.costUsage)
             }
             .frame(height: 168)
         }
-    }
-
-    private var limitsSectionNumber: String {
-        "02"
-    }
-
-    private func metricBlockNumber(baseNumber: Int) -> String {
-        let hasLimits = !(selectedSnapshot?.quotaWindows.filter { $0.confidence != .unavailable }.isEmpty ?? true)
-        let num = hasLimits ? baseNumber + 1 : baseNumber
-        return String(format: "%02d", num)
     }
 
     private var usageBreakdown: some View {
@@ -700,12 +705,12 @@ struct DashboardView: View {
             .frame(width: 1)
     }
 
-    private func metricBlock(number: String, title: String, usage: TokenUsage?, series: [Int], cost: CostUsage? = nil) -> some View {
+    private func metricBlock(title: String, usage: TokenUsage?, series: [Int], cost: CostUsage? = nil) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text("\(number) / \(title)")
+                Text(title)
                     .font(.mono(size: 11))
-                    .tracking(11 * 0.04)
+                    .tracking(11 * 0.08)
                     .foregroundColor(PadzyTheme.muted)
 
                 Spacer()
@@ -736,8 +741,12 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: 03 / STATUS
+    // MARK: Status
 
+    /// Bottom status strip. Reflows responsively: at comfortable widths it shows the
+    /// full status line and a labelled SYNC NOW; when the window is squeezed toward
+    /// the 640pt minimum the WATCHING path drops and SYNC NOW collapses to an
+    /// icon-only button, so nothing ever clips or overlaps.
     private var statusStrip: some View {
         VStack(spacing: 0) {
             if let warnings = selectedSnapshot?.warnings.filter({ $0.level != .info }), !warnings.isEmpty {
@@ -757,49 +766,72 @@ struct DashboardView: View {
                 .padding(.vertical, 8)
             }
             HairlineDivider()
-            HStack(spacing: 16) {
-                Text("03 / STATUS")
-                    .font(.mono(size: 11))
-                    .tracking(11 * 0.04)
-                    .foregroundColor(PadzyTheme.muted)
-
-                if viewModel.isLoading {
-                    Rectangle()
-                        .fill(PadzyTheme.accent)
-                        .frame(width: 6, height: 6)
-                        .opacity(pulseOpacity)
-                        .onAppear {
-                            if !reduceMotion {
-                                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                                    pulseOpacity = 0.2
-                                }
-                            }
-                        }
-                }
-
-                Text(statusLine)
-                    .font(.mono(size: 12))
-                    .foregroundColor(PadzyTheme.ink)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button(action: { Task { await viewModel.refresh() } }) {
-                    Text("SYNC NOW")
-                        .font(.mono(size: 12))
-                        .foregroundColor(PadzyTheme.ground)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(PadzyTheme.accent)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(viewModel.isLoading)
-                .accessibilityLabel("Sync now")
+            ViewThatFits(in: .horizontal) {
+                statusRow(showLabel: true, statusText: statusLine)
+                statusRow(showLabel: true, statusText: statusLineCompact)
+                statusRow(showLabel: false, statusText: statusLineCompact)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
+    }
+
+    /// One status-strip layout. `showLabel` toggles the SYNC NOW word vs an
+    /// icon-only refresh; `statusText` is the (full or shortened) status line.
+    private func statusRow(showLabel: Bool, statusText: String) -> some View {
+        HStack(spacing: 16) {
+            SectionLabel("Status", size: 11)
+                .fixedSize()
+
+            if viewModel.isLoading {
+                Rectangle()
+                    .fill(PadzyTheme.accent)
+                    .frame(width: 6, height: 6)
+                    .opacity(pulseOpacity)
+                    .onAppear {
+                        if !reduceMotion {
+                            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                                pulseOpacity = 0.2
+                            }
+                        }
+                    }
+            }
+
+            Text(statusText)
+                .font(.mono(size: 12))
+                .foregroundColor(PadzyTheme.ink)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 8)
+
+            syncButton(showLabel: showLabel)
+        }
+    }
+
+    private func syncButton(showLabel: Bool) -> some View {
+        Button(action: { Task { await viewModel.refresh() } }) {
+            Group {
+                if showLabel {
+                    Text("SYNC NOW")
+                        .font(.mono(size: 12))
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                }
+            }
+            .foregroundColor(PadzyTheme.ground)
+            .background(PadzyTheme.accent)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("r", modifiers: .command)
+        .disabled(viewModel.isLoading)
+        .accessibilityLabel("Sync now")
     }
 
     private var statusLine: String {
@@ -809,11 +841,19 @@ struct DashboardView: View {
         return "SYNCED \(synced)  ·  \(confidence)  ·  WATCHING \(pathName)"
     }
 
+    /// Shortened status for tight widths: drops the WATCHING path (the longest,
+    /// least-critical segment) so the strip never has to clip.
+    private var statusLineCompact: String {
+        let synced = viewModel.lastSyncedAt.map { Self.timeFormatter.string(from: $0) } ?? "NEVER"
+        let confidence = selectedSnapshot?.todayUsage.confidence.displayName.uppercased() ?? "—"
+        return "SYNCED \(synced)  ·  \(confidence)"
+    }
+
     // MARK: Empty state
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: 16) {
-            EditorialKicker(number: "02", title: "USAGE")
+            SectionLabel("Usage")
             Text("NO CLAUDE CODE DIRECTORY DETECTED")
                 .font(.display(size: 18, weight: .black))
                 .foregroundColor(PadzyTheme.ink)
@@ -874,4 +914,47 @@ private struct SidebarProviderRow: View {
             HairlineDivider()
         }
     }
+}
+
+// MARK: - Previews
+
+@MainActor
+private func previewViewModel() -> DashboardViewModel {
+    // Make every provider visible so the sidebar + panes render deterministically.
+    for id in ProviderID.allCases { ProviderVisibility.setHidden(false, for: id) }
+    let vm = DashboardViewModel()
+    vm.lastSyncedAt = Date(timeIntervalSince1970: 1_769_000_000)
+    vm.snapshots = [
+        ProviderSnapshot(
+            providerID: .claudeCode, displayName: "Claude Code", authStatus: .authenticated,
+            quotaWindows: [QuotaWindow(providerID: .claudeCode, type: .weekly, used: 94, limit: 100,
+                                       resetAt: Date(timeIntervalSince1970: 1_769_400_000),
+                                       confidence: .providerReported, source: "preview")],
+            todayUsage: TokenUsage(inputTokens: 128_000, outputTokens: 42_000,
+                                   cacheReadTokens: 512_000, cacheCreationTokens: 8_000,
+                                   confidence: .exact),
+            weekUsage: TokenUsage(inputTokens: 900_000, outputTokens: 300_000, confidence: .exact),
+            warnings: []
+        ),
+        ProviderSnapshot(providerID: .cursor, displayName: "Cursor", authStatus: .authenticated,
+                         quotaWindows: [], todayUsage: .unavailable, weekUsage: .unavailable,
+                         warnings: [ProviderWarning(message: "Plan: Pro", level: .info)]),
+    ]
+    vm.selectedProvider = .claudeCode
+    return vm
+}
+
+#Preview("Window · small 640×480") {
+    DashboardView().environmentObject(previewViewModel())
+        .frame(width: 640, height: 480)
+}
+
+#Preview("Window · mid 900×640") {
+    DashboardView().environmentObject(previewViewModel())
+        .frame(width: 900, height: 640)
+}
+
+#Preview("Window · full 1440×900") {
+    DashboardView().environmentObject(previewViewModel())
+        .frame(width: 1440, height: 900)
 }
