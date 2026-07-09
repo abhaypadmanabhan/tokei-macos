@@ -13,7 +13,8 @@ public actor ProviderRegistry {
             CodexProvider(),
             CursorProvider(),
             ClineProvider(),
-            AntigravityProvider()
+            AntigravityProvider(),
+            OpencodeProvider()
         ])
     }
 
