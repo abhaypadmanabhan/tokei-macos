@@ -64,15 +64,20 @@ struct ProviderOverviewRow: View {
         )
     }
 
-    // MARK: Threshold color (shared quota semantics — reused by Overview)
+    // MARK: Threshold emphasis (accent-intensity — one accent only, no new hue)
 
-    /// Bar + value color by how close the window is to its ceiling.
-    /// `≥ 90` critical (accent) · `≥ 70` warning · else nominal.
+    /// Bar + value emphasis by how close the window is to its ceiling, expressed
+    /// through **accent intensity** (padzy one-accent rule — never a second hue):
+    /// `< 70` calm ink · `70–89` accent at reduced intensity · `≥ 90` full accent
+    /// (paired with a `!!` marker so critical never rides on colour alone).
     static func thresholdColor(_ usedPercent: Double) -> Color {
         if usedPercent >= 90 { return PadzyTheme.accent }
-        if usedPercent >= 70 { return Color(hex: "E8A23D") }
-        return Color(hex: "3DBE8B")
+        if usedPercent >= 70 { return PadzyTheme.accent.opacity(0.6) }
+        return PadzyTheme.ink
     }
+
+    /// `≥ 90%` is the maxed/critical band that earns the `!!` non-colour marker.
+    static func isCritical(_ usedPercent: Double) -> Bool { usedPercent >= 90 }
 
     var body: some View {
         if let tightest {
@@ -105,11 +110,18 @@ struct ProviderOverviewRow: View {
             fillBar(percent: util.usedPercent, color: color)
                 .frame(minWidth: 48, maxWidth: .infinity)
 
-            Text("\(percent)%")
-                .font(.mono(size: 13))
-                .monospacedDigit()
-                .foregroundColor(color)
-                .frame(minWidth: 44, alignment: .trailing)
+            HStack(spacing: 3) {
+                if Self.isCritical(util.usedPercent) {
+                    Text("!!")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.accent)
+                }
+                Text("\(percent)%")
+                    .font(.mono(size: 13))
+                    .monospacedDigit()
+                    .foregroundColor(color)
+            }
+            .frame(minWidth: 56, alignment: .trailing)
 
             countdown(util.resetAt)
                 .frame(width: 78, alignment: .trailing)
