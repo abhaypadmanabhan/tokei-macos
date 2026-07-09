@@ -49,10 +49,15 @@ public enum AntigravityQuotaError: LocalizedError, Sendable {
 public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
     private let urlSession: URLSession
     private let discoverer: AntigravityQuotaEndpointDiscovering
+    private let now: @Sendable () -> Date
+    private let cacheFileURL: URL
 
     public init(
         urlSession: URLSession? = nil,
-        discoverer: AntigravityQuotaEndpointDiscovering = DefaultAntigravityQuotaEndpointDiscoverer()
+        discoverer: AntigravityQuotaEndpointDiscovering = DefaultAntigravityQuotaEndpointDiscoverer(),
+        now: @escaping @Sendable () -> Date = { Date() },
+        cacheDirectory: URL? = nil,
+        cacheFileName: String = "antigravity-quota-cache.json"
     ) {
         if let urlSession {
             self.urlSession = urlSession
@@ -65,25 +70,43 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             )
         }
         self.discoverer = discoverer
+        self.now = now
+
+        let directory: URL
+        if let cacheDirectory {
+            directory = cacheDirectory
+        } else {
+            let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            let appSupport = urls.first ?? FileManager.default.temporaryDirectory
+            directory = appSupport.appendingPathComponent("AIUsageDashboard", isDirectory: true)
+        }
+        self.cacheFileURL = directory.appendingPathComponent(cacheFileName)
     }
 
     public func fetchQuotaWindows() async throws -> [QuotaWindow] {
-        guard let endpoint = await discoverer.discoverEndpoint(), !endpoint.listenPorts.isEmpty else {
-            throw AntigravityQuotaError.discoveryUnavailable
-        }
-
-        var lastError: Error?
-        for port in endpoint.listenPorts {
-            do {
-                return try await fetchQuotaWindows(port: port, csrfToken: endpoint.csrfToken)
-            } catch {
-                lastError = error
+        do {
+            guard let endpoint = await discoverer.discoverEndpoint(), !endpoint.listenPorts.isEmpty else {
+                throw AntigravityQuotaError.discoveryUnavailable
             }
-        }
 
-        // `lastError` is always set: the guard above ensures `listenPorts` is non-empty,
-        // so the loop runs at least once and every iteration either returns or records an error.
-        throw lastError ?? AntigravityQuotaError.discoveryUnavailable
+            var lastError: Error?
+            for port in endpoint.listenPorts {
+                do {
+                    return try await fetchQuotaWindows(port: port, csrfToken: endpoint.csrfToken)
+                } catch {
+                    lastError = error
+                }
+            }
+
+            // `lastError` is always set: the guard above ensures `listenPorts` is non-empty,
+            // so the loop runs at least once and every iteration either returns or records an error.
+            throw lastError ?? AntigravityQuotaError.discoveryUnavailable
+        } catch {
+            if let cachedWindows = loadStaleCache() {
+                return cachedWindows
+            }
+            throw error
+        }
     }
 
     private func fetchQuotaWindows(port: Int, csrfToken: String) async throws -> [QuotaWindow] {
@@ -100,7 +123,73 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AntigravityQuotaError.httpStatus(httpResponse.statusCode)
         }
-        return try Self.decodeQuotaWindows(data, providerID: .antigravity)
+        let windows = try Self.decodeQuotaWindows(data, providerID: .antigravity)
+        saveToCache(data)
+        return windows
+    }
+
+    private struct CachedQuota: Codable {
+        let timestamp: Date
+        let rawPayload: Data
+    }
+
+    private func saveToCache(_ data: Data) {
+        let cached = CachedQuota(timestamp: now(), rawPayload: data)
+        guard let encoded = try? JSONEncoder().encode(cached) else { return }
+        do {
+            try FileManager.default.createDirectory(at: cacheFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try encoded.write(to: cacheFileURL, options: .atomic)
+        } catch {}
+    }
+
+    private func loadStaleCache() -> [QuotaWindow]? {
+        guard let data = try? Data(contentsOf: cacheFileURL),
+              let cached = try? JSONDecoder().decode(CachedQuota.self, from: data) else {
+            return nil
+        }
+
+        let age = now().timeIntervalSince(cached.timestamp)
+        guard age >= 0 && age <= 7 * 24 * 3600 else {
+            return nil
+        }
+
+        guard let payload = try? JSONDecoder().decode(QuotaSummaryPayload.self, from: cached.rawPayload) else {
+            return nil
+        }
+
+        let currentDate = now()
+        let windows = payload.response.groups.flatMap { group in
+            group.buckets.compactMap { bucket -> QuotaWindow? in
+                guard let type = Self.quotaWindowType(from: bucket.window),
+                      let resetAt = JSONLDateParsing.standard.date(from: bucket.resetTime) else {
+                    return nil
+                }
+
+                // Drop individual cached buckets whose resetTime has already passed.
+                guard resetAt > currentDate else {
+                    return nil
+                }
+
+                let remainingFraction = min(1, max(0, bucket.remainingFraction))
+                return QuotaWindow(
+                    providerID: .antigravity,
+                    type: type,
+                    used: round((1 - remainingFraction) * 100),
+                    limit: 100,
+                    remaining: round(remainingFraction * 100),
+                    resetAt: resetAt,
+                    confidence: .estimated,
+                    source: "antigravity-local-rpc (stale)",
+                    label: group.displayName,
+                    bucketKey: bucket.bucketId
+                )
+            }
+        }
+
+        guard !windows.isEmpty else {
+            return nil
+        }
+        return windows
     }
 
     static func decodeQuotaWindows(_ data: Data, providerID: ProviderID) throws -> [QuotaWindow] {

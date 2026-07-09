@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Tokei</title>
+    <!--
+      Placeholder — replaced by scripts/gen-appcast.sh output on every release.
+      Served at https://abhaypadmanabhan.github.io/tokei-macos/appcast.xml once
+      GitHub Pages is enabled (Settings -> Pages -> Source: main /docs) after
+      this branch merges to main.
+    -->
+  </channel>
+</rss>

@@ -8,6 +8,10 @@ struct DashboardView: View {
     /// Antigravity quota section shows (off vs. on-but-not-syncing yet).
     @AppStorage("antigravityOnlineQuotaEnabled") private var antigravityOnlineQuotaEnabled = false
 
+    /// Local top-level navigation. `Core` is untouched; `.settings` is mirrored
+    /// into `viewModel.showingSettings` so existing Core consumers stay in sync.
+    @State private var section: AppSection = .overview
+
     @State private var pulseOpacity: Double = 1.0
     @State private var countdownTick = Date()
     private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
@@ -30,6 +34,12 @@ struct DashboardView: View {
 
     private var capabilityTier: ProviderCapabilityTier {
         ProviderCapabilityTier.classify(selectedSnapshot)
+    }
+
+    /// First non-hidden provider in sidebar order — the row that up-arrow escapes
+    /// upward from (into Overview) and that down-arrow from Overview lands on.
+    private var firstVisibleProvider: ProviderID? {
+        ProviderID.allCases.first { !ProviderVisibility.isHidden($0) }
     }
 
     /// Advances selection, skipping hidden providers. Bounded by the provider
@@ -69,17 +79,52 @@ struct DashboardView: View {
         }
         .background(PadzyTheme.ground)
         .preferredColorScheme(.dark)
-        .frame(minWidth: 860, minHeight: 560)
+        .frame(minWidth: 640, minHeight: 480)
         .focusable()
         .onMoveCommand { direction in
             switch direction {
             case .up:
-                selectPreviousVisible()
+                // Only meaningful from within the provider list: escape to Overview
+                // when already on the top provider, otherwise step up one row.
+                if case .provider = section {
+                    if viewModel.selectedProvider == firstVisibleProvider {
+                        section = .overview
+                    } else {
+                        selectPreviousVisible()
+                        section = .provider(viewModel.selectedProvider)
+                    }
+                    viewModel.showingSettings = false
+                }
             case .down:
-                selectNextVisible()
+                switch section {
+                case .overview:
+                    // Enter the provider list at its top row.
+                    if let first = firstVisibleProvider {
+                        viewModel.selectedProvider = first
+                        section = .provider(first)
+                        viewModel.showingSettings = false
+                    }
+                case .provider:
+                    selectNextVisible()
+                    section = .provider(viewModel.selectedProvider)
+                    viewModel.showingSettings = false
+                default:
+                    break
+                }
             default:
                 break
             }
+        }
+        // Menu-bar Settings sets `viewModel.showingSettings`; route the pane there on
+        // the RISING edge only, so section-driven writes back to `false` don't fight it.
+        .onChange(of: viewModel.showingSettings) { _, isShowing in
+            if isShowing { section = .settings }
+        }
+        // Catch the case where the flag was already true before this view appeared —
+        // e.g. the dashboard window is created fresh by the menu-bar Settings action,
+        // so `onChange` never sees the transition.
+        .onAppear {
+            if viewModel.showingSettings { section = .settings }
         }
         .onReceive(countdownTimer) { _ in
             countdownTick = Date()
@@ -94,6 +139,9 @@ struct DashboardView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
+            overviewSidebarRow
+            HairlineDivider()
+
             EditorialKicker(number: "01", title: "PROVIDERS")
                 .padding(.horizontal, 20)
                 .padding(.top, 24)
@@ -101,7 +149,7 @@ struct DashboardView: View {
             HairlineDivider()
 
             ForEach(ProviderID.allCases, id: \.self) { providerID in
-                SidebarProviderRow(providerID: providerID)
+                SidebarProviderRow(providerID: providerID, section: $section)
             }
             Spacer(minLength: 0)
             settingsSidebarRow
@@ -109,24 +157,53 @@ struct DashboardView: View {
         .frame(width: 230)
     }
 
+    /// Top sidebar entry that routes the right pane to the consolidated Overview.
+    /// Mirrors `settingsSidebarRow`'s 2px leading accent tick + surface fill on active.
+    private var overviewSidebarRow: some View {
+        let isActive = section == .overview
+        return Button(action: {
+            section = .overview
+            viewModel.showingSettings = false
+        }) {
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(isActive ? PadzyTheme.accent : Color.clear)
+                    .frame(width: 2)
+                Text("00 / OVERVIEW")
+                    .font(.display(size: 13, weight: .bold))
+                    .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                Spacer(minLength: 0)
+            }
+            .background(isActive ? PadzyTheme.surface : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isButton)
+    }
+
     /// Bottom-pinned sidebar entry that swaps the right pane to the in-app Settings
     /// surface. Mirrors ProviderCard's 2px leading accent tick + surface fill on active.
     private var settingsSidebarRow: some View {
         VStack(alignment: .leading, spacing: 0) {
             HairlineDivider()
-            Button(action: { viewModel.showingSettings = true }) {
+            Button(action: {
+                section = .settings
+                viewModel.showingSettings = true
+            }) {
                 HStack(spacing: 0) {
                     Rectangle()
-                        .fill(viewModel.showingSettings ? PadzyTheme.accent : Color.clear)
+                        .fill(section == .settings ? PadzyTheme.accent : Color.clear)
                         .frame(width: 2)
                     Text("SETTINGS")
                         .font(.display(size: 13, weight: .bold))
-                        .foregroundColor(viewModel.showingSettings ? PadzyTheme.ink : PadzyTheme.muted)
+                        .foregroundColor(section == .settings ? PadzyTheme.ink : PadzyTheme.muted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
                     Spacer(minLength: 0)
                 }
-                .background(viewModel.showingSettings ? PadzyTheme.surface : Color.clear)
+                .background(section == .settings ? PadzyTheme.surface : Color.clear)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -168,9 +245,34 @@ struct DashboardView: View {
     /// installed) → loading → generic empty → loaded, in that precedence.
     @ViewBuilder
     private var rightPane: some View {
-        if viewModel.showingSettings {
-            SettingsPane()
-        } else if let errorMessage = viewModel.errorMessage {
+        switch section {
+        case .overview:
+            OverviewView(
+                onOpen: { providerID in
+                    section = .provider(providerID)
+                    viewModel.selectedProvider = providerID
+                    viewModel.showingSettings = false
+                },
+                onConnect: {
+                    section = .connections
+                    viewModel.showingSettings = false
+                }
+            )
+        case .connections:
+            ConnectionsView()
+        case .settings:
+            SettingsPane(onOpenConnections: {
+                section = .connections
+                viewModel.showingSettings = false
+            })
+        case .provider:
+            providerDetailPane
+        }
+    }
+
+    @ViewBuilder
+    private var providerDetailPane: some View {
+        if let errorMessage = viewModel.errorMessage {
             SurfaceStateView(
                 kicker: ("02", "USAGE"),
                 kind: .error(headline: "Sync failed", detail: errorMessage),
@@ -274,7 +376,10 @@ struct DashboardView: View {
                     .foregroundColor(PadzyTheme.muted)
 
                 if providerID == .cursor {
-                    Button(action: { viewModel.showingSettings = true }) {
+                    Button(action: {
+                        section = .settings
+                        viewModel.showingSettings = true
+                    }) {
                         Text("ENABLE ONLINE IN SETTINGS")
                             .font(.mono(size: 12))
                             .foregroundColor(PadzyTheme.ground)
@@ -729,24 +834,28 @@ struct DashboardView: View {
 /// own `@AppStorage` so hiding/showing a provider updates the sidebar instantly.
 private struct SidebarProviderRow: View {
     let providerID: ProviderID
+    @Binding var section: AppSection
     @EnvironmentObject private var viewModel: DashboardViewModel
     @AppStorage private var isHidden: Bool
 
-    init(providerID: ProviderID) {
+    init(providerID: ProviderID, section: Binding<AppSection>) {
         self.providerID = providerID
+        _section = section
         _isHidden = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
     }
 
     var body: some View {
         if !isHidden {
-            let isSelected = viewModel.selectedProvider == providerID
+            let isSelected = viewModel.selectedProvider == providerID && section == .provider(providerID)
             let isAvailable = viewModel.isAvailable(providerID)
             let snapshot = viewModel.snapshot(for: providerID)
             let tier = ProviderCapabilityTier.classify(snapshot)
 
             Button(action: {
                 if isAvailable {
+                    section = .provider(providerID)
                     viewModel.selectedProvider = providerID
+                    viewModel.showingSettings = false
                 }
             }) {
                 ProviderCard(

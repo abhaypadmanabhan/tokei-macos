@@ -6,17 +6,15 @@ import AIUsageDashboardCore
 /// the bottom-pinned SETTINGS entry in the provider sidebar and from the menu bar.
 struct SettingsPane: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
-    /// Read by the Cursor connector directly (`UserDefaults.standard.bool(forKey:)`) —
-    /// this is the one sanctioned switch for the network-usage path (Bible §"WP-2 · B").
-    /// Default OFF: Cursor never makes a network request unless the user opts in here.
-    @AppStorage("cursorNetworkUsageEnabled") private var cursorNetworkUsageEnabled = false
-    /// Read by the Antigravity connector directly, mirroring the Cursor switch above.
-    /// Default OFF: no local RPC call to the running Antigravity app unless opted in.
-    @AppStorage("antigravityOnlineQuotaEnabled") private var antigravityOnlineQuotaEnabled = false
 
     /// Same environment view model as the dashboard (SettingsPane renders inside it),
     /// so toggling a data-source setting can immediately re-run the providers.
     @EnvironmentObject private var viewModel: DashboardViewModel
+
+    /// Routes to the Connections screen, where per-provider live-quota toggles
+    /// now live (moved out of Settings so each connection gets its own
+    /// detect/connect/enable flow).
+    let onOpenConnections: () -> Void
 
     // Bundle version can't change at runtime — compute once.
     private static let appVersion: String =
@@ -53,44 +51,29 @@ struct SettingsPane: View {
                         HairlineDivider()
                             .padding(.vertical, 8)
 
-                        Toggle(isOn: $cursorNetworkUsageEnabled) {
-                            Text("CURSOR: FETCH USAGE ONLINE")
-                                .font(.display(size: 12, weight: .bold))
-                                .foregroundColor(PadzyTheme.ink)
-                        }
-                        .toggleStyle(.switch)
-                        .tint(PadzyTheme.accent)
-                        // The Cursor connector reads this flag at fetch time; a plain
-                        // UserDefaults write triggers no sync, so re-run the providers
-                        // now — otherwise flipping the switch appears to "do nothing"
-                        // until the next file-watcher event.
-                        .onChange(of: cursorNetworkUsageEnabled) {
-                            Task { await viewModel.refresh() }
-                        }
-
-                        Text("Makes an authenticated request to Cursor's servers using your local session token to fetch real token/quota usage. Off by default — Cursor otherwise reports plan/tier and accepted-lines from local data only, with no network access.")
+                        Text("Live network/RPC quota fetching for Cursor, Antigravity, and Claude is managed in Connections.")
                             .font(.system(size: 11))
                             .foregroundColor(PadzyTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        HairlineDivider()
-                            .padding(.vertical, 8)
-
-                        Toggle(isOn: $antigravityOnlineQuotaEnabled) {
-                            Text("ANTIGRAVITY: FETCH QUOTA ONLINE")
-                                .font(.display(size: 12, weight: .bold))
-                                .foregroundColor(PadzyTheme.ink)
+                        Button(action: onOpenConnections) {
+                            HStack(spacing: 0) {
+                                Rectangle()
+                                    .fill(Color.clear)
+                                    .frame(width: 2)
+                                Text("MANAGE CONNECTIONS →")
+                                    .font(.display(size: 13, weight: .bold))
+                                    .foregroundColor(PadzyTheme.ink)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                Spacer(minLength: 0)
+                            }
+                            .background(PadzyTheme.surface)
+                            .contentShape(Rectangle())
                         }
-                        .toggleStyle(.switch)
-                        .tint(PadzyTheme.accent)
-                        .onChange(of: antigravityOnlineQuotaEnabled) {
-                            Task { await viewModel.refresh() }
-                        }
-
-                        Text("Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere. Requires Antigravity to be open.")
-                            .font(.system(size: 11))
-                            .foregroundColor(PadzyTheme.muted)
-                            .fixedSize(horizontal: false, vertical: true)
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(.isButton)
+                        .padding(.top, 4)
                     }
 
                     section(number: "02", title: "QUOTA ALERTS") {

@@ -22,3 +22,36 @@
 - **Set `request.httpShouldHandleCookies = false` when sending an explicit `Cookie` header** — otherwise URLSession's cookie storage can override/strip it and the authenticated call silently fails.
 - **CSV `Date` is UTC ISO8601-with-ms**; bucket to the user's local day via `Calendar.current` for consistency with the other providers (they window on local calendar days).
 - **Read structured fields, don't regex-scrape a display string.** First cut recovered the plan label by matching the `"Plan: <text>"` info warning; the structured `membershipType`/`subscriptionStatus` were already on the parsed state. `/simplify`'s altitude lens caught the layering inversion — expose a computed `planLabel` on the state instead.
+
+## Antigravity Stale-Serve Quota Cache — 2026-07-08
+
+- **Unit Testing Date-Sensitive Filtering**:
+  - *Rule*: When unit-testing components that filter data based on system time (e.g. dropping cached buckets whose resetTime is in the past, or checking cache expiry), always inject a mock clock/date provider returning a fixed test date instead of using `Date()`. This ensures tests are stable across execution environments and prevents failures due to real-time differences relative to fixed test fixtures.
+
+## 2026-07-08 — Quota UI: consolidate, don't duplicate; ship the enable control
+
+- **Don't build a "dashboard" that repeats the detail tabs.** The quota strip (P1.1) re-rendered
+  every provider window that each per-provider tab already showed → rejected. A real overview is a
+  *different altitude*: one glanceable line per provider (tightest window only), logos, aggregate
+  headline — not repeated tiles. **How to apply:** before adding a summary surface, ask "what does
+  this show that the detail view doesn't?"
+- **A backend toggle with no UI is not shippable.** P0.3 added `claudeNetworkUsageEnabled` but no
+  control → a public user cannot enable Claude live. **How to apply:** any feature flag meant for
+  end users ships with an in-app, friendly enable path (guided Connections screen), same commit/wave.
+- **Fit-to-window is a requirement, not polish.** Fixed frames / high minWidth cropped content.
+  Overview/detail must reflow + scroll; test at narrow width in previews.
+- **Logos: monochrome template assets** (Render As = Template, tinted to ink) — on-theme + low
+  trademark risk for public ship. Full-color brand logos clash with aitracker and add legal risk.
+
+## 2026-07-08 — Async connect needs a "fetching" state, not a silent empty
+
+- **Symptom:** user enabled Claude live quota, allowed the Keychain prompt, but the Overview row
+  still said "Connect live quota" and looked broken. Root cause (systematic-debug): the data path
+  was fine — the live fetch is async (~seconds + Keychain-allow delay); the row's unavailable
+  branch showed the "Connect →" affordance the whole time, indistinguishable from "not connected".
+- **Fix:** row reads the provider's enable flag (@AppStorage, same key the toggle writes). Flag ON
+  + no window yet → "FETCHING QUOTA…"; flag OFF → "Connect live quota →". A connected-but-waiting
+  state must never render as the not-connected call-to-action.
+- **How to apply:** any enable→async-fetch flow needs three visible states (off / fetching / live),
+  not two. Verify the transient, not just the settled state. Don't debug-by-guess — the store/cache
+  files proved the fetch worked before touching UI.

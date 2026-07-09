@@ -6,10 +6,15 @@ options:
   createIntermediateGroups: true
 attributes:
   BuildIndependentTargetsInParallel: true
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.2.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.1"
+    CURRENT_PROJECT_VERSION: "2"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
@@ -30,6 +35,11 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.Core
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_IDENTITY: "-"
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application: Abhay Padmanabhan (A47GG9FV27)"
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: A47GG9FV27
     scheme:
       testTargets:
         - AIUsageDashboardCoreTests
@@ -42,13 +52,27 @@ targets:
           - Core
     dependencies:
       - target: AIUsageDashboardCore
+      - package: Sparkle
+    info:
+      path: AIUsageDashboardApp/Info.plist
+      properties:
+        CFBundleDisplayName: "Tokei"
+        LSApplicationCategoryType: public.app-category.productivity
+        SUFeedURL: https://abhaypadmanabhan.github.io/tokei-macos/appcast.xml
+        SUPublicEDKey: "HvBBuRxzgqykdxzKWGTlFUVpWx7W16mdwMtkaprDkiI="
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
     settings:
       base:
         PRODUCT_NAME: Tokei
         PRODUCT_BUNDLE_IDENTIFIER: ai.padzy.tokei
-        INFOPLIST_KEY_CFBundleDisplayName: "Tokei"
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application: Abhay Padmanabhan (A47GG9FV27)"
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: A47GG9FV27
+          ENABLE_HARDENED_RUNTIME: YES
     scheme: {}
   AIUsageDashboardCoreTests:
     type: bundle.unit-test

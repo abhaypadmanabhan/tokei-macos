@@ -34,6 +34,111 @@ enum ClaudeFixtures {
     {"message":{"id":"msg_epoch","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_epoch","type":"assistant","uuid":"uuid-epoch","timestamp":1700000000}
     """
 
+  static let oauthUsageResponse = """
+    {
+        "five_hour": {
+            "utilization": 8.0,
+            "resets_at": "2026-07-09T01:00:00.475743+00:00",
+            "limit_dollars": null,
+            "used_dollars": null,
+            "remaining_dollars": null
+        },
+        "seven_day": {
+            "utilization": 62.0,
+            "resets_at": "2026-07-13T02:00:00.475765+00:00",
+            "limit_dollars": null,
+            "used_dollars": null,
+            "remaining_dollars": null
+        },
+        "seven_day_oauth_apps": null,
+        "seven_day_opus": null,
+        "seven_day_sonnet": null,
+        "seven_day_cowork": null,
+        "seven_day_omelette": null,
+        "tangelo": null,
+        "iguana_necktie": null,
+        "omelette_promotional": null,
+        "nimbus_quill": null,
+        "cinder_cove": null,
+        "amber_ladder": null,
+        "extra_usage": {
+            "is_enabled": false,
+            "monthly_limit": 5000,
+            "used_credits": 2152.0,
+            "utilization": 43.04,
+            "currency": "USD",
+            "decimal_places": 2,
+            "disabled_reason": "out_of_credits",
+            "daily": null,
+            "weekly": null
+        },
+        "limits": [
+            {
+                "kind": "session",
+                "group": "session",
+                "percent": 8,
+                "severity": "normal",
+                "resets_at": "2026-07-09T01:00:00.475743+00:00",
+                "scope": null,
+                "is_active": false
+            },
+            {
+                "kind": "weekly_all",
+                "group": "weekly",
+                "percent": 62,
+                "severity": "normal",
+                "resets_at": "2026-07-13T02:00:00.475765+00:00",
+                "scope": null,
+                "is_active": true
+            },
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 49,
+                "severity": "normal",
+                "resets_at": "2026-07-13T02:00:00.476071+00:00",
+                "scope": {
+                    "model": {
+                        "id": null,
+                        "display_name": "Fable"
+                    },
+                    "surface": null
+                },
+                "is_active": false
+            }
+        ],
+        "spend": {
+            "used": {
+                "amount_minor": 2152,
+                "currency": "USD",
+                "exponent": 2
+            },
+            "limit": {
+                "amount_minor": 5000,
+                "currency": "USD",
+                "exponent": 2
+            },
+            "percent": 43,
+            "severity": "normal",
+            "enabled": false,
+            "disabled_reason": "out_of_credits",
+            "cap": {
+                "money": null,
+                "credits": {
+                    "amount_minor": 5000,
+                    "exponent": 2
+                }
+            },
+            "balance": null,
+            "auto_reload": null,
+            "disclaimer": "Usage credits cover you when you hit your plan limits. [Learn more](https://support.claude.com/articles/12429409)",
+            "can_purchase_credits": false,
+            "can_toggle": false
+        },
+        "member_dashboard_available": false
+    }
+    """
+
   static let isoTimestampLine = """
     {"message":{"id":"msg_iso","usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_iso","type":"assistant","uuid":"uuid-iso","timestamp":"2026-07-06T07:55:59Z"}
     """
@@ -150,6 +255,27 @@ enum CodexFixtures {
   static func staleRateLimits() -> String {
     """
     {"timestamp":"2026-07-04T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":30},"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":30}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":40.0,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":60.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    """
+  }
+
+  /// Free/lower-tier layout: weekly window sits in the primary slot (not 5h).
+  static func weeklyInPrimarySlot() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":60},"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":60}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":42.0,"window_minutes":10080,"resets_at":1783457462},"secondary":null,"credits":null,"plan_type":"free","rate_limit_reached_type":null}}}
+    """
+  }
+
+  /// Duration classification via limit_window_seconds instead of window_minutes.
+  static func limitWindowSecondsEvents() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":100},"last_token_usage":{"input_tokens":80,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":100}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":15.0,"limit_window_seconds":18000,"resets_at":1783324383},"secondary":{"used_percent":25.0,"limit_window_seconds":604800,"resets_at":1783457462},"credits":null,"plan_type":"plus","rate_limit_reached_type":null}}}
+    """
+  }
+
+  /// Enterprise monthly credit limit + reset-bank counts when present in local JSONL.
+  static func creditsAndResetBank() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35},"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1783324383},"secondary":{"used_percent":20.0,"window_minutes":10080,"resets_at":1783457462},"credits":null,"plan_type":"pro","rate_limit_reached_type":null,"spend_control":{"individual_limit":{"limit":"25000","used":"8000","used_percent":32,"remaining_percent":68,"reset_at":1783457462}},"rate_limit_reset_credits":{"available":3}}}}
     """
   }
 

@@ -78,8 +78,15 @@ public struct EditorialKicker: View {
         self.title = title
     }
 
+    /// Title-only kicker (no leading number) for secondary destinations that sit
+    /// outside the numbered 00–03 spine, e.g. Connections.
+    public init(title: String) {
+        self.number = ""
+        self.title = title
+    }
+
     public var body: some View {
-        Text("\(number) / \(title.uppercased())")
+        Text(number.isEmpty ? title.uppercased() : "\(number) / \(title.uppercased())")
             .font(.mono(size: 12))
             .tracking(12 * 0.04)
             .foregroundColor(PadzyTheme.muted)

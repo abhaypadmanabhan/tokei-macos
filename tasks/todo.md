@@ -167,3 +167,11 @@ Data shapes machine-verified today; see [[usage-data-sources]].
 - [ ] `.claude/gates/run-all.sh` green (build/format/lint/test/no-secret).
 - [ ] BACKLOG.md: move "Cursor real metrics" + "Antigravity data source" → DONE.
 - [ ] Verify per CLAUDE.md: run the real app; Cursor + Antigravity cards populate with live data.
+
+## Antigravity Stale-Serve Quota Cache — 2026-07-08 (active)
+- [/] Create task.md in artifacts
+- [ ] Modify Core/Network/AntigravityQuotaClient.swift to implement cache logic
+- [ ] Modify Tests/ProviderTests/AntigravityQuotaClientTests.swift to add tests
+- [ ] Run tests and verify
+- [ ] Update tasks/lessons.md with lessons
+- [ ] Append completion note to Patch Bible (§W2.6)
