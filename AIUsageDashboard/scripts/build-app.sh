@@ -46,6 +46,14 @@ if [ "$SIGN_ID" != "-" ]; then
   if [ -d "$FRAMEWORK" ]; then
     codesign --force $SIGN_FLAGS --sign "$SIGN_ID" "$FRAMEWORK"
   fi
+  # Sparkle.framework ships its own nested helpers (Autoupdate, Updater.app,
+  # XPCServices/*.xpc) that xcodebuild's own signing pass doesn't re-sign with
+  # a secure timestamp — notarization rejects them without this. --deep signs
+  # innermost-out within the framework bundle.
+  SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+  if [ -d "$SPARKLE_FRAMEWORK" ]; then
+    codesign --force --deep $SIGN_FLAGS --sign "$SIGN_ID" "$SPARKLE_FRAMEWORK"
+  fi
   codesign --force $SIGN_FLAGS --sign "$SIGN_ID" "$APP"
 fi
 
