@@ -7,3 +7,15 @@ xcuserdata/
 AIUsageDashboard/AIUsageDashboard.xcodeproj/
 AIUsageDashboard/AIUsageDashboardApp/Info.plist
 dist/
+
+# Per-machine AI tool scaffolding (not tracked)
+.agent/
+.agents/
+.clinerules/
+.codex/
+.cursor/
+.opencode/
+.mcp.json
+AGENTS.md
+# Separate Next.js website project (#10) — tracked independently when ready
+website/

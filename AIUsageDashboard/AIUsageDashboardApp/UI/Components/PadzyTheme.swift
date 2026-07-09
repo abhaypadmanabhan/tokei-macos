@@ -69,26 +69,22 @@ public struct TokenFormatter {
     }
 }
 
-public struct EditorialKicker: View {
-    let number: String
+/// Clean, unnumbered section header in the aitracker idiom: uppercase mono, tracked,
+/// muted. Deliberately drops the old `NN / TITLE` numbered-kicker prefix (explicit
+/// user override of the theme default) while keeping the mono + hairline discipline.
+public struct SectionLabel: View {
     let title: String
+    var size: CGFloat
 
-    public init(number: String, title: String) {
-        self.number = number
+    public init(_ title: String, size: CGFloat = 12) {
         self.title = title
-    }
-
-    /// Title-only kicker (no leading number) for secondary destinations that sit
-    /// outside the numbered 00–03 spine, e.g. Connections.
-    public init(title: String) {
-        self.number = ""
-        self.title = title
+        self.size = size
     }
 
     public var body: some View {
-        Text(number.isEmpty ? title.uppercased() : "\(number) / \(title.uppercased())")
-            .font(.mono(size: 12))
-            .tracking(12 * 0.04)
+        Text(title.uppercased())
+            .font(.mono(size: size))
+            .tracking(size * 0.08)
             .foregroundColor(PadzyTheme.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

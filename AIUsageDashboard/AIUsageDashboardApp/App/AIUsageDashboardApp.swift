@@ -13,6 +13,9 @@ struct AIUsageDashboardApp: App {
                 .environmentObject(viewModel)
         }
         .windowStyle(.titleBar)
+        // Free-resize down to the DashboardView's 640×480 minimum (and up to
+        // full-screen); the status strip reflows responsively so nothing clips.
+        .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {

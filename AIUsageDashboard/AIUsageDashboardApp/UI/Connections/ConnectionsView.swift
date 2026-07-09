@@ -7,15 +7,22 @@ import AIUsageDashboardCore
 /// the scattered Settings toggles). Each row owns its provider's `@AppStorage`
 /// flag and re-runs the providers on change.
 struct ConnectionsView: View {
+    @EnvironmentObject private var viewModel: DashboardViewModel
+    @State private var showingAddAgent = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                EditorialKicker(title: "CONNECTIONS")
-                Text("Connect a coding agent to read its live quota. Local-first — off by default.")
-                    .font(.system(size: 12))
-                    .foregroundColor(PadzyTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel("Connections")
+                    Text("Connect a coding agent to read its live quota. Local-first — off by default.")
+                        .font(.mono(size: 11))
+                        .foregroundColor(PadzyTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                AddAgentButton { showingAddAgent = true }
+                    .fixedSize()
             }
             .padding(.horizontal, 28)
             .padding(.top, 24)
@@ -55,6 +62,10 @@ struct ConnectionsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(PadzyTheme.ground)
+        .sheet(isPresented: $showingAddAgent) {
+            AddAgentSheet()
+                .environmentObject(viewModel)
+        }
     }
 }
 

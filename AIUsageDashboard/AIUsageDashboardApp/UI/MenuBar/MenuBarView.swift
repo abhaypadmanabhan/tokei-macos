@@ -13,7 +13,7 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            EditorialKicker(number: "01", title: "PROVIDERS")
+            SectionLabel("Providers")
 
             VStack(alignment: .leading, spacing: 6) {
                 let activeSnapshots = ProviderID.allCases.compactMap { providerID -> ProviderSnapshot? in

@@ -11,7 +11,7 @@ struct ProviderDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                EditorialKicker(number: "02", title: "DETAIL")
+                SectionLabel("Detail")
 
                 Text(snapshot.displayName.uppercased())
                     .font(.display(size: 20, weight: .black))

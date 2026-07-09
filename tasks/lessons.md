@@ -55,3 +55,21 @@
 - **How to apply:** any enable→async-fetch flow needs three visible states (off / fetching / live),
   not two. Verify the transient, not just the settled state. Don't debug-by-guess — the store/cache
   files proved the fetch worked before touching UI.
+
+## 2026-07-08 — Website design correction
+- Abhay: numbered "01 / TOPIC" mono kickers now read as outdated/same-as-other-projects. For marketing/web surfaces, drop them; keep mono data + single accent + hairlines.
+- Wants Gen-Z modern motion design: scroll-driven animations, horizontal scroll sections, overlays, subtle 3D hover, page transitions. Research awwwards-tier references before building, don't default to static editorial grid.
+
+## 2026-07-08 — Prior-art scan BEFORE designing a fix (keychain prompt bug)
+
+- **Symptom:** diagnosed Claude keychain prompt-loop root cause correctly (foreign item ACL +
+  Claude Code recreating the item), then designed fixes from first principles — all accepted ≥1
+  dialog. TokenTracker (competitor) had a zero-dialog solution: spawn `/usr/bin/security
+  find-generic-password -w` (item's ACL already trusts the security CLI that created it) with a
+  2s timeout + silent-null fallback.
+- **Why missed:** anchored on "native SecItem API is the proper way"; never searched how peer
+  apps (ccusage, TokenTracker, other quota trackers) solve the same platform problem.
+- **How to apply:** for any platform-constraint bug (keychain, sandbox, notarization, TCC,
+  entitlements), do a 5-minute competitor/OSS prior-art scan BEFORE proposing fixes — reading a
+  shipped solution beats reasoning one out. "Feels like a hack" is not a reason to exclude a
+  candidate; evaluate against the actual trust/permission model.

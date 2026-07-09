@@ -38,6 +38,115 @@ final class ClaudeUsageDecoderTests: XCTestCase {
     }
 }
 
+final class DefaultClaudeUsageCredentialsReaderTests: XCTestCase {
+    private var tempDirectory: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tempDirectory)
+        super.tearDown()
+    }
+
+    private func credentialsPayload(accessToken token: String) -> String {
+        "{\"claudeAiOauth\":{\"accessToken\":\"\(token)\"}}"
+    }
+
+    func testFilePresentIsUsedWithoutSpawningSecurity() async throws {
+        let fileURL = tempDirectory.appendingPathComponent(".credentials.json")
+        try Data(credentialsPayload(accessToken: "file-token").utf8).write(to: fileURL)
+        let spawner = RecordingKeychainReader(payload: credentialsPayload(accessToken: "keychain-token"))
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        let credentials = try await reader.readCredentials()
+
+        XCTAssertEqual(credentials.accessToken, "file-token")
+        XCTAssertEqual(spawner.callCount, 0)
+    }
+
+    func testExpiredFileCredentialFallsThroughToKeychain() async throws {
+        let fileURL = tempDirectory.appendingPathComponent(".credentials.json")
+        // A stale leftover file whose cred is already EXPIRED (expiresAt = epoch-ms in 2001).
+        // It must NOT shadow the fresh Keychain token — otherwise the reader wedges in a
+        // permanent expired state (the priority-inversion regression from the file-first order).
+        let expiredFile = "{\"claudeAiOauth\":{\"accessToken\":\"stale-file\",\"expiresAt\":1000000000000}}"
+        try Data(expiredFile.utf8).write(to: fileURL)
+        let spawner = RecordingKeychainReader(payload: credentialsPayload(accessToken: "fresh-keychain"))
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        let credentials = try await reader.readCredentials()
+
+        XCTAssertEqual(credentials.accessToken, "fresh-keychain")
+        XCTAssertEqual(spawner.callCount, 1) // Keychain WAS consulted despite the file existing
+    }
+
+    func testFileAbsentParsesSpawnPayload() async throws {
+        let fileURL = tempDirectory.appendingPathComponent("does-not-exist.json")
+        let spawner = RecordingKeychainReader(payload: credentialsPayload(accessToken: "keychain-token"))
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        let credentials = try await reader.readCredentials()
+
+        XCTAssertEqual(credentials.accessToken, "keychain-token")
+        XCTAssertEqual(spawner.callCount, 1)
+    }
+
+    func testSpawnFailureReturnsNilWithNoThrowLoopAndNoRetry() async throws {
+        let fileURL = tempDirectory.appendingPathComponent("does-not-exist.json")
+        // nil payload simulates non-zero exit / spawn error / timeout.
+        let spawner = RecordingKeychainReader(payload: nil)
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        do {
+            _ = try await reader.readCredentials()
+            XCTFail("Expected missingCredentials")
+        } catch let error as ClaudeUsageError {
+            guard case .missingCredentials = error else {
+                return XCTFail("Expected missingCredentials, got \(error)")
+            }
+        }
+
+        // Single failed read is final for the cycle — no re-prompt loop.
+        XCTAssertEqual(spawner.callCount, 1)
+    }
+
+    func testEmptySpawnPayloadReturnsNil() async throws {
+        let fileURL = tempDirectory.appendingPathComponent("does-not-exist.json")
+        // A whitespace-only payload carries no token and no JSON — must fail, not surface a bad token.
+        let spawner = RecordingKeychainReader(payload: "   ")
+        let reader = DefaultClaudeUsageCredentialsReader(credentialsURL: fileURL, keychainReader: spawner)
+
+        do {
+            _ = try await reader.readCredentials()
+            XCTFail("Expected missingCredentials for whitespace payload")
+        } catch let error as ClaudeUsageError {
+            guard case .missingCredentials = error else {
+                return XCTFail("Expected missingCredentials, got \(error)")
+            }
+        }
+        XCTAssertEqual(spawner.callCount, 1)
+    }
+}
+
+private final class RecordingKeychainReader: KeychainPasswordSpawning, @unchecked Sendable {
+    private let payload: String?
+    private(set) var callCount = 0
+
+    init(payload: String?) {
+        self.payload = payload
+    }
+
+    func readPassword(service: String) -> String? {
+        callCount += 1
+        return payload
+    }
+}
+
 final class ClaudeUsageClientImplTests: XCTestCase {
     private var tempDirectory: URL!
     private var session: URLSession!

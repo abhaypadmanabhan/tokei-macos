@@ -13,6 +13,8 @@ struct OverviewView: View {
     var onOpen: (ProviderID) -> Void = { _ in }
     /// Route to the Connections screen for a provider with no live quota.
     var onConnect: () -> Void = {}
+    /// Open the `+` add-agent sheet (blank-canvas primary action + header button).
+    var onAddAgent: () -> Void = {}
 
     /// One display model per visible provider: identity + its tightest window.
     private struct Entry: Identifiable {
@@ -59,15 +61,19 @@ struct OverviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                EditorialKicker(number: "00", title: "OVERVIEW")
-                Text(aggregateLine)
-                    .font(.mono(size: 22))
-                    .monospacedDigit()
-                    .foregroundColor(viewModel.aggregateUtilization == nil ? PadzyTheme.muted : PadzyTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel("Overview")
+                    Text(aggregateLine)
+                        .font(.mono(size: 22))
+                        .monospacedDigit()
+                        .foregroundColor(viewModel.aggregateUtilization == nil ? PadzyTheme.muted : PadzyTheme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                AddAgentButton { onAddAgent() }
+                    .fixedSize()
             }
             .padding(.horizontal, 28)
             .padding(.top, 24)
@@ -75,24 +81,47 @@ struct OverviewView: View {
 
             HairlineDivider()
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(entries) { entry in
-                        ProviderOverviewRow(
-                            providerID: entry.providerID,
-                            displayName: entry.displayName,
-                            plan: entry.plan,
-                            tightest: entry.tightest,
-                            onOpen: { onOpen(entry.providerID) },
-                            onConnect: onConnect
-                        )
-                        HairlineDivider()
+            if entries.isEmpty {
+                blankCanvas
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(entries) { entry in
+                            ProviderOverviewRow(
+                                providerID: entry.providerID,
+                                displayName: entry.displayName,
+                                plan: entry.plan,
+                                tightest: entry.tightest,
+                                onOpen: { onOpen(entry.providerID) },
+                                onConnect: onConnect
+                            )
+                            HairlineDivider()
+                        }
                     }
                 }
             }
 
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Blank-canvas first-run state: no providers on the canvas yet. Leads with the
+    /// `+` — the primary action — instead of a wall of empty provider rows.
+    private var blankCanvas: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("NO AGENTS LINKED YET")
+                .font(.display(size: 18, weight: .black))
+                .foregroundColor(PadzyTheme.ink)
+            Text("Tokei tracks local AI-coding usage. Link a coding agent to start — detection reads only paths on your disk, nothing leaves your Mac.")
+                .font(.mono(size: 12))
+                .foregroundColor(PadzyTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            AddAgentButton { onAddAgent() }
+                .padding(.top, 4)
+            Spacer(minLength: 0)
+        }
+        .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -163,6 +192,15 @@ private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double, inH
             mockSnapshot(.codex, name: "Codex"),
         ]))
         .frame(width: 640, height: 520)
+        .background(PadzyTheme.ground)
+}
+
+#Preview("Blank canvas") {
+    // Hide every provider so `entries` is empty and the blank-canvas + state shows.
+    for id in ProviderID.allCases { ProviderVisibility.setHidden(true, for: id) }
+    return OverviewView(onAddAgent: {})
+        .environmentObject(mockViewModel([]))
+        .frame(width: 720, height: 520)
         .background(PadzyTheme.ground)
 }
 
