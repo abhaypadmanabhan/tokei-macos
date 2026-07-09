@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public protocol ClaudeUsageClient: Sendable {
     func fetchQuotaWindows() async throws -> [QuotaWindow]
@@ -56,22 +55,96 @@ public enum ClaudeUsageError: LocalizedError, Sendable {
     }
 }
 
+/// Reads a generic-password value via the `security` CLI, avoiding the GUI authorization
+/// prompt that `SecItemCopyMatching` raises for keychain items owned by another process.
+/// Injected so tests can simulate exit 0 + payload, non-zero exit, and timeout without
+/// touching the real Keychain.
+public protocol KeychainPasswordSpawning: Sendable {
+    func readPassword(service: String) -> String?
+}
+
+/// Default reader: spawns `/usr/bin/security find-generic-password -s <service> -w`.
+///
+/// Why this replaces `SecItemCopyMatching`: the `"Claude Code-credentials"` item is owned and
+/// recreated by the Claude Code CLI on every OAuth refresh. Its ACL trusts `/usr/bin/security`
+/// (the context the CLI created it in), and that trust survives the CLI deleting+recreating the
+/// item each rotation — unlike an in-process grant to Tokei, which macOS re-prompts for and which
+/// the CLI wipes on every recreate. Spawning `security` therefore reads with no dialog.
+public struct SecurityCLIKeychainReader: KeychainPasswordSpawning {
+    private let timeout: TimeInterval
+
+    public init(timeout: TimeInterval = 2) {
+        self.timeout = timeout
+    }
+
+    public func readPassword(service: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", service, "-w"]
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in semaphore.signal() }
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        // Hard timeout so a hung `security` never blocks the sync loop. The token payload is well
+        // under the pipe buffer, so reading after exit cannot deadlock.
+        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else { return nil }
+
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        let output = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return output.isEmpty ? nil : output
+    }
+}
+
 public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading {
     private let credentialsURL: URL
+    private let keychainReader: KeychainPasswordSpawning
+    private static let keychainService = "Claude Code-credentials"
 
-    public init(credentialsURL: URL? = nil) {
+    public init(
+        credentialsURL: URL? = nil,
+        keychainReader: KeychainPasswordSpawning = SecurityCLIKeychainReader()
+    ) {
         self.credentialsURL = credentialsURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/.credentials.json")
+        self.keychainReader = keychainReader
     }
 
     public func readCredentials() async throws -> ClaudeUsageCredentials {
-        if let data = Self.readKeychainData() {
-            return try Self.decodeCredentials(data)
+        // 1. File first — cheap, cross-platform. On macOS this file is absent (Claude Code stores
+        //    credentials only in Keychain) so this is a no-op here, but it is the correct primary
+        //    path on Linux/Windows and future-proofs the reader.
+        if let data = try? Data(contentsOf: credentialsURL),
+           let credentials = try? Self.decodeCredentials(data) {
+            return credentials
         }
-        guard let data = try? Data(contentsOf: credentialsURL) else {
-            throw ClaudeUsageError.missingCredentials
+
+        // 2. macOS load-bearing read — spawn `security -w` (see SecurityCLIKeychainReader) instead
+        //    of SecItemCopyMatching. No GUI prompt, survives the CLI recreating the item.
+        if let raw = keychainReader.readPassword(service: Self.keychainService),
+           let credentials = try? Self.decodeCredentials(Data(raw.utf8)) {
+            return credentials
         }
-        return try Self.decodeCredentials(data)
+
+        // 3. Calm disconnected state — no dialog storm, no retry. A single failed read is final for
+        //    this cycle; the caller surfaces "Claude not connected" until the user acts / relaunches.
+        throw ClaudeUsageError.missingCredentials
     }
 
     static func decodeCredentials(_ data: Data) throws -> ClaudeUsageCredentials {
@@ -86,31 +159,6 @@ public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading
         let token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { throw ClaudeUsageError.missingCredentials }
         return ClaudeUsageCredentials(accessToken: token)
-    }
-
-    private static func readKeychainData() -> Data? {
-        for query in keychainQueries {
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            if status == errSecSuccess, let data = result as? Data {
-                return data
-            }
-        }
-        return nil
-    }
-
-    private static var keychainQueries: [[String: Any]] {
-        let name = "Claude Code-credentials"
-        let base: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        return [
-            base.merging([kSecAttrService as String: name]) { current, _ in current },
-            base.merging([kSecAttrAccount as String: name]) { current, _ in current },
-            base.merging([kSecAttrLabel as String: name]) { current, _ in current }
-        ]
     }
 
     private static func findString(in value: Any, keys: Set<String>) -> String? {
