@@ -11,6 +11,14 @@ import AIUsageDashboardCore
 struct SettingsPane: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
 
+    /// What the system menu-bar item shows (#38/#40). Shared key with `MenuBarLabel`.
+    @AppStorage(MenuBarDisplayMode.storageKey)
+    private var menuBarModeRaw = MenuBarDisplayMode.todayTokens.rawValue
+
+    private var menuBarMode: MenuBarDisplayMode {
+        MenuBarDisplayMode(rawValue: menuBarModeRaw) ?? .todayTokens
+    }
+
     /// Same environment view model as the dashboard (SettingsPane renders inside it),
     /// so toggling a data-source setting can immediately re-run the providers.
     @EnvironmentObject private var viewModel: DashboardViewModel
@@ -46,6 +54,7 @@ struct SettingsPane: View {
 
                 VStack(alignment: .leading, spacing: 24) {
                     agentsSection
+                    menuBarSection
                     alertsSection
                     refreshSection
                     aboutSection
@@ -80,6 +89,49 @@ struct SettingsPane: View {
             }
 
             Text("Hidden agents are skipped in the sidebar, menu bar, and keyboard navigation. Live network/RPC quota for Cursor, Antigravity, and Claude is enabled per-agent in Connections.")
+                .font(.mono(size: 11))
+                .foregroundColor(PadzyTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
+        }
+    }
+
+    private var menuBarSection: some View {
+        section("Menu bar", intro: "What the menu-bar item shows at a glance. One value, fixed width — it stays compact however many agents you connect.") {
+            // Custom segmented control (padzy: hairline structure + accent tick on the
+            // active option) rather than a stock Picker, so it matches the design system.
+            HStack(spacing: 0) {
+                ForEach(Array(MenuBarDisplayMode.allCases.enumerated()), id: \.element.id) { index, mode in
+                    let isSelected = menuBarMode == mode
+                    Button {
+                        menuBarModeRaw = mode.rawValue
+                    } label: {
+                        Text(mode.title.uppercased())
+                            .font(.mono(size: 11))
+                            .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            // Active-state accent tick on the leading edge (invariant #4).
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(isSelected ? PadzyTheme.accent : Color.clear)
+                                    .frame(height: 2)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+
+                    if index < MenuBarDisplayMode.allCases.count - 1 {
+                        Rectangle()
+                            .fill(PadzyTheme.muted.opacity(0.3))
+                            .frame(width: 1)
+                    }
+                }
+            }
+            .overlay(Rectangle().stroke(PadzyTheme.muted.opacity(0.3), lineWidth: 1))
+
+            Text(menuBarMode.hint)
                 .font(.mono(size: 11))
                 .foregroundColor(PadzyTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
