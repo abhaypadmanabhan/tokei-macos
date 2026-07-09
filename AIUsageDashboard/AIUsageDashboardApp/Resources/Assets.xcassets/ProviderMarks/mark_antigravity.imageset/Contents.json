@@ -1,16 +1,26 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "mark_antigravity.pdf",
-      "idiom" : "universal"
+      "filename": "antigravity_1x.png",
+      "idiom": "universal",
+      "scale": "1x"
+    },
+    {
+      "filename": "antigravity_2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "antigravity_3x.png",
+      "idiom": "universal",
+      "scale": "3x"
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   },
-  "properties" : {
-    "preserves-vector-representation" : true,
-    "template-rendering-intent" : "template"
+  "properties": {
+    "template-rendering-intent": "template"
   }
 }
