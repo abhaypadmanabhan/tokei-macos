@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Reusable data-state surface — loading / empty / error — in the aitracker theme.
 ///
-/// Editorial contract: numbered mono kicker + hairline, display-face headline in
-/// `ink`, mono/`muted` supporting copy, and the single accent reserved for the
+/// Editorial contract: clean unnumbered section header + hairline, display-face
+/// headline in `ink`, mono/`muted` supporting copy, and the single accent reserved for the
 /// running-state tick (loading), the `!!` error signal, and the primary recovery
 /// action. Status is never signalled by colour alone. Every data surface routes
 /// its non-loaded states through this one view so the three states read
@@ -18,10 +18,10 @@ struct SurfaceStateView: View {
         case error(headline: String, detail: String)
     }
 
-    /// Optional numbered editorial kicker (`02`, `USAGE`). Suppressed in compact mode.
-    var kicker: (number: String, title: String)? = nil
+    /// Optional unnumbered section header (`USAGE`). Suppressed in compact mode.
+    var header: String? = nil
     let kind: Kind
-    /// Dense variant for the menu-bar popover: no kicker, tighter type, no full-height fill.
+    /// Dense variant for the menu-bar popover: no header, tighter type, no full-height fill.
     var compact: Bool = false
     /// Recovery action for `.error`; renders a primary accent button when present.
     var onRetry: (() -> Void)? = nil
@@ -31,8 +31,8 @@ struct SurfaceStateView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 14) {
-            if let kicker, !compact {
-                EditorialKicker(number: kicker.number, title: kicker.title)
+            if let header, !compact {
+                SectionLabel(header)
                 HairlineDivider()
             }
             content
