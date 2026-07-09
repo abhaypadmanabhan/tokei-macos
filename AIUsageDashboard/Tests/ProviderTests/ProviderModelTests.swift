@@ -8,6 +8,7 @@ final class ProviderModelTests: XCTestCase {
         XCTAssertEqual(ProviderID.cursor.rawValue, "cursor")
         XCTAssertEqual(ProviderID.antigravity.rawValue, "antigravity")
         XCTAssertEqual(ProviderID.cline.rawValue, "cline")
+        XCTAssertEqual(ProviderID.opencode.rawValue, "opencode")
     }
 
     func testMetricConfidenceDisplayName() {
