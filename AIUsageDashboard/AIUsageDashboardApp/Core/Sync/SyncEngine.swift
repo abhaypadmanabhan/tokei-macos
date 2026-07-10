@@ -5,6 +5,7 @@ public actor SyncEngine {
 
     private let registry: ProviderRegistry
     private let store: UsageStore
+    private let quotaSeriesStore: QuotaSeriesStore
     private let watcher: FileWatcher
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
@@ -14,10 +15,12 @@ public actor SyncEngine {
     public init(
         registry: ProviderRegistry = .default(),
         store: UsageStore = .shared,
+        quotaSeriesStore: QuotaSeriesStore = .shared,
         watcher: FileWatcher = .shared
     ) {
         self.registry = registry
         self.store = store
+        self.quotaSeriesStore = quotaSeriesStore
         self.watcher = watcher
         var continuation: AsyncStream<[ProviderSnapshot]>.Continuation!
         self.updates = AsyncStream { cont in
@@ -29,6 +32,7 @@ public actor SyncEngine {
     public func refreshAll() async -> [ProviderSnapshot] {
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
+        await quotaSeriesStore.append(from: snapshots)
         await NotificationEngine.shared.evaluateThresholds(for: snapshots)
         updatesContinuation?.yield(snapshots)
         return snapshots
