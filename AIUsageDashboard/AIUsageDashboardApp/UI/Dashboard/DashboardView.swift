@@ -361,13 +361,23 @@ struct DashboardView: View {
                                 .minimumScaleFactor(0.5)
 
                             let creditsTile: (kicker: String, value: String)? = creditsWindow.flatMap { window in
-                                window.used.map { used in
+                                if let used = window.used {
                                     let usedText = TokenFormatter.format(Int(round(used)))
                                     if let limit = window.limit, limit > 0 {
                                         return ("Credits used", "\(usedText) / \(TokenFormatter.format(Int(round(limit))))")
                                     }
                                     return ("Credits used", usedText)
                                 }
+                                // Balance-style credits (e.g. Codex purchasable): the value is
+                                // credits REMAINING, not used — label it honestly as "left".
+                                if let remaining = window.remaining {
+                                    let remText = TokenFormatter.format(Int(round(remaining)))
+                                    if let limit = window.limit, limit > 0 {
+                                        return ("Credits left", "\(remText) / \(TokenFormatter.format(Int(round(limit))))")
+                                    }
+                                    return ("Credits left", remText)
+                                }
+                                return nil
                             }
                             if creditsTile != nil || acceptedLinesToday != nil {
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {

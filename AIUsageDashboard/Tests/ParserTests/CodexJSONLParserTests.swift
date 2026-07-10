@@ -206,6 +206,19 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(resetBank?.limit, 3)
     }
 
+    func testPurchasableCreditsBalanceIsRemainingNotUsed() async {
+        let url = writeFixture(CodexFixtures.purchasableCreditsBalanceOnly(), named: "credits-balance.jsonl")
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        let credits = usage.quotaWindows.first { $0.type == .credits && $0.bucketKey == "credits" }
+        XCTAssertNotNil(credits, "purchasable credits window should surface from a balance")
+        // The balance is credits REMAINING — it must never be stored as `used`
+        // (else an 80-of-100-remaining balance renders as "80% used").
+        XCTAssertNil(credits?.used)
+        XCTAssertEqual(credits?.remaining, 80)
+        XCTAssertEqual(credits?.limit, 100)
+    }
+
     func testStaleQuotaWindowsAreEstimated() async {
         let url = writeFixture(CodexFixtures.staleRateLimits(), named: "stale.jsonl")
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])
