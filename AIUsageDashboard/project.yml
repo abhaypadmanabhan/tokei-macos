@@ -13,7 +13,7 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.3.0"
+    MARKETING_VERSION: "0.4.0"
     CURRENT_PROJECT_VERSION: "2"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
