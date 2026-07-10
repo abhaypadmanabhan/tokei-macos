@@ -161,3 +161,30 @@ no-secret, no-large-artifact, format. **At-merge (`/agents-done`):** build, test
 - Tests run + result: `xcodegen generate` + `xcodebuild -scheme AIUsageDashboardCore -destination 'platform=macOS' test` → **173/173 PASS** (incl. new 429→cooldownActive→elapse success + 403-no-cooldown).
 - Files touched: `AIUsageDashboard/AIUsageDashboardApp/Core/Network/CursorUsageClient.swift`, `AIUsageDashboard/Tests/ProviderTests/CursorUsageClientTests.swift`, this bible §8.
 - Risks / watch-outs: Cooldown is per-process file under Application Support (`cursor-usage-cooldown.json`); no cross-client shared helper yet. Provider layer still swallows summary errors via `try?`.
+### WP-1 — Codex — 2026-07-09 16:22 PDT
+- Branch/commits: `patch/2026-07-09/quota-series-sampler` @ `bb9f319` (`feat: persist quota samples`)
+- Done: Added separate `QuotaSample` model; added actor-backed `QuotaSeriesStore` JSON sidecar in Application Support; wired one `SyncEngine.refreshAll()` sampling call; added additive `samples(for:windowType:since:)` API; implemented per-series consecutive dedupe, temp-file + atomic replacement writes, and a documented hard retention cap of 20,000 newest samples.
+- Left undone / stubbed: UI consumption intentionally not included in WP-1. No stubs.
+- Tests run + result: `cd AIUsageDashboard && xcodegen generate` PASS; `xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test` PASS (176 tests). Commit hook PASS: `no-secret`, `no-large-artifact`; `format` SKIP because `swiftformat` is not installed.
+- Files touched: `AIUsageDashboard/AIUsageDashboardApp/Core/Models/QuotaSample.swift`; `AIUsageDashboard/AIUsageDashboardApp/Core/Storage/QuotaSeriesStore.swift`; `AIUsageDashboard/AIUsageDashboardApp/Core/Sync/SyncEngine.swift`; `AIUsageDashboard/Tests/StorageTests/QuotaSeriesStoreTests.swift`.
+- Risks / watch-outs: Store records computable quota windows only (positive `limit` plus `used` or `remaining`, matching existing utilization semantics). Retention cap is total newest samples, not per-window.
+
+### WP-3 — Claude Code (Opus) + padzy-os — 2026-07-09 16:35 PDT
+- **Branch:** `patch/2026-07-09/maxxer-menubar-pace` · **commits (3):**
+  - `b430ef3` pure pace + tightest-window math + 14 tests
+  - `b40a670` menu-bar display modes + pace notch/verdict UI (#40/#38/#36)
+  - `324ea6e` route-here chip (#37 stretch)
+- **Done (all 4 sub-issues, incl. stretch):**
+  - **#40** — extracted `MenuBarLabel` for the status item; renders ONE fixed-width aggregate value (never a per-provider list) so it stays compact with any number of providers. Kept monochrome-native for legibility across light/dark bars.
+  - **#38** — `MenuBarDisplayMode` (todayTokens · tightestPercent · iconOnly), selectable in a new Settings "Menu bar" section (hairline segmented control, 2px accent tick on the active option). Tightest-% surfaces the single highest-utilization window via `MaxxerMath.tightestWindow`; degrades to "—" with no live quota.
+  - **#36** — expected-linear-pace notch on the Overview utilization bar (elapsed fraction of the window) + positive-framed verdict under the % (ON PACE / AHEAD / HEADROOM), accent only on AHEAD. Degrades to "—"/no notch when the window has no fixed span or `resetAt`. Verdict flows into the row's a11y label.
+  - **#37 (stretch)** — `MaxxerMath.routeTarget` picks the emptiest plan only when useful (≥2 readings, ≤70% headroom, ≥15pt spread); subtle accent "ROUTE HERE →" chip on that row.
+- **Pace/tightest/route math** is a single **pure** file `UI/MenuBar/MaxxerMath.swift` (Foundation + frozen Core shapes only, no SwiftUI). To unit-test it under the required `-scheme AIUsageDashboardCore test` (that test target links only the Core framework, not the app), that one file is added to the `AIUsageDashboardCoreTests` sources in `project.yml`. **No Core source edited; no frozen contract changed.**
+- **Scope note (out-of-strict-UI, minimal & necessary):** two non-`UI/` edits were unavoidable to deliver the menu-bar item — `App/AIUsageDashboardApp.swift` (1 change: inline label HStack → `MenuBarLabel()`) and `project.yml` (test-target source addition above). Neither touches `Core/*` or a frozen contract.
+- **Left undone / stubbed:** none. No dependency on WP-1's series store (pace computed live from `QuotaWindow` via `Utilization`, as specified).
+- **Tests run + result:** `xcodegen generate` then `xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test` → **191 passed / 0 failed** (172 baseline + 19 new: pace verdicts/clamping, canonical durations, tightest selection, route-target rules). App target build → **BUILD SUCCEEDED**.
+- **Files touched:** new — `UI/MenuBar/MaxxerMath.swift`, `UI/MenuBar/MenuBarDisplayMode.swift`, `UI/MenuBar/MenuBarLabel.swift`, `Tests/MaxxerTests/MaxxerMathTests.swift`; modified — `UI/Overview/ProviderOverviewRow.swift`, `UI/Overview/OverviewView.swift`, `UI/Settings/SettingsView.swift`, `App/AIUsageDashboardApp.swift`, `project.yml`.
+- **Risks / watch-outs:**
+  - Pace notch position uses `Date()` at render (refreshes each sync, not per-second) — intentional; the notch drifts slowly, no animation needed.
+  - Monthly span approximated as 30d (only `resetAt`=window-end is known) — fine for a notch; exact anchoring would need a window-start field (not in the frozen shape).
+  - Runtime menu-bar/notch **screenshot deliberately not captured** — the user runs the released Tokei live; spawning a duplicate Debug instance (same bundle id, shared UserDefaults) would be intrusive. Verification = clean app build + 19 behavioral unit tests over real inputs. A visual pass in Xcode Previews (`ProviderOverviewRow`/`OverviewView`/`SettingsPane`) is recommended at QA.
