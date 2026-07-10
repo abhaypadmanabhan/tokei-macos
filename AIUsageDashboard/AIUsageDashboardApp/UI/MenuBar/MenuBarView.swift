@@ -10,6 +10,25 @@ import AIUsageDashboardCore
 struct MenuBarView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+
+    /// Closes the `MenuBarExtra(.window)` popover before any footer action that
+    /// moves focus elsewhere (open dashboard, settings, updates, quit).
+    /// `@Environment(\.dismiss)` alone is unreliable for menu-bar panels across
+    /// macOS versions, so ALSO locate the panel in `NSApp.windows` and order it
+    /// out directly. Matched by class name ("MenuBarExtraWindow" panel) — never
+    /// the status-item window (NSStatusBarWindow) or the dashboard window, so a
+    /// wrong match can't nuke the menu-bar item itself.
+    private func dismissPopover() {
+        dismiss()
+        for window in NSApp.windows where window.isVisible {
+            if window.identifier?.rawValue == "dashboard-window" { continue }
+            let className = String(describing: type(of: window))
+            if className.contains("MenuBarExtra") {
+                window.close()
+            }
+        }
+    }
 
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -192,6 +211,7 @@ struct MenuBarView: View {
 
             // Single primary action — the one accent button in the popover.
             Button(action: {
+                dismissPopover()
                 openWindow(id: "dashboard-window")
                 NSApp.activate(ignoringOtherApps: true)
             }) {
@@ -210,16 +230,19 @@ struct MenuBarView: View {
 
             HStack(spacing: 0) {
                 footerLink("SETTINGS") {
+                    dismissPopover()
                     viewModel.showingSettings = true
                     openWindow(id: "dashboard-window")
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 footerDot
                 footerLink("UPDATES") {
+                    dismissPopover()
                     AppDelegate.shared?.checkForUpdates()
                 }
                 footerDot
                 footerLink("QUIT") {
+                    dismissPopover()
                     NSApp.terminate(nil)
                 }
             }
