@@ -85,10 +85,14 @@ struct SettingsPane: View {
                 linkButton("MANAGE CONNECTIONS →", action: onOpenConnections)
             }
 
-            VStack(spacing: 6) {
+            // Strict grid: fixed 24pt mark column · left-aligned SHOW label ·
+            // spacer · toggle right-flush (PadzyToggleStyle's fixed-width track),
+            // so every row shares the same left edge and toggle x-position.
+            VStack(spacing: 8) {
                 ForEach(ProviderID.allCases, id: \.self) { providerID in
                     HStack(spacing: 10) {
-                        ProviderBrandMark(providerID, size: 20)
+                        ProviderMark(providerID, size: 16)
+                            .frame(width: 24, height: 24)
                         ProviderVisibilityToggleRow(
                             providerID: providerID,
                             displayName: viewModel.snapshot(for: providerID)?.displayName
