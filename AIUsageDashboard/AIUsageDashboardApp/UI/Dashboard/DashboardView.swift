@@ -303,9 +303,16 @@ struct DashboardView: View {
         } else if capabilityTier == .planOnly {
             capabilityPane
         } else if let snapshot = selectedSnapshot {
-            // Full-metrics detail (redesign mockup 1). Wave 1 feeds the analytics
-            // widgets from the labeled sample feed; Wave 2 swaps in the §4 VM props.
-            ProviderDetailView(snapshot: snapshot, lastSyncedAt: viewModel.lastSyncedAt)
+            // Full-metrics detail (redesign mockup 1), analytics from the frozen
+            // §4 DashboardViewModel surface.
+            ProviderDetailView(
+                snapshot: snapshot,
+                trend: viewModel.trend(for: snapshot.providerID),
+                thisWeek: viewModel.thisWeek(for: snapshot.providerID),
+                heatmap: viewModel.heatmap(for: snapshot.providerID),
+                peakHour: viewModel.peakHour(for: snapshot.providerID),
+                lastSyncedAt: viewModel.lastSyncedAt
+            )
         } else {
             SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
         }

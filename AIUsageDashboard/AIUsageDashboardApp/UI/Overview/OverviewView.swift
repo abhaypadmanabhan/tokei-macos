@@ -3,13 +3,13 @@ import AIUsageDashboardCore
 
 /// The consolidated Overview home (redesign mockup 4): TODAY hero with metric
 /// tiles, token-usage-over-time line, usage-by-provider donut, streak/pattern
-/// stats, the daily-activity heatmap (empty until hourly data lands), and one
-/// glanceable per-provider quota row each — rows remain jump-off points into
-/// the detail tab.
+/// stats, the daily-activity heatmap, and one glanceable per-provider quota
+/// row each — rows remain jump-off points into the detail tab.
 ///
-/// Wave 1: hero totals/tiles + provider quota rows are REAL (published
-/// snapshot state); the analytics widgets render the `SampleChip`-labeled
-/// `OverviewAnalyticsFeed.sample()` until WP-1's frozen VM props land (Wave 2).
+/// All analytics come from the frozen `DashboardViewModel` §4 surface
+/// (`overviewTrend/providerSplit/overviewDelta/streak/bestDay/leastActiveDay/
+/// dailyAverage/heatmap(for:)`, ranged by `viewModel.range`). Every widget
+/// renders an honest empty state when its source is absent.
 struct OverviewView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
 
@@ -20,36 +20,14 @@ struct OverviewView: View {
     /// Open the `+` add-agent sheet (blank-canvas primary action + header button).
     var onAddAgent: () -> Void = {}
 
-    /// Trailing window the analytics widgets aggregate over. Wave 2 maps this to
-    /// `viewModel.range` (Core `UsageRange`); until then it resizes the sample feed.
-    enum OverviewRange: String, CaseIterable, Identifiable {
-        case sevenDay = "7D"
-        case thirtyDay = "30D"
-        case ninetyDay = "90D"
+    /// The ranges the segmented selector offers (drives `viewModel.range`).
+    private static let rangeOptions: [(range: UsageRange, label: String)] = [
+        (.sevenDay, "7D"),
+        (.thirtyDay, "30D"),
+        (.ninetyDay, "90D"),
+    ]
 
-        var id: String { rawValue }
-        var days: Int {
-            switch self {
-            case .sevenDay: return 7
-            case .thirtyDay: return 30
-            case .ninetyDay: return 90
-            }
-        }
-        var title: String {
-            switch self {
-            case .sevenDay: return "LAST 7 DAYS"
-            case .thirtyDay: return "LAST 30 DAYS"
-            case .ninetyDay: return "LAST 90 DAYS"
-            }
-        }
-    }
-
-    @State private var range: OverviewRange = .sevenDay
-
-    /// Wave-1 analytics source (see `OverviewAnalyticsFeed` doc).
-    private var feed: OverviewAnalyticsFeed { .sample(days: range.days) }
-
-    // MARK: Real snapshot-derived display state
+    // MARK: Snapshot-derived display state
 
     /// One display model per visible provider: identity + its tightest window.
     private struct Entry: Identifiable {
@@ -99,13 +77,33 @@ struct OverviewView: View {
         return "\(Int(round(agg.usedPercent)))% AVG · \(agg.coveredProviders.count) LIVE"
     }
 
-    /// Today's per-metric usage merged across available providers — REAL,
-    /// straight off the published snapshots via the existing Core merge.
+    /// Today's per-metric usage merged across available providers — straight off
+    /// the published snapshots via the existing Core merge.
     private var mergedToday: TokenUsage {
         viewModel.snapshots
             .filter { viewModel.isAvailable($0.providerID) }
             .map(\.todayUsage)
             .reduce(TokenUsage.unavailable) { $0.merging($1) }
+    }
+
+    /// Element-wise union of the visible providers' §4 heatmaps: a cell is `nil`
+    /// only when NO provider reports it; otherwise the sum of those that do.
+    /// `nil` overall when no visible provider has an hourly source yet.
+    private var combinedHeatmap: [[Int?]]? {
+        let matrices = ProviderID.allCases
+            .filter { !ProviderVisibility.isHidden($0) }
+            .compactMap { viewModel.heatmap(for: $0) }
+            .filter { $0.count == 7 }
+        guard !matrices.isEmpty else { return nil }
+        return (0..<7).map { row in
+            (0..<24).map { column -> Int? in
+                let cells = matrices.compactMap { matrix -> Int? in
+                    guard matrix[row].indices.contains(column) else { return nil }
+                    return matrix[row][column]
+                }
+                return cells.isEmpty ? nil : cells.reduce(0, +)
+            }
+        }
     }
 
     var body: some View {
@@ -154,16 +152,16 @@ struct OverviewView: View {
         .padding(.bottom, 16)
     }
 
-    /// Segmented range control: hairline-bounded, accent tick under the active
-    /// option (accent = active state, not a data hue).
+    /// Segmented range control bound to `viewModel.range`: hairline-bounded,
+    /// accent tick under the active option (accent = active state, not a data hue).
     private var rangeSelector: some View {
         HStack(spacing: 0) {
-            ForEach(OverviewRange.allCases) { option in
-                let isSelected = range == option
+            ForEach(Self.rangeOptions, id: \.label) { option in
+                let isSelected = viewModel.range == option.range
                 Button {
-                    range = option
+                    viewModel.range = option.range
                 } label: {
-                    Text(option.rawValue)
+                    Text(option.label)
                         .font(.mono(size: 11))
                         .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.muted)
                         .padding(.horizontal, 12)
@@ -189,12 +187,10 @@ struct OverviewView: View {
         )
     }
 
-    // MARK: Hero (real data)
+    // MARK: Hero
 
     private var heroCard: some View {
-        SectionCard("Today", trailing: {
-            if feed.isSample { SampleChip() }
-        }) {
+        SectionCard("Today") {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—")
@@ -203,14 +199,14 @@ struct OverviewView: View {
                         .foregroundColor(PadzyTheme.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.4)
-                    if let delta = feed.delta {
-                        DeltaLabel(delta: delta, caption: "vs yesterday")
+                    if let delta = viewModel.overviewDelta {
+                        DeltaLabel(delta: delta, caption: AnalyticsFormat.deltaCaption(viewModel.range))
                     }
                 }
                 Spacer(minLength: 12)
-                // Single total-tokens trend (per-metric hero sparklines are out of
-                // scope this round — the per-day metric split doesn't exist yet).
-                AreaTrendChart(values: feed.trend.map(\.tokens))
+                // Single total-tokens trend (per-metric hero sparklines need a
+                // per-day metric split that doesn't exist yet — out of scope).
+                AreaTrendChart(values: viewModel.overviewTrend.map(\.tokens))
                     .frame(width: 200, height: 64)
                     .accessibilityHidden(true)
             }
@@ -228,64 +224,62 @@ struct OverviewView: View {
         value.map { TokenFormatter.format($0) } ?? "—"
     }
 
-    // MARK: Charts row (sample feed until Wave 2)
+    // MARK: Charts row
 
     private var chartsRow: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
             SectionCard("Token usage over time", trailing: {
-                HStack(spacing: 8) {
-                    if feed.isSample { SampleChip() }
-                    Text(range.title)
-                        .font(.mono(size: 10))
-                        .foregroundColor(PadzyTheme.muted)
-                }
+                Text(AnalyticsFormat.rangeTitle(viewModel.range))
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
             }) {
-                LineTrendChart(points: feed.trend)
+                LineTrendChart(points: viewModel.overviewTrend)
                     .frame(height: 200)
             }
 
-            SectionCard("Usage by provider", trailing: {
-                if feed.isSample { SampleChip() }
-            }) {
-                ProviderDonut(slices: feed.providerSplit)
+            SectionCard("Usage by provider") {
+                ProviderDonut(slices: viewModel.providerSplit)
                     .frame(minHeight: 200)
             }
         }
     }
 
-    // MARK: Patterns (sample feed until Wave 2)
+    // MARK: Patterns
 
     private var patternsCard: some View {
         SectionCard("Patterns", trailing: {
-            if feed.isSample { SampleChip() }
+            Text(AnalyticsFormat.rangeTitle(viewModel.range))
+                .font(.mono(size: 10))
+                .foregroundColor(PadzyTheme.muted)
         }) {
+            let streak = viewModel.streak
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
                 StatCard(kicker: "Current streak",
-                         value: feed.streak.current > 0 ? "\(feed.streak.current) DAYS" : "—")
+                         value: streak.current > 0 ? "\(streak.current) DAYS" : "—")
                 StatCard(kicker: "Longest streak",
-                         value: feed.streak.longest > 0 ? "\(feed.streak.longest) DAYS" : "—")
+                         value: streak.longest > 0 ? "\(streak.longest) DAYS" : "—")
                 StatCard(kicker: "Best day",
-                         value: feed.bestDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                         deltaCaption: feed.bestDay.map { AnalyticsFormat.shortDay($0.date) })
+                         value: viewModel.bestDay.map { TokenFormatter.format($0.tokens) } ?? "—",
+                         deltaCaption: viewModel.bestDay.map { AnalyticsFormat.shortDay($0.date) })
                 StatCard(kicker: "Least active",
-                         value: feed.leastActiveDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                         deltaCaption: feed.leastActiveDay.map { AnalyticsFormat.shortDay($0.date) })
+                         value: viewModel.leastActiveDay.map { TokenFormatter.format($0.tokens) } ?? "—",
+                         deltaCaption: viewModel.leastActiveDay.map { AnalyticsFormat.shortDay($0.date) })
                 StatCard(kicker: "Daily average",
-                         value: feed.dailyAverage.map { TokenFormatter.format($0) } ?? "—")
+                         value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—")
             }
         }
     }
 
-    // MARK: Heatmap (honest empty until Phase 1b hourly data)
+    // MARK: Heatmap
 
     private var heatmapCard: some View {
         SectionCard("Daily activity") {
-            ActivityHeatmap(matrix: feed.heatmap ?? [])
+            ActivityHeatmap(matrix: combinedHeatmap ?? [])
                 .frame(minHeight: 96)
         }
     }
 
-    // MARK: Providers (real data)
+    // MARK: Providers
 
     private var providersCard: some View {
         SectionCard("Providers") {
@@ -341,13 +335,43 @@ private func mockViewModel(_ snapshots: [ProviderSnapshot]) -> DashboardViewMode
     return vm
 }
 
+private func previewDailyTotals(days: Int) -> [Date: Int] {
+    let values = [4_200_000, 9_800_000, 7_400_000, 15_200_000, 11_100_000,
+                  18_600_000, 9_300_000, 21_400_000, 16_800_000, 12_500_000]
+    let today = Calendar.current.startOfDay(for: Date())
+    var totals: [Date: Int] = [:]
+    for i in 0..<days {
+        if let day = Calendar.current.date(byAdding: .day, value: -i, to: today) {
+            totals[day] = values[i % values.count]
+        }
+    }
+    return totals
+}
+
+private func previewHourlyTotals() -> [Date: Int] {
+    let calendar = Calendar.current
+    let today = calendar.startOfDay(for: Date())
+    var totals: [Date: Int] = [:]
+    for daysBack in 0..<7 {
+        for hour in [9, 11, 14, 16, 21] {
+            if let day = calendar.date(byAdding: .day, value: -daysBack, to: today),
+               let slot = calendar.date(byAdding: .hour, value: hour, to: day) {
+                totals[slot] = (daysBack + 1) * (hour % 5 + 1) * 120_000
+            }
+        }
+    }
+    return totals
+}
+
 @MainActor
 private func mockSnapshot(
     _ id: ProviderID,
     name: String,
     plan: String? = nil,
     windows: [QuotaWindow] = [],
-    today: TokenUsage = .unavailable
+    today: TokenUsage = .unavailable,
+    dailyTotals: [Date: Int]? = nil,
+    hourlyTotals: [Date: Int]? = nil
 ) -> ProviderSnapshot {
     ProviderSnapshot(
         providerID: id,
@@ -356,7 +380,9 @@ private func mockSnapshot(
         quotaWindows: windows,
         todayUsage: today,
         weekUsage: .unavailable,
-        warnings: plan.map { [ProviderWarning(message: "Plan: \($0)", level: .info)] } ?? []
+        warnings: plan.map { [ProviderWarning(message: "Plan: \($0)", level: .info)] } ?? [],
+        dailyTotals: dailyTotals,
+        hourlyTotals: hourlyTotals
     )
 }
 
@@ -369,7 +395,7 @@ private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double, inH
     )
 }
 
-#Preview("Full · live + tokens") {
+#Preview("Full · live + tokens + hourly") {
     OverviewView()
         .environmentObject(mockViewModel([
             mockSnapshot(.claudeCode, name: "Claude Code", plan: "Max · yearly",
@@ -377,28 +403,32 @@ private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double, inH
                                    window(.claudeCode, .session, used: 40, inHours: 3)],
                          today: TokenUsage(inputTokens: 12_400_000, outputTokens: 1_900_000,
                                            cacheReadTokens: 48_100_000, cacheCreationTokens: 3_200_000,
-                                           confidence: .exact)),
+                                           confidence: .exact),
+                         dailyTotals: previewDailyTotals(days: 14),
+                         hourlyTotals: previewHourlyTotals()),
             mockSnapshot(.cursor, name: "Cursor", plan: "Pro",
                          windows: [window(.cursor, .monthly, used: 78, inHours: 11)]),
             mockSnapshot(.antigravity, name: "Antigravity",
                          windows: [window(.antigravity, .fiveHour, used: 32, inHours: 3)]),
             mockSnapshot(.codex, name: "Codex",
                          windows: [window(.codex, .weekly, used: 12, inHours: 60)],
-                         today: TokenUsage(inputTokens: 3_800_000, outputTokens: 700_000, confidence: .localParsed)),
+                         today: TokenUsage(inputTokens: 3_800_000, outputTokens: 700_000, confidence: .localParsed),
+                         dailyTotals: previewDailyTotals(days: 7)),
         ]))
-        .frame(width: 980, height: 1200)
+        .frame(width: 980, height: 1250)
         .background(PadzyTheme.ground)
 }
 
-#Preview("Narrow 640") {
+#Preview("Narrow 640 · no hourly") {
     OverviewView()
         .environmentObject(mockViewModel([
             mockSnapshot(.claudeCode, name: "Claude Code", plan: "Max · yearly",
                          windows: [window(.claudeCode, .weekly, used: 88, inHours: 105)],
-                         today: TokenUsage(inputTokens: 5_100_000, outputTokens: 900_000, confidence: .exact)),
+                         today: TokenUsage(inputTokens: 5_100_000, outputTokens: 900_000, confidence: .exact),
+                         dailyTotals: previewDailyTotals(days: 7)),
             mockSnapshot(.cursor, name: "Cursor", plan: "Pro"),
         ]))
-        .frame(width: 640, height: 1100)
+        .frame(width: 640, height: 1150)
         .background(PadzyTheme.ground)
 }
 
@@ -410,7 +440,7 @@ private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double, inH
         .background(PadzyTheme.ground)
 }
 
-#Preview("All unavailable") {
+#Preview("All unavailable · empty analytics") {
     OverviewView()
         .environmentObject(mockViewModel([
             mockSnapshot(.claudeCode, name: "Claude Code"),

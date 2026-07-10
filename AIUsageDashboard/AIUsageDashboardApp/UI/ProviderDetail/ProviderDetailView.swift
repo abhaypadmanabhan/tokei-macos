@@ -4,28 +4,26 @@ import AIUsageDashboardCore
 /// Full provider-detail surface (redesign mockup 1): brand header with status
 /// pill + last-sync + watching path, TODAY hero with metric tiles, LIMITS bars
 /// with a session gauge, the usage-trend line, THIS WEEK stats, and the
-/// peak-hour/heatmap pair (honest empty until Phase 1b hourly data lands).
+/// peak-hour/heatmap pair.
 ///
-/// Wave 1: header, hero tiles, limits, and the trend line are REAL (snapshot
-/// state — `dailyTotals` feeds the line). THIS WEEK + hero delta render the
-/// `SampleChip`-labeled `DetailAnalyticsFeed.sample` until WP-1's frozen VM
-/// props land (Wave 2).
+/// Inputs are plain values; `DashboardView` feeds the analytics from the frozen
+/// `DashboardViewModel` §4 surface (`trend(for:)/thisWeek(for:)/heatmap(for:)/
+/// peakHour(for:)`). Each widget renders an honest empty state when its source
+/// is absent (e.g. `heatmap` is `nil` for providers without hourly timestamps).
 struct ProviderDetailView: View {
     let snapshot: ProviderSnapshot
-    var feed: DetailAnalyticsFeed = .sample
+    /// §4 `trend(for:)` — ranged daily totals, oldest→newest.
+    var trend: [(date: Date, tokens: Int)] = []
+    /// §4 `thisWeek(for:)`.
+    var thisWeek: (peakDayWeekday: Int, peakDayTokens: Int, dailyAverage: Int, delta: Double?)? = nil
+    /// §4 `heatmap(for:)` — 7×24, `nil` when the provider has no hourly source.
+    var heatmap: [[Int?]]? = nil
+    /// §4 `peakHour(for:)`.
+    var peakHour: (hour: Int, tokens: Int)? = nil
     var lastSyncedAt: Date? = nil
 
     private var tier: ProviderCapabilityTier {
         ProviderCapabilityTier.classify(snapshot)
-    }
-
-    /// Daily totals as dated points, oldest→newest, capped to the trailing 30
-    /// days so the plot never chokes on lifetime history (spec §9).
-    private var trendPoints: [(date: Date, tokens: Int)] {
-        guard let totals = snapshot.dailyTotals, !totals.isEmpty else { return [] }
-        return totals.sorted { $0.key < $1.key }
-            .suffix(30)
-            .map { (date: $0.key, tokens: $0.value) }
     }
 
     private var activeWindows: [QuotaWindow] {
@@ -61,7 +59,7 @@ struct ProviderDetailView: View {
         .background(PadzyTheme.ground)
     }
 
-    // MARK: Header (real)
+    // MARK: Header
 
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
@@ -113,26 +111,18 @@ struct ProviderDetailView: View {
             .fixedSize()
     }
 
-    // MARK: Hero (real values; delta sample until Wave 2)
+    // MARK: Hero
 
     private var heroCard: some View {
         SectionCard("Today", trailing: {
-            HStack(spacing: 8) {
-                if feed.isSample, feed.todayDelta != nil { SampleChip() }
-                ConfidenceBadge(confidence: snapshot.todayUsage.confidence)
-            }
+            ConfidenceBadge(confidence: snapshot.todayUsage.confidence)
         }) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(snapshot.todayUsage.totalTokens.map { TokenFormatter.format($0) } ?? "—")
-                    .font(.mono(size: 52))
-                    .monospacedDigit()
-                    .foregroundColor(PadzyTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.4)
-                if let delta = feed.todayDelta {
-                    DeltaLabel(delta: delta, caption: "vs yesterday")
-                }
-            }
+            Text(snapshot.todayUsage.totalTokens.map { TokenFormatter.format($0) } ?? "—")
+                .font(.mono(size: 52))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
 
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
                 StatCard(kicker: "Input", value: format(snapshot.todayUsage.inputTokens))
@@ -150,7 +140,7 @@ struct ProviderDetailView: View {
         value.map { TokenFormatter.format($0) } ?? "—"
     }
 
-    // MARK: Limits (real)
+    // MARK: Limits
 
     private var limitsCard: some View {
         SectionCard("Limits") {
@@ -229,15 +219,15 @@ struct ProviderDetailView: View {
         }
     }
 
-    // MARK: Trend (real — snapshot.dailyTotals)
+    // MARK: Trend
 
     private var trendCard: some View {
         SectionCard("Usage trend", trailing: {
-            Text("LAST \(max(trendPoints.count, 2)) DAYS")
+            Text("LAST \(max(trend.count, 2)) DAYS")
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.muted)
         }) {
-            LineTrendChart(points: trendPoints)
+            LineTrendChart(points: trend)
                 .frame(height: 180)
         }
     }
@@ -246,10 +236,8 @@ struct ProviderDetailView: View {
 
     private var weekRow: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], alignment: .leading, spacing: 16) {
-            SectionCard("This week", trailing: {
-                if feed.isSample, feed.thisWeek != nil { SampleChip() }
-            }) {
-                if let week = feed.thisWeek {
+            SectionCard("This week") {
+                if let week = thisWeek {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
                         StatCard(kicker: "Peak day",
                                  value: AnalyticsFormat.weekdayName(week.peakDayWeekday),
@@ -266,24 +254,24 @@ struct ProviderDetailView: View {
             }
 
             SectionCard("Peak hour") {
-                if let peak = feed.peakHour {
+                if let peakHour {
                     StatCard(kicker: "Most active",
-                             value: AnalyticsFormat.hourLabel(peak.hour),
-                             deltaCaption: TokenFormatter.format(peak.tokens),
+                             value: AnalyticsFormat.hourLabel(peakHour.hour),
+                             deltaCaption: TokenFormatter.format(peakHour.tokens),
                              boxed: false)
                 } else {
                     emptyNote("NO HOURLY DATA YET",
-                              hint: "Peak hour appears once local logs are parsed with per-hour timestamps.")
+                              hint: "Peak hour appears once this agent's logs carry per-hour timestamps.")
                 }
             }
         }
     }
 
-    // MARK: Heatmap (honest empty until Phase 1b)
+    // MARK: Heatmap
 
     private var heatmapCard: some View {
         SectionCard("Activity") {
-            ActivityHeatmap(matrix: feed.heatmap ?? [])
+            ActivityHeatmap(matrix: heatmap ?? [])
                 .frame(minHeight: 96)
         }
     }
@@ -305,16 +293,30 @@ struct ProviderDetailView: View {
 
 // MARK: - Previews
 
-private func previewSnapshot(daysOfHistory: Int) -> ProviderSnapshot {
-    let today = Calendar.current.startOfDay(for: Date())
+private func previewTrend(days: Int) -> [(date: Date, tokens: Int)] {
     let values = [4_200_000, 9_800_000, 7_400_000, 15_200_000, 11_100_000,
                   18_600_000, 9_300_000, 21_400_000, 16_800_000, 12_500_000]
-    var totals: [Date: Int] = [:]
-    for i in 0..<daysOfHistory {
-        let day = Calendar.current.date(byAdding: .day, value: -i, to: today) ?? today
-        totals[day] = values[i % values.count]
+    let today = Calendar.current.startOfDay(for: Date())
+    return (0..<days).map { i in
+        let daysBack = days - 1 - i
+        return (
+            date: Calendar.current.date(byAdding: .day, value: -daysBack, to: today) ?? today,
+            tokens: values[i % values.count]
+        )
     }
-    return ProviderSnapshot(
+}
+
+private func previewHeatmap() -> [[Int?]] {
+    (0..<7).map { row in
+        (0..<24).map { hour -> Int? in
+            guard hour >= 8, hour <= 22 else { return 0 }
+            return (row % 3 + 1) * (hour % 5 + 1) * 140_000
+        }
+    }
+}
+
+private func previewSnapshot() -> ProviderSnapshot {
+    ProviderSnapshot(
         providerID: .claudeCode,
         displayName: "Claude Code",
         authStatus: .authenticated,
@@ -329,29 +331,39 @@ private func previewSnapshot(daysOfHistory: Int) -> ProviderSnapshot {
         todayUsage: TokenUsage(inputTokens: 12_400_000, outputTokens: 1_900_000,
                                cacheReadTokens: 48_100_000, cacheCreationTokens: 3_200_000,
                                confidence: .exact),
-        weekUsage: TokenUsage(inputTokens: 60_000_000, outputTokens: 9_000_000, confidence: .exact),
-        dailyTotals: daysOfHistory > 0 ? totals : nil
+        weekUsage: TokenUsage(inputTokens: 60_000_000, outputTokens: 9_000_000, confidence: .exact)
     )
 }
 
-#Preview("Full data") {
-    ProviderDetailView(snapshot: previewSnapshot(daysOfHistory: 14), lastSyncedAt: Date())
-        .frame(width: 900, height: 1250)
+#Preview("Full data + hourly") {
+    ProviderDetailView(
+        snapshot: previewSnapshot(),
+        trend: previewTrend(days: 14),
+        thisWeek: (peakDayWeekday: 4, peakDayTokens: 24_100_000, dailyAverage: 15_300_000, delta: 12.4),
+        heatmap: previewHeatmap(),
+        peakHour: (hour: 14, tokens: 6_800_000),
+        lastSyncedAt: Date()
+    )
+    .frame(width: 900, height: 1350)
 }
 
-#Preview("Sparse · 1 day, no limits") {
+#Preview("Sparse · no analytics") {
     ProviderDetailView(
         snapshot: ProviderSnapshot(
             providerID: .codex, displayName: "Codex", authStatus: .authenticated,
             todayUsage: TokenUsage(inputTokens: 800_000, outputTokens: 120_000, confidence: .localParsed),
             weekUsage: .unavailable
-        ),
-        feed: .empty
+        )
     )
     .frame(width: 720, height: 900)
 }
 
 #Preview("Narrow 640") {
-    ProviderDetailView(snapshot: previewSnapshot(daysOfHistory: 7), lastSyncedAt: Date())
-        .frame(width: 640, height: 1250)
+    ProviderDetailView(
+        snapshot: previewSnapshot(),
+        trend: previewTrend(days: 7),
+        thisWeek: (peakDayWeekday: 2, peakDayTokens: 18_600_000, dailyAverage: 11_400_000, delta: -6.3),
+        lastSyncedAt: Date()
+    )
+    .frame(width: 640, height: 1250)
 }

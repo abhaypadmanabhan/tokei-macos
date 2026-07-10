@@ -26,31 +26,6 @@ struct MenuBarView: View {
         }
     }
 
-    // MARK: Aggregated today trend (real snapshot data)
-    // NOTE(Wave 2): once WP-1's §4 VM props land, `overviewDelta` /
-    // `overviewTrend` replace these two local aggregations verbatim.
-
-    /// Cross-provider total per day for the trailing week, oldest→newest.
-    private var weeklyTotals: [Int] {
-        let calendar = Calendar.current
-        let today = DateHelpers.startOfToday()
-        return (0..<7).reversed().compactMap { daysBack -> Int? in
-            guard let day = calendar.date(byAdding: .day, value: -daysBack, to: today) else { return nil }
-            let sum = activeSnapshots.reduce(0) { $0 + ($1.dailyTotals?[day] ?? 0) }
-            return sum
-        }
-    }
-
-    /// Signed % vs yesterday. Nil when yesterday is zero/unknown — no fake baseline.
-    private var deltaVsYesterday: Double? {
-        let calendar = Calendar.current
-        let today = DateHelpers.startOfToday()
-        guard let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
-        let yesterday = activeSnapshots.reduce(0) { $0 + ($1.dailyTotals?[yesterdayDate] ?? 0) }
-        guard yesterday > 0 else { return nil }
-        let todayTotal = viewModel.menuBarTodayTotal
-        return (Double(todayTotal) - Double(yesterday)) / Double(yesterday) * 100
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -112,7 +87,9 @@ struct MenuBarView: View {
                         .foregroundColor(PadzyTheme.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
-                    if let delta = deltaVsYesterday {
+                    // §4 overviewDelta — current vs previous range window, so the
+                    // caption follows viewModel.range. Honest "—" with no baseline.
+                    if let delta = viewModel.overviewDelta {
                         DeltaLabel(delta: delta)
                     } else {
                         Text("—")
@@ -121,7 +98,7 @@ struct MenuBarView: View {
                     }
                 }
 
-                AreaTrendChart(values: weeklyTotals)
+                AreaTrendChart(values: viewModel.overviewTrend.map(\.tokens))
                     .frame(height: 30)
                     .accessibilityHidden(true)
             }
