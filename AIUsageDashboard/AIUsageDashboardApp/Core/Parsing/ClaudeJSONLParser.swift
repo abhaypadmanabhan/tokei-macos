@@ -8,6 +8,7 @@ public actor ClaudeJSONLParser {
         public let lifetime: TokenUsage
         /// Total tokens per calendar day (start-of-day key) for records with timestamps.
         public let dailyTotals: [Date: Int]
+        public let hourlyTotals: [Date: Int]?
         public let warnings: [ProviderWarning]
     }
 
@@ -54,6 +55,7 @@ public actor ClaudeJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals,
             warnings: warnings
         )
     }

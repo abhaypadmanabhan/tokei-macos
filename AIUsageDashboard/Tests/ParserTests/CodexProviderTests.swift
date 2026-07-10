@@ -76,6 +76,14 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.monthUsage?.totalTokens, 200)
         XCTAssertEqual(snapshot.lifetimeUsage?.totalTokens, 200)
         XCTAssertEqual(snapshot.dailyTotals?.values.reduce(0, +), 200)
+        XCTAssertEqual(snapshot.hourlyTotals?.values.reduce(0, +), 200)
+        XCTAssertEqual(snapshot.hourlyTotals?[calendar.date(from: DateComponents(
+            timeZone: TimeZone(identifier: "UTC"),
+            year: 2026,
+            month: 7,
+            day: 6,
+            hour: 10
+        ))!], 130)
         XCTAssertEqual(snapshot.quotaWindows.count, 2)
         XCTAssertTrue(snapshot.warnings.isEmpty)
     }

@@ -6,6 +6,7 @@ struct WindowedTokenUsage: Sendable {
     let month: TokenUsage
     let lifetime: TokenUsage
     let dailyTotals: [Date: Int]
+    let hourlyTotals: [Date: Int]?
 }
 
 struct UsageWindows: Sendable {
@@ -13,12 +14,14 @@ struct UsageWindows: Sendable {
     private let todayStart: Date
     private let weekStart: Date
     private let monthStart: Date
+    private let hourlyStart: Date
 
     private var today: TokenUsage
     private var week: TokenUsage
     private var month: TokenUsage
     private var lifetime: TokenUsage
     private var dailyTotals: [Date: Int] = [:]
+    private var hourlyTotals: [Date: Int] = [:]
 
     /// `emptyConfidence` seeds the accumulators, so it becomes the floor for the
     /// resulting windows (`TokenUsage.merging` keeps the least-trustworthy input).
@@ -30,6 +33,7 @@ struct UsageWindows: Sendable {
         self.todayStart = calendar.startOfDay(for: referenceDate)
         self.weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
         self.monthStart = calendar.date(byAdding: .month, value: -1, to: todayStart) ?? todayStart
+        self.hourlyStart = calendar.date(byAdding: .day, value: -13, to: todayStart) ?? todayStart
         let seed = Self.emptyUsage(emptyConfidence)
         self.today = seed
         self.week = seed
@@ -45,6 +49,9 @@ struct UsageWindows: Sendable {
         if timestamp >= weekStart { week = week.merging(usage) }
         if timestamp >= monthStart { month = month.merging(usage) }
         dailyTotals[calendar.startOfDay(for: timestamp), default: 0] += dailyTotal
+        if timestamp >= hourlyStart, dailyTotal > 0, let hour = hourStart(for: timestamp) {
+            hourlyTotals[hour, default: 0] += dailyTotal
+        }
     }
 
     func snapshot() -> WindowedTokenUsage {
@@ -53,8 +60,14 @@ struct UsageWindows: Sendable {
             week: week,
             month: month,
             lifetime: lifetime,
-            dailyTotals: dailyTotals
+            dailyTotals: dailyTotals,
+            hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals
         )
+    }
+
+    private func hourStart(for timestamp: Date) -> Date? {
+        let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
+        return calendar.date(from: components)
     }
 
     static func emptyUsage(_ confidence: MetricConfidence) -> TokenUsage {

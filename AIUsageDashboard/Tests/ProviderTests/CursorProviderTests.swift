@@ -76,6 +76,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertNil(snapshot.costUsage)
         XCTAssertEqual(snapshot.warnings.map(\.message), ["Plan: Pro (active)"])
         XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 21)
+        XCTAssertNil(snapshot.hourlyTotals)
     }
 
     func testFlagOnFetchesTokensQuotaAndCost() async throws {
@@ -107,6 +108,9 @@ final class CursorProviderTests: XCTestCase {
         // Real token daily totals supersede the offline code-line stats.
         XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-08")], 2000)
         XCTAssertNil(snapshot.dailyTotals?[day("2026-07-06")])
+        XCTAssertEqual(snapshot.hourlyTotals?[date("2026-07-08", hour: 9)], 2000)
+        XCTAssertEqual(snapshot.hourlyTotals?[date("2026-07-04", hour: 10)], 900)
+        XCTAssertNil(snapshot.hourlyTotals?[date("2026-06-20", hour: 12)])
 
         XCTAssertEqual(snapshot.costUsage?.amount ?? 0, 1234.62, accuracy: 0.01)
         XCTAssertEqual(snapshot.costUsage?.currency, "USD")
@@ -196,8 +200,18 @@ final class CursorProviderTests: XCTestCase {
     }
 
     private func day(_ dayString: String) -> Date {
+        date(dayString, hour: 0)
+    }
+
+    private func date(_ dayString: String, hour: Int) -> Date {
         let parts = dayString.split(separator: "-").compactMap { Int($0) }
-        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))!
+        return calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: parts[0],
+            month: parts[1],
+            day: parts[2],
+            hour: hour
+        ))!
     }
 
     private func assertUnavailable(_ usage: TokenUsage, file: StaticString = #file, line: UInt = #line) {

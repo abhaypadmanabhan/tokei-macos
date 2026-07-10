@@ -41,6 +41,24 @@ final class ClaudeJSONLParserTests: XCTestCase {
     return utcCalendar.date(from: comps)!
   }
 
+  private func date(_ dayString: String, hour: Int) -> Date {
+    let parts = dayString.split(separator: "-").compactMap { Int($0) }
+    return utcCalendar.date(from: DateComponents(
+      timeZone: utcCalendar.timeZone,
+      year: parts[0],
+      month: parts[1],
+      day: parts[2],
+      hour: hour
+    ))!
+  }
+
+  private func isoString(_ date: Date) -> String {
+    let comps = utcCalendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+    return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+                  comps.year!, comps.month!, comps.day!,
+                  comps.hour!, comps.minute!, comps.second!)
+  }
+
   private func makeParser(now: Date? = nil) -> ClaudeJSONLParser {
     let fixed = now ?? referenceNow()
     return ClaudeJSONLParser(calendar: utcCalendar, now: { fixed })
@@ -148,6 +166,30 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(usage.today.inputTokens, 10)
     XCTAssertEqual(usage.week.inputTokens, 30)   // today(10) + week(20)
     XCTAssertEqual(usage.month.inputTokens, 60)   // today + week + month(30)
+  }
+
+  func testBucketsHourlyTotalsWithinFourteenDayWindow() async {
+    let hour = date("2026-07-06", hour: 5)
+    let sameHour = hour.addingTimeInterval(30 * 60)
+    let oldHour = date("2026-06-20", hour: 5)
+
+    func line(id: String, input: Int, timestamp: Date) -> String {
+      """
+      {"message":{"id":"\(id)","usage":{"input_tokens":\(input),"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_\(id)","type":"assistant","uuid":"uuid_\(id)","timestamp":"\(isoString(timestamp))"}
+      """
+    }
+
+    let url = writeFixture([
+      line(id: "recent-a", input: 10, timestamp: hour),
+      line(id: "recent-b", input: 20, timestamp: sameHour),
+      line(id: "old", input: 40, timestamp: oldHour),
+    ].joined(separator: "\n"), named: "hourly.jsonl")
+
+    let usage = await makeParser(now: referenceNow()).parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.hourlyTotals?[hour], 30)
+    XCTAssertNil(usage.hourlyTotals?[oldHour])
+    XCTAssertEqual(usage.hourlyTotals?.values.reduce(0, +), 30)
   }
 
   func testLegacyTopLevelUsage() async {

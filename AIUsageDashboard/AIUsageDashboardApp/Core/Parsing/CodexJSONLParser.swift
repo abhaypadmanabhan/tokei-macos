@@ -7,6 +7,7 @@ public actor CodexJSONLParser {
         public let month: TokenUsage
         public let lifetime: TokenUsage
         public let dailyTotals: [Date: Int]
+        public let hourlyTotals: [Date: Int]?
         public let quotaWindows: [QuotaWindow]
         public let deltaReportedTotalTokens: Int
         public let finalReportedTotalTokens: Int
@@ -77,6 +78,7 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
             finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
