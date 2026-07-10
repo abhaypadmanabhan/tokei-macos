@@ -5,16 +5,18 @@ import AppKit
 /// Monochrome Shape — fill with `.primary` in-app; use `menuBarImage` for the
 /// MenuBarExtra label (template NSImage renders reliably where Shapes don't).
 struct TokeiMark: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
+    /// One path per meter bar, leftmost first — the shared geometry for the
+    /// combined logo shape and the per-bar-tinted dynamic status icon.
+    static func barPaths(in rect: CGRect) -> [Path] {
         let barCount = 4
         let gapRatio: CGFloat = 0.55
         let unit = rect.width / (CGFloat(barCount) + gapRatio * CGFloat(barCount - 1))
         let gap = unit * gapRatio
         let slant = unit * 0.5
 
-        for i in 0..<barCount {
-            let x = CGFloat(i) * (unit + gap)
+        return (0..<barCount).map { i in
+            var path = Path()
+            let x = rect.minX + CGFloat(i) * (unit + gap)
             let heightFraction = 0.35 + 0.65 * CGFloat(i) / CGFloat(barCount - 1)
             let barHeight = rect.height * heightFraction
             let bottom = rect.maxY
@@ -24,8 +26,12 @@ struct TokeiMark: Shape {
             path.addLine(to: CGPoint(x: x + unit + slant * (barHeight / rect.height), y: top))
             path.addLine(to: CGPoint(x: x + unit, y: bottom))
             path.closeSubpath()
+            return path
         }
-        return path
+    }
+
+    func path(in rect: CGRect) -> Path {
+        Self.barPaths(in: rect).reduce(into: Path()) { $0.addPath($1) }
     }
 
     /// Template image of the mark for the system menu bar (adapts to bar appearance).
@@ -45,32 +51,4 @@ struct TokeiMark: Shape {
         image.isTemplate = true
         return image
     }()
-}
-
-/// Sparkline for daily token totals. Flat hairline when fewer than 2 points.
-struct Sparkline: View {
-    let values: [Int]
-
-    var body: some View {
-        GeometryReader { geo in
-            if values.count >= 2, let maxValue = values.max(), maxValue > 0 {
-                Path { path in
-                    let stepX = geo.size.width / CGFloat(values.count - 1)
-                    for (i, v) in values.enumerated() {
-                        let x = CGFloat(i) * stepX
-                        let y = geo.size.height * (1 - CGFloat(v) / CGFloat(maxValue) * 0.9)
-                        if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                        else { path.addLine(to: CGPoint(x: x, y: y)) }
-                    }
-                }
-                // Data trend, not a state — rendered in ink so the accent stays reserved.
-                .stroke(PadzyTheme.ink.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
-            } else {
-                Rectangle()
-                    .fill(PadzyTheme.muted.opacity(0.4))
-                    .frame(height: 1)
-                    .frame(maxHeight: .infinity, alignment: .center)
-            }
-        }
-    }
 }

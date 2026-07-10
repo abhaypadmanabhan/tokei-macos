@@ -41,6 +41,24 @@ final class CodexJSONLParserTests: XCTestCase {
         return utcCalendar.date(from: comps)!
     }
 
+    private func date(_ dayString: String, hour: Int) -> Date {
+        let parts = dayString.split(separator: "-").compactMap { Int($0) }
+        return utcCalendar.date(from: DateComponents(
+            timeZone: utcCalendar.timeZone,
+            year: parts[0],
+            month: parts[1],
+            day: parts[2],
+            hour: hour
+        ))!
+    }
+
+    private func isoString(_ date: Date) -> String {
+        let comps = utcCalendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
+                      comps.year!, comps.month!, comps.day!,
+                      comps.hour!, comps.minute!, comps.second!)
+    }
+
     private func makeParser(now: Date? = nil) -> CodexJSONLParser {
         let fixed = now ?? referenceNow()
         return CodexJSONLParser(calendar: utcCalendar, now: { fixed })
@@ -87,6 +105,30 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(usage.dailyTotals[todayStart], 10)
         XCTAssertEqual(usage.dailyTotals[weekDay], 20)
         XCTAssertEqual(usage.dailyTotals[monthDay], 30)
+    }
+
+    func testBucketsHourlyTotalsWithinFourteenDayWindow() async {
+        let hour = date("2026-07-06", hour: 5)
+        let sameHour = hour.addingTimeInterval(30 * 60)
+        let oldHour = date("2026-06-20", hour: 5)
+
+        func line(total: Int, timestamp: Date) -> String {
+            """
+            {"timestamp":"\(isoString(timestamp))","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\(total),"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":\(total)},"last_token_usage":{"input_tokens":\(total),"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":\(total)}},"rate_limits":null}}
+            """
+        }
+
+        let url = writeFixture([
+            line(total: 10, timestamp: hour),
+            line(total: 20, timestamp: sameHour),
+            line(total: 40, timestamp: oldHour),
+        ].joined(separator: "\n"), named: "hourly.jsonl")
+
+        let usage = await makeParser(now: referenceNow()).parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.hourlyTotals?[hour], 30)
+        XCTAssertNil(usage.hourlyTotals?[oldHour])
+        XCTAssertEqual(usage.hourlyTotals?.values.reduce(0, +), 30)
     }
 
     func testMapsQuotaWindowsFromNewestRateLimits() async {
@@ -162,6 +204,19 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(resetBank?.label, "Reset bank")
         XCTAssertEqual(resetBank?.remaining, 3)
         XCTAssertEqual(resetBank?.limit, 3)
+    }
+
+    func testPurchasableCreditsBalanceIsRemainingNotUsed() async {
+        let url = writeFixture(CodexFixtures.purchasableCreditsBalanceOnly(), named: "credits-balance.jsonl")
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        let credits = usage.quotaWindows.first { $0.type == .credits && $0.bucketKey == "credits" }
+        XCTAssertNotNil(credits, "purchasable credits window should surface from a balance")
+        // The balance is credits REMAINING — it must never be stored as `used`
+        // (else an 80-of-100-remaining balance renders as "80% used").
+        XCTAssertNil(credits?.used)
+        XCTAssertEqual(credits?.remaining, 80)
+        XCTAssertEqual(credits?.limit, 100)
     }
 
     func testStaleQuotaWindowsAreEstimated() async {

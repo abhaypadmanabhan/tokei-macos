@@ -7,6 +7,7 @@ public actor ClineMessagesParser {
         public let month: TokenUsage
         public let lifetime: TokenUsage
         public let dailyTotals: [Date: Int]
+        public let hourlyTotals: [Date: Int]?
         public let totalCost: Double
         public let warnings: [ProviderWarning]
     }
@@ -60,6 +61,7 @@ public actor ClineMessagesParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals,
             totalCost: totalCost,
             warnings: warnings
         )

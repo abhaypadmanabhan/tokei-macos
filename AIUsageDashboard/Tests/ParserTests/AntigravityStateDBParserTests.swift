@@ -86,6 +86,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
         XCTAssertEqual(snapshot.authStatus, .authenticated)
         XCTAssertEqual(snapshot.todayUsage.confidence, .unavailable)
         XCTAssertEqual(snapshot.weekUsage.confidence, .unavailable)
+        XCTAssertNil(snapshot.hourlyTotals)
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
         // Plan + the real available-credits number surface as honest info, and the
         // connector states plainly that model quota is online-only.

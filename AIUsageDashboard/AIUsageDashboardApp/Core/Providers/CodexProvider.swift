@@ -62,7 +62,8 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             costUsage: costUsage,
             warnings: warnings,
             lastSyncedAt: Date(),
-            dailyTotals: usage.dailyTotals
+            dailyTotals: usage.dailyTotals,
+            hourlyTotals: usage.hourlyTotals
         )
     }
 

@@ -13,7 +13,7 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.3.0"
+    MARKETING_VERSION: "0.4.0"
     CURRENT_PROJECT_VERSION: "2"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
@@ -79,6 +79,12 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+      # Pure UI-layer math (pace notch + tightest-window selection) lives under
+      # UI/ per the WP-3 scope, but is a dependency-free function over the frozen
+      # Core shapes. Compile that single file into this bundle so the pace/tightest
+      # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
+      # run without pulling the whole app target into the test target.
+      - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
     dependencies:
       - target: AIUsageDashboardCore
     settings:

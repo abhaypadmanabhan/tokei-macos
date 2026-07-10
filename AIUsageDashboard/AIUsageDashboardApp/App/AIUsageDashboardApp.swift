@@ -28,10 +28,8 @@ struct AIUsageDashboardApp: App {
             MenuBarView()
                 .environmentObject(viewModel)
         } label: {
-            HStack(spacing: 5) {
-                Image(nsImage: TokeiMark.menuBarImage)
-                Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
-            }
+            MenuBarLabel()
+                .environmentObject(viewModel)
         }
         .menuBarExtraStyle(.window)
         // Settings live in-app (dashboard right pane via the sidebar SETTINGS entry),

@@ -7,6 +7,7 @@ public actor CodexJSONLParser {
         public let month: TokenUsage
         public let lifetime: TokenUsage
         public let dailyTotals: [Date: Int]
+        public let hourlyTotals: [Date: Int]?
         public let quotaWindows: [QuotaWindow]
         public let deltaReportedTotalTokens: Int
         public let finalReportedTotalTokens: Int
@@ -77,6 +78,7 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
             finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
@@ -477,7 +479,10 @@ extension CodexJSONLParser {
         return QuotaWindow(
             providerID: .codex,
             type: .credits,
-            used: used ?? credits.balance,
+            // `balance` is credits REMAINING, not used — never place it in `used`
+            // (that would render an 80-of-100-remaining balance as "80% used").
+            // Leave `used` nil when only a balance is known; `remaining` carries it.
+            used: used,
             limit: limit,
             remaining: remaining,
             resetAt: nil,

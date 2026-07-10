@@ -62,14 +62,6 @@ struct DashboardView: View {
         }
     }
 
-    /// Daily totals sorted by day, most recent last, limited to the trailing `days`.
-    private func dailySeries(days: Int?) -> [Int] {
-        guard let totals = selectedSnapshot?.dailyTotals, !totals.isEmpty else { return [] }
-        let sorted = totals.sorted { $0.key < $1.key }.map(\.value)
-        if let days, sorted.count > days { return Array(sorted.suffix(days)) }
-        return sorted
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -310,8 +302,19 @@ struct DashboardView: View {
             )
         } else if capabilityTier == .planOnly {
             capabilityPane
+        } else if let snapshot = selectedSnapshot {
+            // Full-metrics detail (redesign mockup 1), analytics from the frozen
+            // §4 DashboardViewModel surface.
+            ProviderDetailView(
+                snapshot: snapshot,
+                trend: viewModel.trend(for: snapshot.providerID),
+                thisWeek: viewModel.thisWeek(for: snapshot.providerID),
+                heatmap: viewModel.heatmap(for: snapshot.providerID),
+                peakHour: viewModel.peakHour(for: snapshot.providerID),
+                lastSyncedAt: viewModel.lastSyncedAt
+            )
         } else {
-            usagePane
+            SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
         }
     }
 
@@ -333,192 +336,199 @@ struct DashboardView: View {
             $0.level == .info && $0.message.range(of: "Plan:", options: [.caseInsensitive]) == nil
         }.map(\.message)
 
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                SectionLabel("Usage")
-                Spacer()
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 24)
-
-            sourceDisclosureLine(providerID: providerID, tier: .planOnly)
-                .padding(.horizontal, 28)
-                .padding(.top, 8)
-
-            VStack(alignment: .leading, spacing: 16) {
-                if let plan {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("PLAN")
-                            .font(.mono(size: 11))
-                            .foregroundColor(PadzyTheme.muted)
-                        Text(plan.uppercased())
-                            .font(.display(size: 20, weight: .black))
-                            .foregroundColor(PadzyTheme.ink)
-                    }
-                }
-
-                if let acceptedLinesToday {
-                    breakdownItem("ACCEPTED LINES TODAY", acceptedLinesToday)
-                }
-
-                if let creditsWindow {
-                    quotaGaugeRow(creditsWindow)
-                }
-
-                if providerID == .antigravity {
-                    antigravityQuotaSection(snapshot)
-                } else {
-                    // Honest gauge for any other capped window a provider emits (e.g. a
-                    // Cursor model with a real `maxRequestUsage`). Uncapped accounts emit
-                    // no such window, so this renders nothing — matching "no fake gauge."
-                    let cappedWindows = (snapshot?.quotaWindows ?? []).filter {
-                        $0.type != .credits && $0.confidence != .unavailable
-                    }
-                    ForEach(cappedWindows) { window in
-                        quotaGaugeRow(window)
-                    }
-                }
-
-                ForEach(usageInfoLines, id: \.self) { line in
-                    Text(line.uppercased())
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Text("TOKEN USAGE UNAVAILABLE LOCALLY")
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-
-                if providerID == .cursor {
-                    Button(action: {
-                        section = .settings
-                        viewModel.showingSettings = true
-                    }) {
-                        Text("ENABLE ONLINE IN SETTINGS")
-                            .font(.mono(size: 12))
-                            .foregroundColor(PadzyTheme.ground)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(PadzyTheme.accent)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-
-            Spacer(minLength: 16)
+        let cappedWindows = (snapshot?.quotaWindows ?? []).filter {
+            $0.type != .credits && $0.confidence != .unavailable
         }
-    }
 
-    private var usagePane: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                SectionLabel("Usage")
-                Spacer()
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 24)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                planHeader(providerID: providerID, snapshot: snapshot)
 
-            sourceDisclosureLine(providerID: viewModel.selectedProvider, tier: .fullMetrics)
-                .padding(.horizontal, 28)
-                .padding(.top, 8)
+                // Plan hero — mirrors the full-detail TODAY hero: big display value,
+                // StatCard tiles for what IS measurable (credits, accepted lines),
+                // credits balance as the trailing circular gauge.
+                SectionCard("Plan", trailing: {
+                    if let creditsWindow, creditsWindow.confidence != .unavailable {
+                        ConfidenceBadge(confidence: creditsWindow.confidence)
+                    }
+                }) {
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text((plan ?? "—").uppercased())
+                                .font(.display(size: 34, weight: .black))
+                                .foregroundColor(PadzyTheme.ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("TODAY")
-                    .font(.mono(size: 12))
-                    .tracking(12 * 0.08)
-                    .foregroundColor(PadzyTheme.muted)
+                            let creditsTile: (kicker: String, value: String)? = creditsWindow.flatMap { window in
+                                if let used = window.used {
+                                    let usedText = TokenFormatter.format(Int(round(used)))
+                                    if let limit = window.limit, limit > 0 {
+                                        return ("Credits used", "\(usedText) / \(TokenFormatter.format(Int(round(limit))))")
+                                    }
+                                    return ("Credits used", usedText)
+                                }
+                                // Balance-style credits (e.g. Codex purchasable): the value is
+                                // credits REMAINING, not used — label it honestly as "left".
+                                if let remaining = window.remaining {
+                                    let remText = TokenFormatter.format(Int(round(remaining)))
+                                    if let limit = window.limit, limit > 0 {
+                                        return ("Credits left", "\(remText) / \(TokenFormatter.format(Int(round(limit))))")
+                                    }
+                                    return ("Credits left", remText)
+                                }
+                                return nil
+                            }
+                            if creditsTile != nil || acceptedLinesToday != nil {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
+                                    if let creditsTile {
+                                        StatCard(kicker: creditsTile.kicker, value: creditsTile.value)
+                                    }
+                                    if let acceptedLinesToday {
+                                        StatCard(kicker: "Accepted lines today",
+                                                 value: TokenFormatter.format(acceptedLinesToday))
+                                    }
+                                }
+                            }
 
-                Text(TokenFormatter.format(selectedSnapshot?.todayUsage.totalTokens))
-                    .font(.mono(size: 150))
-                    .foregroundColor(PadzyTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.25)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                            ForEach(usageInfoLines, id: \.self) { line in
+                                Text(line)
+                                    .font(.mono(size: 11))
+                                    .foregroundColor(PadzyTheme.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                usageBreakdown
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-
-            Spacer(minLength: 16)
-
-            // Quota Limits Section (renders only if has active quota windows)
-            if let activeWindows = selectedSnapshot?.quotaWindows.filter({ $0.confidence != .unavailable }), !activeWindows.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel("Limits")
-                        .padding(.horizontal, 28)
-                        .padding(.top, 16)
-
-                    VStack(spacing: 12) {
-                        ForEach(activeWindows) { window in
-                            quotaGaugeRow(window)
+                        if let creditsWindow, let used = creditsWindow.used {
+                            CircularGauge(
+                                percent: creditsWindow.limit.map { $0 > 0 ? used / $0 * 100 : used } ?? used,
+                                label: "credits used",
+                                size: 96
+                            )
                         }
                     }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 8)
                 }
-                Spacer(minLength: 16)
-                HairlineDivider()
-            } else {
-                HairlineDivider()
+
+                // Quota — Antigravity's per-model weekly/5h groups, or any other
+                // capped window a provider emits. Same bar language as the full
+                // detail's LIMITS card (threshold color, RESETS, tightest gauge).
+                if providerID == .antigravity {
+                    SectionCard("Model quota") {
+                        antigravityQuotaSection(snapshot)
+                    }
+                } else if !cappedWindows.isEmpty {
+                    SectionCard("Limits") {
+                        HStack(alignment: .top, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                ForEach(cappedWindows) { window in
+                                    quotaGaugeRow(window)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            tightestGauge(in: cappedWindows)
+                        }
+                    }
+                }
+
+                // Honest disclosure that token-level usage is genuinely unmeasured
+                // here — never a fake "0" hero. Plus the Cursor online opt-in.
+                SectionCard("Token usage") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("NOT MEASURED LOCALLY")
+                            .font(.mono(size: 11))
+                            .tracking(11 * 0.08)
+                            .foregroundColor(PadzyTheme.ink)
+                        Text("Token-level usage isn't measured locally for \(snapshot?.displayName ?? providerID.rawValue). The plan and quota above are what Tokei can read honestly.")
+                            .font(.mono(size: 10))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if providerID == .cursor {
+                        Button(action: {
+                            section = .settings
+                            viewModel.showingSettings = true
+                        }) {
+                            Text("ENABLE ONLINE IN SETTINGS")
+                                .font(.mono(size: 12))
+                                .foregroundColor(PadzyTheme.ground)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                                        .fill(PadzyTheme.accent)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
+                    }
+                }
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(PadzyTheme.ground)
+    }
+
+    /// Plan-only header, mirroring the full-detail header (brand mark · name ·
+    /// PLAN ONLY status pill · watching path · last sync) so plan-only providers
+    /// read as first-class in the redesign, not a downgraded pane.
+    private func planHeader(providerID: ProviderID, snapshot: ProviderSnapshot?) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            ProviderBrandMark(providerID, size: 38)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    Text((snapshot?.displayName ?? providerID.rawValue).uppercased())
+                        .font(.display(size: 20, weight: .black))
+                        .foregroundColor(PadzyTheme.ink)
+                        .lineLimit(1)
+                    planStatusPill
+                }
+                Text("WATCHING \(ProviderMetadata.localPaths(for: providerID).joined(separator: ", "))")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            HStack(alignment: .top, spacing: 0) {
-                metricBlock(title: "7D ROLLING",
-                            usage: selectedSnapshot?.weekUsage, series: dailySeries(days: 7))
-                verticalHairline
-                metricBlock(title: "30D ROLLING",
-                            usage: selectedSnapshot?.monthUsage, series: dailySeries(days: 30))
-                verticalHairline
-                metricBlock(title: "LIFETIME",
-                            usage: selectedSnapshot?.lifetimeUsage, series: dailySeries(days: nil), cost: selectedSnapshot?.costUsage)
-            }
-            .frame(height: 168)
-        }
-    }
+            Spacer(minLength: 12)
 
-    private var usageBreakdown: some View {
-        HStack(spacing: 24) {
-            if let snapshot = selectedSnapshot {
-                breakdownItem("INPUT", snapshot.todayUsage.inputTokens)
-                breakdownItem("OUTPUT", snapshot.todayUsage.outputTokens)
-                breakdownItem("CACHE READ", snapshot.todayUsage.cacheReadTokens)
-                breakdownItem("CACHE WRITE", snapshot.todayUsage.cacheCreationTokens)
-                if let cost = snapshot.costUsage, let amount = cost.amount {
-                    breakdownItem("COST", String(format: "$%.2f", amount))
-                }
-                let confidence = snapshot.todayUsage.confidence
-                if confidence != .unavailable {
-                    ConfidenceBadge(confidence: confidence)
-                }
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("LAST SYNC")
+                    .font(.mono(size: 9))
+                    .tracking(0.6)
+                    .foregroundColor(PadzyTheme.muted)
+                Text(viewModel.lastSyncedAt.map { Self.planSyncFormatter.string(from: $0) } ?? "NEVER")
+                    .font(.mono(size: 12))
+                    .monospacedDigit()
+                    .foregroundColor(PadzyTheme.ink)
             }
         }
     }
 
-    private func breakdownItem(_ label: String, _ value: Int?) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-            Text(TokenFormatter.format(value))
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.ink)
-        }
+    /// Quiet hairline status pill — status, never action, so it never takes the accent.
+    private var planStatusPill: some View {
+        Text("PLAN ONLY")
+            .font(.mono(size: 9))
+            .tracking(0.6)
+            .foregroundColor(PadzyTheme.muted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .overlay(
+                RoundedRectangle(cornerRadius: PadzyRadius.pill, style: .continuous)
+                    .stroke(PadzyTheme.muted.opacity(0.4), lineWidth: 1)
+            )
+            .fixedSize()
     }
 
-    private func breakdownItem(_ label: String, _ valueStr: String) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-            Text(valueStr)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.ink)
-        }
-    }
+    private static let planSyncFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 
     /// Antigravity's weekly + 5-hour windows, grouped by model group (`label`,
     /// e.g. "Gemini Models" / "Claude and GPT models") and rendered under a group
@@ -560,10 +570,6 @@ struct DashboardView: View {
         let groups = groupedAntigravityWindows(windows)
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("MODEL QUOTA")
-                .font(.mono(size: 11))
-                .foregroundColor(PadzyTheme.muted)
-
             if !antigravityOnlineQuotaEnabled {
                 SurfaceStateView(
                     kind: .empty(headline: "Live quota disabled", hint: "Enable in Settings to see weekly and 5-hour model quota."),
@@ -575,19 +581,25 @@ struct DashboardView: View {
                     compact: true
                 )
             } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(groups) { group in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(group.label.uppercased())
-                                .font(.display(size: 13, weight: .bold))
-                                .foregroundColor(PadzyTheme.ink)
-                            VStack(spacing: 8) {
-                                ForEach(group.windows) { window in
-                                    quotaGaugeRow(window)
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(group.label.uppercased())
+                                    .font(.mono(size: 10))
+                                    .tracking(10 * 0.08)
+                                    .foregroundColor(PadzyTheme.muted)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    ForEach(group.windows) { window in
+                                        quotaGaugeRow(window)
+                                    }
                                 }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    tightestGauge(in: windows)
                 }
             }
         }
@@ -601,56 +613,70 @@ struct DashboardView: View {
         }
     }
 
+    /// One quota window in the full-detail LIMITS bar language: threshold-colored
+    /// 6px rounded fill, RESETS countdown, `!!` non-color critical marker.
     private func quotaGaugeRow(_ window: QuotaWindow) -> some View {
-        let percent = window.used.map { Int(round($0)) } ?? 0
-        let isCritical = percent > 90
+        let percent = window.used ?? 0
+        let clamped = max(0, min(100, percent))
+        let color = ProviderOverviewRow.thresholdColor(percent)
+        let isCritical = ProviderOverviewRow.isCritical(percent)
 
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    let resetLabel = window.resetAt.map { " · RESETS \(formatCountdown(from: $0))" } ?? ""
-                    Text("\(quotaWindowTypeLabel(window.type))\(resetLabel)")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                    ConfidenceBadge(confidence: window.confidence)
-                }
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        // 1px hairline track
-                        Rectangle()
-                            .fill(PadzyTheme.muted.opacity(0.3))
-                            .frame(height: 1)
-
-                        // Flat accent fill proportional to used_percent
-                        if let used = window.used {
-                            let clamped = max(0, min(100, used))
-                            let fillWidth = geo.size.width * CGFloat(clamped / 100.0)
-                            Rectangle()
-                                .fill(PadzyTheme.accent)
-                                .frame(width: fillWidth, height: 1)
-                        }
-                    }
-                }
-                .frame(height: 1)
-            }
-
-            // Right-aligned mono 29% / 100
-            HStack(spacing: 4) {
-                if isCritical {
-                    Text("!!")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.accent)
-                }
-                Text("\(percent)% / 100")
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(quotaWindowTypeLabel(window.type))
                     .font(.mono(size: 11))
-                    .foregroundColor(isCritical ? PadzyTheme.accent : PadzyTheme.ink)
+                    .foregroundColor(PadzyTheme.ink)
+                    .lineLimit(1)
+                ConfidenceBadge(confidence: window.confidence)
+                Spacer(minLength: 8)
+                if let resetAt = window.resetAt {
+                    Text("RESETS \(formatCountdown(from: resetAt))")
+                        .font(.mono(size: 10))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.muted)
+                }
+                HStack(spacing: 3) {
+                    if isCritical {
+                        Text("!!")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.accent)
+                    }
+                    Text("\(Int(round(percent)))%")
+                        .font(.mono(size: 12))
+                        .monospacedDigit()
+                        .foregroundColor(color)
+                }
             }
-            .monospacedDigit()
-            .frame(width: 80, alignment: .trailing)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(PadzyTheme.muted.opacity(0.25))
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(clamped / 100.0))
+                }
+            }
+            .frame(height: 6)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabelForQuotaWindow(window))
+    }
+
+    /// Circular gauge of the single tightest window in a set — the same trailing
+    /// gauge the full detail's LIMITS card shows for the session window.
+    @ViewBuilder
+    private func tightestGauge(in windows: [QuotaWindow]) -> some View {
+        let tightest = windows
+            .filter { $0.used != nil }
+            .max { ($0.used ?? 0) < ($1.used ?? 0) }
+        if let tightest, let used = tightest.used {
+            CircularGauge(
+                percent: tightest.limit.map { $0 > 0 ? used / $0 * 100 : used } ?? used,
+                label: "of \(quotaWindowTypeLabel(tightest.type).lowercased()) limit",
+                size: 96
+            )
+        }
     }
 
     private func formatCountdown(from date: Date) -> String {
@@ -697,48 +723,6 @@ struct DashboardView: View {
             resets = ""
         }
         return "\(provider) \(typeName) window \(usedPercent)\(resets)"
-    }
-
-    private var verticalHairline: some View {
-        Rectangle()
-            .fill(PadzyTheme.muted.opacity(0.3))
-            .frame(width: 1)
-    }
-
-    private func metricBlock(title: String, usage: TokenUsage?, series: [Int], cost: CostUsage? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                Text(title)
-                    .font(.mono(size: 11))
-                    .tracking(11 * 0.08)
-                    .foregroundColor(PadzyTheme.muted)
-
-                Spacer()
-
-                if let cost = cost, let amount = cost.amount {
-                    HStack(spacing: 4) {
-                        Text("COST")
-                            .font(.mono(size: 9))
-                            .foregroundColor(PadzyTheme.muted)
-                        Text(String(format: "$%.2f", amount))
-                            .font(.mono(size: 11))
-                            .foregroundColor(PadzyTheme.ink)
-                    }
-                }
-            }
-
-            Text(TokenFormatter.format(usage?.totalTokens))
-                .font(.mono(size: 40))
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-
-            Sparkline(values: series)
-                .frame(height: 44)
-                .accessibilityHidden(true)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Status
@@ -957,4 +941,47 @@ private func previewViewModel() -> DashboardViewModel {
 #Preview("Window · full 1440×900") {
     DashboardView().environmentObject(previewViewModel())
         .frame(width: 1440, height: 900)
+}
+
+#Preview("Plan-only · Antigravity") {
+    UserDefaults.standard.set(true, forKey: "antigravityOnlineQuotaEnabled")
+    let vm = previewViewModel()
+    let reset5h = Date().addingTimeInterval(3 * 3600 + 20 * 60)
+    let resetWeek = Date().addingTimeInterval(4 * 86_400 + 6 * 3600)
+    vm.snapshots.append(ProviderSnapshot(
+        providerID: .antigravity, displayName: "Antigravity", authStatus: .authenticated,
+        quotaWindows: [
+            QuotaWindow(providerID: .antigravity, type: .weekly, used: 46, limit: 100,
+                        resetAt: resetWeek, confidence: .providerReported, source: "preview",
+                        label: "Gemini Models", bucketKey: "ag_gemini_weekly"),
+            QuotaWindow(providerID: .antigravity, type: .fiveHour, used: 12, limit: 100,
+                        resetAt: reset5h, confidence: .providerReported, source: "preview",
+                        label: "Gemini Models", bucketKey: "ag_gemini_5h"),
+            QuotaWindow(providerID: .antigravity, type: .weekly, used: 91, limit: 100,
+                        resetAt: resetWeek, confidence: .providerReported, source: "preview",
+                        label: "Claude and GPT Models", bucketKey: "ag_claude_weekly"),
+            QuotaWindow(providerID: .antigravity, type: .fiveHour, used: 68, limit: 100,
+                        resetAt: reset5h, confidence: .providerReported, source: "preview",
+                        label: "Claude and GPT Models", bucketKey: "ag_claude_5h"),
+        ],
+        todayUsage: .unavailable, weekUsage: .unavailable,
+        warnings: [ProviderWarning(message: "Plan: Pro", level: .info)]
+    ))
+    vm.selectedProvider = .antigravity
+    return DashboardView().environmentObject(vm)
+        .frame(width: 1000, height: 800)
+}
+
+#Preview("Plan-only · Antigravity quota off/empty") {
+    UserDefaults.standard.set(false, forKey: "antigravityOnlineQuotaEnabled")
+    let vm = previewViewModel()
+    vm.snapshots.append(ProviderSnapshot(
+        providerID: .antigravity, displayName: "Antigravity", authStatus: .authenticated,
+        quotaWindows: [],
+        todayUsage: .unavailable, weekUsage: .unavailable,
+        warnings: [ProviderWarning(message: "Plan: Pro", level: .info)]
+    ))
+    vm.selectedProvider = .antigravity
+    return DashboardView().environmentObject(vm)
+        .frame(width: 900, height: 640)
 }

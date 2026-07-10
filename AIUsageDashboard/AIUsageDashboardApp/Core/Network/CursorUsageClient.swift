@@ -16,16 +16,45 @@ public protocol CursorUsageClient: Sendable {
     func fetchUsageSummary(cookie: String) async throws -> Data
 }
 
-public enum CursorUsageError: Error, Sendable {
+public enum CursorUsageError: LocalizedError, Sendable {
     case unexpectedResponse
     case httpStatus(Int)
+    case cooldownActive
+    case rateLimited(retryAfter: TimeInterval?)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unexpectedResponse:
+            "Cursor usage returned an unexpected response."
+        case .httpStatus(let statusCode):
+            "Cursor usage returned HTTP \(statusCode)."
+        case .cooldownActive:
+            "Cursor usage is cooling down after a rate limit."
+        case .rateLimited:
+            "Cursor usage is rate limited."
+        }
+    }
 }
 
 public actor CursorUsageClientImpl: CursorUsageClient {
     private let urlSession: URLSession
+    private let cooldownURL: URL
+    private let now: @Sendable () -> Date
+    private let sleep: @Sendable (TimeInterval) async -> Void
 
-    public init(urlSession: URLSession = .shared) {
+    public init(
+        urlSession: URLSession = .shared,
+        cooldownURL: URL? = nil,
+        now: @escaping @Sendable () -> Date = { Date() },
+        sleep: @escaping @Sendable (TimeInterval) async -> Void = { interval in
+            guard interval > 0 else { return }
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+        }
+    ) {
         self.urlSession = urlSession
+        self.cooldownURL = cooldownURL ?? Self.defaultStorageURL(filename: "cursor-usage-cooldown.json")
+        self.now = now
+        self.sleep = sleep
     }
 
     public func fetchUsageEventsCSV(cookie: String) async throws -> String {
@@ -41,24 +70,86 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     }
 
     private func get(_ url: URL, cookie: String, accept: String) async throws -> Data {
-        var request = URLRequest(url: url)
-        // Send our explicit Cookie header verbatim; don't let URLSession's cookie
-        // storage override or strip it.
-        request.httpShouldHandleCookies = false
-        // SECURITY: the session cookie leaves the process only as this header, over TLS.
-        request.setValue(cookie, forHTTPHeaderField: "Cookie")
-        request.setValue("https://www.cursor.com/settings", forHTTPHeaderField: "Referer")
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue(accept, forHTTPHeaderField: "Accept")
+        if isCooldownActive(at: now()) {
+            throw CursorUsageError.cooldownActive
+        }
 
-        let (data, response) = try await urlSession.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CursorUsageError.unexpectedResponse
+        var lastRetryAfter: TimeInterval?
+        for attempt in 1...Self.maxAttempts {
+            var request = URLRequest(url: url)
+            // Send our explicit Cookie header verbatim; don't let URLSession's cookie
+            // storage override or strip it.
+            request.httpShouldHandleCookies = false
+            // SECURITY: the session cookie leaves the process only as this header, over TLS.
+            request.setValue(cookie, forHTTPHeaderField: "Cookie")
+            request.setValue("https://www.cursor.com/settings", forHTTPHeaderField: "Referer")
+            request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(accept, forHTTPHeaderField: "Accept")
+
+            let (data, response) = try await urlSession.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw CursorUsageError.unexpectedResponse
+            }
+
+            switch httpResponse.statusCode {
+            case 200..<300:
+                return data
+            case 429:
+                let retryAfter = retryAfter(from: httpResponse)
+                lastRetryAfter = retryAfter
+                if attempt < Self.maxAttempts {
+                    await sleep(min(retryAfter ?? Self.defaultCooldownInterval, Self.maxRetrySleepInterval))
+                }
+            default:
+                throw CursorUsageError.httpStatus(httpResponse.statusCode)
+            }
         }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            throw CursorUsageError.httpStatus(httpResponse.statusCode)
+
+        try? persistCooldown(duration: lastRetryAfter)
+        throw CursorUsageError.rateLimited(retryAfter: lastRetryAfter)
+    }
+
+    private func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
+        guard let value = response.value(forHTTPHeaderField: "Retry-After")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else { return nil }
+        if let seconds = TimeInterval(value) {
+            return max(0, seconds)
         }
-        return data
+        if let date = Self.httpDateFormatter.date(from: value) {
+            return max(0, date.timeIntervalSince(now()))
+        }
+        return nil
+    }
+
+    private func isCooldownActive(at referenceDate: Date) -> Bool {
+        guard let cooldown = try? readCooldown() else { return false }
+        return cooldown.until > referenceDate
+    }
+
+    private func persistCooldown(duration: TimeInterval?) throws {
+        try FileManager.default.createDirectory(
+            at: cooldownURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let interval = min(Self.maxCooldownInterval, max(0, duration ?? Self.defaultCooldownInterval))
+        let data = try JSONEncoder.cursorUsageEncoder.encode(
+            CursorUsageCooldown(until: now().addingTimeInterval(interval))
+        )
+        try data.write(to: cooldownURL, options: .atomic)
+    }
+
+    private func readCooldown() throws -> CursorUsageCooldown {
+        let data = try Data(contentsOf: cooldownURL)
+        return try JSONDecoder.cursorUsageDecoder.decode(CursorUsageCooldown.self, from: data)
+    }
+
+    private static func defaultStorageURL(filename: String) -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appendingPathComponent("AIUsageDashboard", isDirectory: true)
+            .appendingPathComponent(filename)
     }
 
     private static let usageEventsCSVURL = URL(
@@ -69,6 +160,38 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     private static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private static let maxAttempts = 3
+    private static let defaultCooldownInterval: TimeInterval = 5 * 60
+    private static let maxCooldownInterval: TimeInterval = 60 * 60
+    private static let maxRetrySleepInterval: TimeInterval = 30
+    private static let httpDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter
+    }()
+}
+
+private struct CursorUsageCooldown: Codable {
+    let until: Date
+}
+
+private extension JSONEncoder {
+    static var cursorUsageEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }
+}
+
+private extension JSONDecoder {
+    static var cursorUsageDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
 }
 
 // MARK: - Token events (CSV)

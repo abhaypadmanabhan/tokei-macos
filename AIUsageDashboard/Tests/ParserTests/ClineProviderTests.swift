@@ -73,6 +73,7 @@ final class ClineProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.monthUsage?.totalTokens, 525)
         XCTAssertEqual(snapshot.lifetimeUsage?.totalTokens, 525)
         XCTAssertEqual(snapshot.dailyTotals?.values.reduce(0, +), 525)
+        XCTAssertEqual(snapshot.hourlyTotals?.values.reduce(0, +), 525)
         XCTAssertEqual(snapshot.costUsage?.amount ?? -1, 0.03, accuracy: 0.0001)
         XCTAssertEqual(snapshot.costUsage?.currency, "USD")
         XCTAssertEqual(snapshot.costUsage?.confidence, .localParsed)

@@ -279,6 +279,14 @@ enum CodexFixtures {
     """
   }
 
+  /// Purchasable credits reported as a REMAINING balance only (no `used_percent`).
+  /// Regression fixture: `balance` must land in `remaining`, never `used`.
+  static func purchasableCreditsBalanceOnly() -> String {
+    """
+    {"timestamp":"2026-07-06T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35},"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0,"total_tokens":35}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":10.0,"window_minutes":300,"resets_at":1783324383},"credits":{"balance":80,"limit":100},"plan_type":"pro"}}}
+    """
+  }
+
   private static func isoString(_ date: Date, utc: Calendar) -> String {
     let comps = utc.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
     return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",

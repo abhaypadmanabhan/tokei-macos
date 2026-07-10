@@ -94,46 +94,62 @@ final class CursorUsageSummaryTests: XCTestCase {
 }
 
 final class CursorUsageClientImplTests: XCTestCase {
+    private var tempDirectory: URL!
     private var session: URLSession!
-    private var client: CursorUsageClientImpl!
+    private var now: CursorDateBox!
+    private var sleeper: CursorRecordingSleeper!
 
     override func setUp() {
         super.setUp()
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockCursorURLProtocol.self]
         session = URLSession(configuration: configuration)
-        client = CursorUsageClientImpl(urlSession: session)
+        now = CursorDateBox(JSONLDateParsing.iso8601("2026-07-08T12:00:00Z")!)
+        sleeper = CursorRecordingSleeper()
     }
 
     override func tearDown() {
-        MockCursorURLProtocol.mockResponse = nil
-        MockCursorURLProtocol.lastRequest = nil
+        MockCursorURLProtocol.responses = []
+        MockCursorURLProtocol.requests = []
         session.invalidateAndCancel()
+        try? FileManager.default.removeItem(at: tempDirectory)
         super.tearDown()
     }
 
     func testCSVRequestUsesCookieAuthAndCorrectURL() async throws {
-        MockCursorURLProtocol.mockResponse = (Data(CursorFixtures.usageEventsCSV.utf8), 200)
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageEventsCSV.utf8), statusCode: 200)
+        ]
+        let client = makeClient()
 
         let csv = try await client.fetchUsageEventsCSV(cookie: "WorkosCursorSessionToken=user_1%3A%3Ajwt")
 
         XCTAssertTrue(csv.contains("claude-opus-4-8"))
+        let request = try XCTUnwrap(MockCursorURLProtocol.requests.last)
         XCTAssertEqual(
-            MockCursorURLProtocol.lastRequest?.url?.absoluteString,
+            request.url?.absoluteString,
             "https://cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens"
         )
         XCTAssertEqual(
-            MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Cookie"),
+            request.value(forHTTPHeaderField: "Cookie"),
             "WorkosCursorSessionToken=user_1%3A%3Ajwt"
         )
         XCTAssertEqual(
-            MockCursorURLProtocol.lastRequest?.value(forHTTPHeaderField: "Referer"),
+            request.value(forHTTPHeaderField: "Referer"),
             "https://www.cursor.com/settings"
         )
     }
 
-    func testNon2xxThrowsHTTPStatus() async {
-        MockCursorURLProtocol.mockResponse = (Data(), 403)
+    func testNon2xxThrowsHTTPStatusWithoutEnteringCooldown() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 403)
+        ]
+        let client = makeClient()
+
         do {
             _ = try await client.fetchUsageSummary(cookie: "c")
             XCTFail("expected throw")
@@ -142,30 +158,132 @@ final class CursorUsageClientImplTests: XCTestCase {
         } catch {
             XCTFail("unexpected error: \(error)")
         }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cooldownURL.path))
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1)
+
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: "c")
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 2)
+    }
+
+    func testRepeated429PersistsCooldownThenFastFailsUntilElapsed() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+        ]
+        let client = makeClient()
+
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected rateLimited")
+        } catch let CursorUsageError.rateLimited(retryAfter) {
+            XCTAssertEqual(retryAfter, 120)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 3)
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertEqual(recordedSleeps, [30, 30])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
+
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected cooldownActive")
+        } catch CursorUsageError.cooldownActive {
+            // Expected — no network while cooling down.
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 3)
+
+        now.value = now.value.addingTimeInterval(121)
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: "c")
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 4)
+    }
+
+    private var cooldownURL: URL {
+        tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
+    }
+
+    private func makeClient() -> CursorUsageClientImpl {
+        let nowBox = now!
+        let sleeper = sleeper!
+        return CursorUsageClientImpl(
+            urlSession: session,
+            cooldownURL: cooldownURL,
+            now: { nowBox.value },
+            sleep: { interval in await sleeper.sleep(interval) }
+        )
+    }
+}
+
+private actor CursorRecordingSleeper {
+    private var recorded: [TimeInterval] = []
+
+    func sleep(_ interval: TimeInterval) async {
+        recorded.append(interval)
+    }
+
+    func intervals() -> [TimeInterval] {
+        recorded
+    }
+}
+
+private final class CursorDateBox: @unchecked Sendable {
+    var value: Date
+
+    init(_ value: Date) {
+        self.value = value
     }
 }
 
 private final class MockCursorURLProtocol: URLProtocol {
-    static var mockResponse: (data: Data, statusCode: Int)?
-    static var lastRequest: URLRequest?
+    struct Response {
+        let data: Data
+        let statusCode: Int
+        let headers: [String: String]
+
+        init(data: Data, statusCode: Int, headers: [String: String] = [:]) {
+            self.data = data
+            self.statusCode = statusCode
+            self.headers = headers
+        }
+    }
+
+    static var responses: [Response] = []
+    static var requests: [URLRequest] = []
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lastRequest = request
-        guard let (data, statusCode) = Self.mockResponse else {
+        Self.requests.append(request)
+        guard !Self.responses.isEmpty else {
             client?.urlProtocol(self, didFailWithError: NSError(domain: "MockCursorURLProtocol", code: -1))
             return
         }
-        let response = HTTPURLResponse(
+        let response = Self.responses.removeFirst()
+        let httpResponse = HTTPURLResponse(
             url: request.url!,
-            statusCode: statusCode,
+            statusCode: response.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: nil
+            headerFields: response.headers
         )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response.data)
         client?.urlProtocolDidFinishLoading(self)
     }
 

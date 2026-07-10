@@ -37,7 +37,6 @@ struct ProviderVisibilityToggleRow: View {
                 .font(.mono(size: 12))
                 .foregroundColor(PadzyTheme.ink)
         }
-        .toggleStyle(.switch)
-        .tint(PadzyTheme.accent)
+        .toggleStyle(.padzy)
     }
 }

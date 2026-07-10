@@ -15,6 +15,12 @@ struct ProviderOverviewRow: View {
     let plan: String?
     /// The provider's tightest window, or `nil` when it exposes no live quota.
     let tightest: Utilization?
+    /// When true this is the emptiest plan worth routing new work to (#37) — the
+    /// row shows a subtle accent "ROUTE HERE →" chip. Off by default.
+    let isRouteTarget: Bool
+    /// Row inset. 28 standalone (original full-bleed list); smaller when the row
+    /// sits inside an already-padded `SectionCard`.
+    let horizontalPadding: CGFloat
     let onOpen: () -> Void
     let onConnect: () -> Void
 
@@ -47,6 +53,8 @@ struct ProviderOverviewRow: View {
         displayName: String,
         plan: String?,
         tightest: Utilization?,
+        isRouteTarget: Bool = false,
+        horizontalPadding: CGFloat = 28,
         onOpen: @escaping () -> Void,
         onConnect: @escaping () -> Void
     ) {
@@ -54,6 +62,8 @@ struct ProviderOverviewRow: View {
         self.displayName = displayName
         self.plan = plan
         self.tightest = tightest
+        self.isRouteTarget = isRouteTarget
+        self.horizontalPadding = horizontalPadding
         self.onOpen = onOpen
         self.onConnect = onConnect
         // Non-connectable providers have no flag; a sentinel key keeps @AppStorage
@@ -100,34 +110,70 @@ struct ProviderOverviewRow: View {
     private func liveRow(_ util: Utilization) -> some View {
         let percent = Int(round(util.usedPercent))
         let color = Self.thresholdColor(util.usedPercent)
+        // Linear-burn pace for the expected-pace notch + verdict (#36). `nil` when
+        // the window has no fixed span or no reset — then the notch/verdict degrade
+        // to "—" rather than inventing a position.
+        let pace = MaxxerMath.pace(
+            usedPercent: util.usedPercent,
+            windowType: util.window,
+            resetAt: util.resetAt,
+            now: Date()
+        )
 
         return HStack(spacing: 14) {
-            ProviderMark(providerID, size: 20, enabled: true)
+            ProviderBrandMark(providerID, size: 24)
 
             identity(windowLabel: windowLabel(util.window))
                 .layoutPriority(1)
 
-            fillBar(percent: util.usedPercent, color: color)
+            fillBar(percent: util.usedPercent, color: color, pace: pace)
                 .frame(minWidth: 48, maxWidth: .infinity)
 
-            HStack(spacing: 3) {
-                if Self.isCritical(util.usedPercent) {
-                    Text("!!")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.accent)
+            VStack(alignment: .trailing, spacing: 2) {
+                HStack(spacing: 3) {
+                    if Self.isCritical(util.usedPercent) {
+                        Text("!!")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.accent)
+                    }
+                    Text("\(percent)%")
+                        .font(.mono(size: 13))
+                        .monospacedDigit()
+                        .foregroundColor(color)
                 }
-                Text("\(percent)%")
-                    .font(.mono(size: 13))
-                    .monospacedDigit()
-                    .foregroundColor(color)
+                paceTag(pace)
             }
-            .frame(minWidth: 56, alignment: .trailing)
+            .frame(minWidth: 64, alignment: .trailing)
 
             countdown(util.resetAt)
                 .frame(width: 78, alignment: .trailing)
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 14)
+    }
+
+    // MARK: Pace (#36)
+
+    /// Positive-framed one-word pace verdict under the percentage. Accent only on
+    /// `.ahead` (the "burning past linear" state — the one worth a glance); the
+    /// calm verdicts stay muted, and an undefined pace reads as a muted "—".
+    @ViewBuilder
+    private func paceTag(_ pace: MaxxerMath.QuotaPace?) -> some View {
+        Text(Self.paceWord(pace))
+            .font(.mono(size: 9))
+            .tracking(0.4)
+            .foregroundColor(pace?.verdict == .ahead ? PadzyTheme.accent : PadzyTheme.muted)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+
+    static func paceWord(_ pace: MaxxerMath.QuotaPace?) -> String {
+        guard let pace else { return "—" }
+        switch pace.verdict {
+        case .ahead: return "AHEAD"
+        case .onPace: return "ON PACE"
+        case .headroom: return "HEADROOM"
+        }
     }
 
     // MARK: Unavailable
@@ -173,14 +219,15 @@ struct ProviderOverviewRow: View {
                     .truncationMode(.tail)
             }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 14)
     }
 
     // MARK: Pieces
 
-    /// Provider name + optional plan, above a window-type (or blank) label.
-    /// Both lines truncate so the row never forces the window wider.
+    /// Provider name + optional plan, above a window-type (or blank) label with an
+    /// optional route-here chip. Both lines truncate so the row never forces the
+    /// window wider.
     private func identity(windowLabel: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
@@ -199,18 +246,44 @@ struct ProviderOverviewRow: View {
                 }
             }
 
-            Text(windowLabel ?? "NO LIVE QUOTA")
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            HStack(spacing: 8) {
+                Text(windowLabel ?? "NO LIVE QUOTA")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if isRouteTarget {
+                    routeChip.layoutPriority(1)
+                }
+            }
         }
         .frame(maxWidth: 220, alignment: .leading)
     }
 
+    /// Subtle accent chip nudging new work toward the emptiest plan (#37). Accent
+    /// is used as an action hint (route here), paired with the "→" glyph so it
+    /// never rides on colour alone.
+    private var routeChip: some View {
+        Text("ROUTE HERE →")
+            .font(.mono(size: 9))
+            .tracking(0.4)
+            .foregroundColor(PadzyTheme.accent)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .overlay(Rectangle().stroke(PadzyTheme.accent.opacity(0.6), lineWidth: 1))
+            .fixedSize()
+            .accessibilityHidden(true)
+    }
+
     /// 4pt-tall hairline gauge: full-width muted track with a threshold-colored
     /// fill proportional to used percent. Radius ≤ 2, no shadow/gradient.
-    private func fillBar(percent: Double, color: Color) -> some View {
+    ///
+    /// When `pace` is defined, a 2px vertical notch marks the **expected linear-pace**
+    /// position (elapsed fraction of the window): fill left of the notch = on/under
+    /// pace, fill past it = ahead. The notch turns accent only when ahead (state
+    /// signal); otherwise it's a neutral ink hairline.
+    private func fillBar(percent: Double, color: Color, pace: MaxxerMath.QuotaPace?) -> some View {
         let clamped = max(0, min(100, percent))
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -220,6 +293,16 @@ struct ProviderOverviewRow: View {
                 RoundedRectangle(cornerRadius: 2)
                     .fill(color)
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 4)
+                if let pace {
+                    let x = geo.size.width * CGFloat(pace.elapsedFraction)
+                    Rectangle()
+                        .fill(pace.verdict == .ahead ? PadzyTheme.accent : PadzyTheme.ink.opacity(0.7))
+                        .frame(width: 2, height: 10)
+                        // Center the 2px tick on the pace position, clamped so it
+                        // never bleeds past either end of the track.
+                        .offset(x: min(max(0, x - 1), geo.size.width - 2))
+                        .accessibilityHidden(true)
+                }
             }
             .frame(maxHeight: .infinity, alignment: .center)
         }
@@ -281,7 +364,21 @@ struct ProviderOverviewRow: View {
     private func accessibilityLabel(_ util: Utilization) -> String {
         let pct = Int(round(util.usedPercent))
         let planPart = plan.map { ", \($0)" } ?? ""
-        return "\(displayName)\(planPart), \(windowLabel(util.window)) \(pct) percent used"
+        let pace = MaxxerMath.pace(
+            usedPercent: util.usedPercent,
+            windowType: util.window,
+            resetAt: util.resetAt,
+            now: Date()
+        )
+        let pacePart: String
+        switch pace?.verdict {
+        case .ahead: pacePart = ", ahead of pace"
+        case .onPace: pacePart = ", on pace"
+        case .headroom: pacePart = ", headroom to spare"
+        case nil: pacePart = ""
+        }
+        let routePart = isRouteTarget ? ", most headroom — route work here" : ""
+        return "\(displayName)\(planPart), \(windowLabel(util.window)) \(pct) percent used\(pacePart)\(routePart)"
     }
 }
 
