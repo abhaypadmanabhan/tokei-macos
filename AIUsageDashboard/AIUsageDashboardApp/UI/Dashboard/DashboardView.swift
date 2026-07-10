@@ -336,106 +336,161 @@ struct DashboardView: View {
             $0.level == .info && $0.message.range(of: "Plan:", options: [.caseInsensitive]) == nil
         }.map(\.message)
 
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                SectionLabel("Usage")
-                Spacer()
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 24)
+        let cappedWindows = (snapshot?.quotaWindows ?? []).filter {
+            $0.type != .credits && $0.confidence != .unavailable
+        }
 
-            sourceDisclosureLine(providerID: providerID, tier: .planOnly)
-                .padding(.horizontal, 28)
-                .padding(.top, 8)
-
+        return ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let plan {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("PLAN")
-                            .font(.mono(size: 11))
-                            .foregroundColor(PadzyTheme.muted)
-                        Text(plan.uppercased())
-                            .font(.display(size: 20, weight: .black))
-                            .foregroundColor(PadzyTheme.ink)
+                planHeader(providerID: providerID, snapshot: snapshot)
+
+                // Plan hero — plan name + honest per-model usage lines, with the
+                // credits balance as a circular gauge (redesign detail language).
+                SectionCard("Plan", trailing: {
+                    if let creditsWindow, creditsWindow.confidence != .unavailable {
+                        ConfidenceBadge(confidence: creditsWindow.confidence)
+                    }
+                }) {
+                    HStack(alignment: .top, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text((plan ?? "—").uppercased())
+                                .font(.display(size: 30, weight: .black))
+                                .foregroundColor(PadzyTheme.ink)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+
+                            if let acceptedLinesToday {
+                                StatCard(kicker: "Accepted lines today",
+                                         value: TokenFormatter.format(acceptedLinesToday))
+                                    .frame(maxWidth: 220)
+                            }
+
+                            ForEach(usageInfoLines, id: \.self) { line in
+                                Text(line)
+                                    .font(.mono(size: 11))
+                                    .foregroundColor(PadzyTheme.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if let creditsWindow, let used = creditsWindow.used {
+                            CircularGauge(
+                                percent: creditsWindow.limit.map { $0 > 0 ? used / $0 * 100 : used } ?? used,
+                                label: "credits used",
+                                size: 96
+                            )
+                        }
                     }
                 }
 
-                if let acceptedLinesToday {
-                    breakdownItem("ACCEPTED LINES TODAY", acceptedLinesToday)
-                }
-
-                if let creditsWindow {
-                    quotaGaugeRow(creditsWindow)
-                }
-
+                // Quota — Antigravity's per-model weekly/5h groups, or any other
+                // capped window a provider emits. Wrapped in the redesign card shell.
                 if providerID == .antigravity {
-                    antigravityQuotaSection(snapshot)
-                } else {
-                    // Honest gauge for any other capped window a provider emits (e.g. a
-                    // Cursor model with a real `maxRequestUsage`). Uncapped accounts emit
-                    // no such window, so this renders nothing — matching "no fake gauge."
-                    let cappedWindows = (snapshot?.quotaWindows ?? []).filter {
-                        $0.type != .credits && $0.confidence != .unavailable
+                    SectionCard("Model Quota") {
+                        antigravityQuotaSection(snapshot)
                     }
-                    ForEach(cappedWindows) { window in
-                        quotaGaugeRow(window)
+                } else if !cappedWindows.isEmpty {
+                    SectionCard("Limits") {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(cappedWindows) { window in
+                                quotaGaugeRow(window)
+                            }
+                        }
                     }
                 }
 
-                ForEach(usageInfoLines, id: \.self) { line in
-                    Text(line.uppercased())
+                // Honest disclosure that token-level usage is genuinely unmeasured
+                // here — never a fake "0" hero. Plus the Cursor online opt-in.
+                SectionCard("Token Usage") {
+                    Text("Token-level usage isn't measured locally for \(snapshot?.displayName ?? providerID.rawValue). The plan and quota above are what Tokei can read honestly.")
                         .font(.mono(size: 11))
                         .foregroundColor(PadzyTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
-                }
 
-                Text("TOKEN USAGE UNAVAILABLE LOCALLY")
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-
-                if providerID == .cursor {
-                    Button(action: {
-                        section = .settings
-                        viewModel.showingSettings = true
-                    }) {
-                        Text("ENABLE ONLINE IN SETTINGS")
-                            .font(.mono(size: 12))
-                            .foregroundColor(PadzyTheme.ground)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(PadzyTheme.accent)
+                    if providerID == .cursor {
+                        Button(action: {
+                            section = .settings
+                            viewModel.showingSettings = true
+                        }) {
+                            Text("ENABLE ONLINE IN SETTINGS")
+                                .font(.mono(size: 12))
+                                .foregroundColor(PadzyTheme.ground)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                                        .fill(PadzyTheme.accent)
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(PadzyTheme.ground)
+    }
 
-            Spacer(minLength: 16)
+    /// Plan-only header, mirroring the full-detail header (brand mark · name ·
+    /// PLAN ONLY status pill · watching path · last sync) so plan-only providers
+    /// read as first-class in the redesign, not a downgraded pane.
+    private func planHeader(providerID: ProviderID, snapshot: ProviderSnapshot?) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            ProviderBrandMark(providerID, size: 38)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 10) {
+                    Text((snapshot?.displayName ?? providerID.rawValue).uppercased())
+                        .font(.display(size: 20, weight: .black))
+                        .foregroundColor(PadzyTheme.ink)
+                        .lineLimit(1)
+                    planStatusPill
+                }
+                Text("WATCHING \(ProviderMetadata.localPaths(for: providerID).joined(separator: ", "))")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("LAST SYNC")
+                    .font(.mono(size: 9))
+                    .tracking(0.6)
+                    .foregroundColor(PadzyTheme.muted)
+                Text(viewModel.lastSyncedAt.map { Self.planSyncFormatter.string(from: $0) } ?? "NEVER")
+                    .font(.mono(size: 12))
+                    .monospacedDigit()
+                    .foregroundColor(PadzyTheme.ink)
+            }
         }
     }
 
-    private func breakdownItem(_ label: String, _ value: Int?) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-            Text(TokenFormatter.format(value))
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.ink)
-        }
+    /// Quiet hairline status pill — status, never action, so it never takes the accent.
+    private var planStatusPill: some View {
+        Text("PLAN ONLY")
+            .font(.mono(size: 9))
+            .tracking(0.6)
+            .foregroundColor(PadzyTheme.muted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .overlay(
+                RoundedRectangle(cornerRadius: PadzyRadius.pill, style: .continuous)
+                    .stroke(PadzyTheme.muted.opacity(0.4), lineWidth: 1)
+            )
+            .fixedSize()
     }
 
-    private func breakdownItem(_ label: String, _ valueStr: String) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-            Text(valueStr)
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.ink)
-        }
-    }
+    private static let planSyncFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 
     /// Antigravity's weekly + 5-hour windows, grouped by model group (`label`,
     /// e.g. "Gemini Models" / "Claude and GPT models") and rendered under a group
@@ -477,10 +532,6 @@ struct DashboardView: View {
         let groups = groupedAntigravityWindows(windows)
 
         VStack(alignment: .leading, spacing: 12) {
-            Text("MODEL QUOTA")
-                .font(.mono(size: 11))
-                .foregroundColor(PadzyTheme.muted)
-
             if !antigravityOnlineQuotaEnabled {
                 SurfaceStateView(
                     kind: .empty(headline: "Live quota disabled", hint: "Enable in Settings to see weekly and 5-hour model quota."),
