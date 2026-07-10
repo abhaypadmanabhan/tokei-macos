@@ -733,7 +733,7 @@ struct DashboardView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
-            Sparkline(values: series)
+            MetricSparkline(values: series)
                 .frame(height: 44)
                 .accessibilityHidden(true)
         }
