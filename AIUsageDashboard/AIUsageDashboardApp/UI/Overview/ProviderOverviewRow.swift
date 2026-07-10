@@ -18,6 +18,9 @@ struct ProviderOverviewRow: View {
     /// When true this is the emptiest plan worth routing new work to (#37) — the
     /// row shows a subtle accent "ROUTE HERE →" chip. Off by default.
     let isRouteTarget: Bool
+    /// Row inset. 28 standalone (original full-bleed list); smaller when the row
+    /// sits inside an already-padded `SectionCard`.
+    let horizontalPadding: CGFloat
     let onOpen: () -> Void
     let onConnect: () -> Void
 
@@ -51,6 +54,7 @@ struct ProviderOverviewRow: View {
         plan: String?,
         tightest: Utilization?,
         isRouteTarget: Bool = false,
+        horizontalPadding: CGFloat = 28,
         onOpen: @escaping () -> Void,
         onConnect: @escaping () -> Void
     ) {
@@ -59,6 +63,7 @@ struct ProviderOverviewRow: View {
         self.plan = plan
         self.tightest = tightest
         self.isRouteTarget = isRouteTarget
+        self.horizontalPadding = horizontalPadding
         self.onOpen = onOpen
         self.onConnect = onConnect
         // Non-connectable providers have no flag; a sentinel key keeps @AppStorage
@@ -116,7 +121,7 @@ struct ProviderOverviewRow: View {
         )
 
         return HStack(spacing: 14) {
-            ProviderMark(providerID, size: 20, enabled: true)
+            ProviderBrandMark(providerID, size: 24)
 
             identity(windowLabel: windowLabel(util.window))
                 .layoutPriority(1)
@@ -143,7 +148,7 @@ struct ProviderOverviewRow: View {
             countdown(util.resetAt)
                 .frame(width: 78, alignment: .trailing)
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 14)
     }
 
@@ -214,7 +219,7 @@ struct ProviderOverviewRow: View {
                     .truncationMode(.tail)
             }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 14)
     }
 

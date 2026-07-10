@@ -62,14 +62,6 @@ struct DashboardView: View {
         }
     }
 
-    /// Daily totals sorted by day, most recent last, limited to the trailing `days`.
-    private func dailySeries(days: Int?) -> [Int] {
-        guard let totals = selectedSnapshot?.dailyTotals, !totals.isEmpty else { return [] }
-        let sorted = totals.sorted { $0.key < $1.key }.map(\.value)
-        if let days, sorted.count > days { return Array(sorted.suffix(days)) }
-        return sorted
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -310,8 +302,12 @@ struct DashboardView: View {
             )
         } else if capabilityTier == .planOnly {
             capabilityPane
+        } else if let snapshot = selectedSnapshot {
+            // Full-metrics detail (redesign mockup 1). Wave 1 feeds the analytics
+            // widgets from the labeled sample feed; Wave 2 swaps in the §4 VM props.
+            ProviderDetailView(snapshot: snapshot, lastSyncedAt: viewModel.lastSyncedAt)
         } else {
-            usagePane
+            SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
         }
     }
 
@@ -409,92 +405,6 @@ struct DashboardView: View {
             .padding(.top, 20)
 
             Spacer(minLength: 16)
-        }
-    }
-
-    private var usagePane: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                SectionLabel("Usage")
-                Spacer()
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 24)
-
-            sourceDisclosureLine(providerID: viewModel.selectedProvider, tier: .fullMetrics)
-                .padding(.horizontal, 28)
-                .padding(.top, 8)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("TODAY")
-                    .font(.mono(size: 12))
-                    .tracking(12 * 0.08)
-                    .foregroundColor(PadzyTheme.muted)
-
-                Text(TokenFormatter.format(selectedSnapshot?.todayUsage.totalTokens))
-                    .font(.mono(size: 150))
-                    .foregroundColor(PadzyTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.25)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                usageBreakdown
-            }
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-
-            Spacer(minLength: 16)
-
-            // Quota Limits Section (renders only if has active quota windows)
-            if let activeWindows = selectedSnapshot?.quotaWindows.filter({ $0.confidence != .unavailable }), !activeWindows.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel("Limits")
-                        .padding(.horizontal, 28)
-                        .padding(.top, 16)
-
-                    VStack(spacing: 12) {
-                        ForEach(activeWindows) { window in
-                            quotaGaugeRow(window)
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.top, 8)
-                }
-                Spacer(minLength: 16)
-                HairlineDivider()
-            } else {
-                HairlineDivider()
-            }
-
-            HStack(alignment: .top, spacing: 0) {
-                metricBlock(title: "7D ROLLING",
-                            usage: selectedSnapshot?.weekUsage, series: dailySeries(days: 7))
-                verticalHairline
-                metricBlock(title: "30D ROLLING",
-                            usage: selectedSnapshot?.monthUsage, series: dailySeries(days: 30))
-                verticalHairline
-                metricBlock(title: "LIFETIME",
-                            usage: selectedSnapshot?.lifetimeUsage, series: dailySeries(days: nil), cost: selectedSnapshot?.costUsage)
-            }
-            .frame(height: 168)
-        }
-    }
-
-    private var usageBreakdown: some View {
-        HStack(spacing: 24) {
-            if let snapshot = selectedSnapshot {
-                breakdownItem("INPUT", snapshot.todayUsage.inputTokens)
-                breakdownItem("OUTPUT", snapshot.todayUsage.outputTokens)
-                breakdownItem("CACHE READ", snapshot.todayUsage.cacheReadTokens)
-                breakdownItem("CACHE WRITE", snapshot.todayUsage.cacheCreationTokens)
-                if let cost = snapshot.costUsage, let amount = cost.amount {
-                    breakdownItem("COST", String(format: "$%.2f", amount))
-                }
-                let confidence = snapshot.todayUsage.confidence
-                if confidence != .unavailable {
-                    ConfidenceBadge(confidence: confidence)
-                }
-            }
         }
     }
 
@@ -697,48 +607,6 @@ struct DashboardView: View {
             resets = ""
         }
         return "\(provider) \(typeName) window \(usedPercent)\(resets)"
-    }
-
-    private var verticalHairline: some View {
-        Rectangle()
-            .fill(PadzyTheme.muted.opacity(0.3))
-            .frame(width: 1)
-    }
-
-    private func metricBlock(title: String, usage: TokenUsage?, series: [Int], cost: CostUsage? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                Text(title)
-                    .font(.mono(size: 11))
-                    .tracking(11 * 0.08)
-                    .foregroundColor(PadzyTheme.muted)
-
-                Spacer()
-
-                if let cost = cost, let amount = cost.amount {
-                    HStack(spacing: 4) {
-                        Text("COST")
-                            .font(.mono(size: 9))
-                            .foregroundColor(PadzyTheme.muted)
-                        Text(String(format: "$%.2f", amount))
-                            .font(.mono(size: 11))
-                            .foregroundColor(PadzyTheme.ink)
-                    }
-                }
-            }
-
-            Text(TokenFormatter.format(usage?.totalTokens))
-                .font(.mono(size: 40))
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-
-            MetricSparkline(values: series)
-                .frame(height: 44)
-                .accessibilityHidden(true)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Status
