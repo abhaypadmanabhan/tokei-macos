@@ -344,25 +344,41 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 16) {
                 planHeader(providerID: providerID, snapshot: snapshot)
 
-                // Plan hero — plan name + honest per-model usage lines, with the
-                // credits balance as a circular gauge (redesign detail language).
+                // Plan hero — mirrors the full-detail TODAY hero: big display value,
+                // StatCard tiles for what IS measurable (credits, accepted lines),
+                // credits balance as the trailing circular gauge.
                 SectionCard("Plan", trailing: {
                     if let creditsWindow, creditsWindow.confidence != .unavailable {
                         ConfidenceBadge(confidence: creditsWindow.confidence)
                     }
                 }) {
-                    HStack(alignment: .top, spacing: 20) {
-                        VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 14) {
                             Text((plan ?? "—").uppercased())
-                                .font(.display(size: 30, weight: .black))
+                                .font(.display(size: 34, weight: .black))
                                 .foregroundColor(PadzyTheme.ink)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.5)
 
-                            if let acceptedLinesToday {
-                                StatCard(kicker: "Accepted lines today",
-                                         value: TokenFormatter.format(acceptedLinesToday))
-                                    .frame(maxWidth: 220)
+                            let creditsTile: (kicker: String, value: String)? = creditsWindow.flatMap { window in
+                                window.used.map { used in
+                                    let usedText = TokenFormatter.format(Int(round(used)))
+                                    if let limit = window.limit, limit > 0 {
+                                        return ("Credits used", "\(usedText) / \(TokenFormatter.format(Int(round(limit))))")
+                                    }
+                                    return ("Credits used", usedText)
+                                }
+                            }
+                            if creditsTile != nil || acceptedLinesToday != nil {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
+                                    if let creditsTile {
+                                        StatCard(kicker: creditsTile.kicker, value: creditsTile.value)
+                                    }
+                                    if let acceptedLinesToday {
+                                        StatCard(kicker: "Accepted lines today",
+                                                 value: TokenFormatter.format(acceptedLinesToday))
+                                    }
+                                }
                             }
 
                             ForEach(usageInfoLines, id: \.self) { line in
@@ -385,28 +401,40 @@ struct DashboardView: View {
                 }
 
                 // Quota — Antigravity's per-model weekly/5h groups, or any other
-                // capped window a provider emits. Wrapped in the redesign card shell.
+                // capped window a provider emits. Same bar language as the full
+                // detail's LIMITS card (threshold color, RESETS, tightest gauge).
                 if providerID == .antigravity {
-                    SectionCard("Model Quota") {
+                    SectionCard("Model quota") {
                         antigravityQuotaSection(snapshot)
                     }
                 } else if !cappedWindows.isEmpty {
                     SectionCard("Limits") {
-                        VStack(alignment: .leading, spacing: 14) {
-                            ForEach(cappedWindows) { window in
-                                quotaGaugeRow(window)
+                        HStack(alignment: .top, spacing: 24) {
+                            VStack(alignment: .leading, spacing: 16) {
+                                ForEach(cappedWindows) { window in
+                                    quotaGaugeRow(window)
+                                }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            tightestGauge(in: cappedWindows)
                         }
                     }
                 }
 
                 // Honest disclosure that token-level usage is genuinely unmeasured
                 // here — never a fake "0" hero. Plus the Cursor online opt-in.
-                SectionCard("Token Usage") {
-                    Text("Token-level usage isn't measured locally for \(snapshot?.displayName ?? providerID.rawValue). The plan and quota above are what Tokei can read honestly.")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                SectionCard("Token usage") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("NOT MEASURED LOCALLY")
+                            .font(.mono(size: 11))
+                            .tracking(11 * 0.08)
+                            .foregroundColor(PadzyTheme.ink)
+                        Text("Token-level usage isn't measured locally for \(snapshot?.displayName ?? providerID.rawValue). The plan and quota above are what Tokei can read honestly.")
+                            .font(.mono(size: 10))
+                            .foregroundColor(PadzyTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if providerID == .cursor {
                         Button(action: {
@@ -543,19 +571,25 @@ struct DashboardView: View {
                     compact: true
                 )
             } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(groups) { group in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(group.label.uppercased())
-                                .font(.display(size: 13, weight: .bold))
-                                .foregroundColor(PadzyTheme.ink)
-                            VStack(spacing: 8) {
-                                ForEach(group.windows) { window in
-                                    quotaGaugeRow(window)
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        ForEach(groups) { group in
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(group.label.uppercased())
+                                    .font(.mono(size: 10))
+                                    .tracking(10 * 0.08)
+                                    .foregroundColor(PadzyTheme.muted)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    ForEach(group.windows) { window in
+                                        quotaGaugeRow(window)
+                                    }
                                 }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    tightestGauge(in: windows)
                 }
             }
         }
@@ -569,56 +603,70 @@ struct DashboardView: View {
         }
     }
 
+    /// One quota window in the full-detail LIMITS bar language: threshold-colored
+    /// 6px rounded fill, RESETS countdown, `!!` non-color critical marker.
     private func quotaGaugeRow(_ window: QuotaWindow) -> some View {
-        let percent = window.used.map { Int(round($0)) } ?? 0
-        let isCritical = percent > 90
+        let percent = window.used ?? 0
+        let clamped = max(0, min(100, percent))
+        let color = ProviderOverviewRow.thresholdColor(percent)
+        let isCritical = ProviderOverviewRow.isCritical(percent)
 
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    let resetLabel = window.resetAt.map { " · RESETS \(formatCountdown(from: $0))" } ?? ""
-                    Text("\(quotaWindowTypeLabel(window.type))\(resetLabel)")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                    ConfidenceBadge(confidence: window.confidence)
-                }
-
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        // 1px hairline track
-                        Rectangle()
-                            .fill(PadzyTheme.muted.opacity(0.3))
-                            .frame(height: 1)
-
-                        // Flat accent fill proportional to used_percent
-                        if let used = window.used {
-                            let clamped = max(0, min(100, used))
-                            let fillWidth = geo.size.width * CGFloat(clamped / 100.0)
-                            Rectangle()
-                                .fill(PadzyTheme.accent)
-                                .frame(width: fillWidth, height: 1)
-                        }
-                    }
-                }
-                .frame(height: 1)
-            }
-
-            // Right-aligned mono 29% / 100
-            HStack(spacing: 4) {
-                if isCritical {
-                    Text("!!")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.accent)
-                }
-                Text("\(percent)% / 100")
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(quotaWindowTypeLabel(window.type))
                     .font(.mono(size: 11))
-                    .foregroundColor(isCritical ? PadzyTheme.accent : PadzyTheme.ink)
+                    .foregroundColor(PadzyTheme.ink)
+                    .lineLimit(1)
+                ConfidenceBadge(confidence: window.confidence)
+                Spacer(minLength: 8)
+                if let resetAt = window.resetAt {
+                    Text("RESETS \(formatCountdown(from: resetAt))")
+                        .font(.mono(size: 10))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.muted)
+                }
+                HStack(spacing: 3) {
+                    if isCritical {
+                        Text("!!")
+                            .font(.mono(size: 11))
+                            .foregroundColor(PadzyTheme.accent)
+                    }
+                    Text("\(Int(round(percent)))%")
+                        .font(.mono(size: 12))
+                        .monospacedDigit()
+                        .foregroundColor(color)
+                }
             }
-            .monospacedDigit()
-            .frame(width: 80, alignment: .trailing)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(PadzyTheme.muted.opacity(0.25))
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(color)
+                        .frame(width: geo.size.width * CGFloat(clamped / 100.0))
+                }
+            }
+            .frame(height: 6)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabelForQuotaWindow(window))
+    }
+
+    /// Circular gauge of the single tightest window in a set — the same trailing
+    /// gauge the full detail's LIMITS card shows for the session window.
+    @ViewBuilder
+    private func tightestGauge(in windows: [QuotaWindow]) -> some View {
+        let tightest = windows
+            .filter { $0.used != nil }
+            .max { ($0.used ?? 0) < ($1.used ?? 0) }
+        if let tightest, let used = tightest.used {
+            CircularGauge(
+                percent: tightest.limit.map { $0 > 0 ? used / $0 * 100 : used } ?? used,
+                label: "of \(quotaWindowTypeLabel(tightest.type).lowercased()) limit",
+                size: 96
+            )
+        }
     }
 
     private func formatCountdown(from date: Date) -> String {
@@ -883,4 +931,47 @@ private func previewViewModel() -> DashboardViewModel {
 #Preview("Window · full 1440×900") {
     DashboardView().environmentObject(previewViewModel())
         .frame(width: 1440, height: 900)
+}
+
+#Preview("Plan-only · Antigravity") {
+    UserDefaults.standard.set(true, forKey: "antigravityOnlineQuotaEnabled")
+    let vm = previewViewModel()
+    let reset5h = Date().addingTimeInterval(3 * 3600 + 20 * 60)
+    let resetWeek = Date().addingTimeInterval(4 * 86_400 + 6 * 3600)
+    vm.snapshots.append(ProviderSnapshot(
+        providerID: .antigravity, displayName: "Antigravity", authStatus: .authenticated,
+        quotaWindows: [
+            QuotaWindow(providerID: .antigravity, type: .weekly, used: 46, limit: 100,
+                        resetAt: resetWeek, confidence: .providerReported, source: "preview",
+                        label: "Gemini Models", bucketKey: "ag_gemini_weekly"),
+            QuotaWindow(providerID: .antigravity, type: .fiveHour, used: 12, limit: 100,
+                        resetAt: reset5h, confidence: .providerReported, source: "preview",
+                        label: "Gemini Models", bucketKey: "ag_gemini_5h"),
+            QuotaWindow(providerID: .antigravity, type: .weekly, used: 91, limit: 100,
+                        resetAt: resetWeek, confidence: .providerReported, source: "preview",
+                        label: "Claude and GPT Models", bucketKey: "ag_claude_weekly"),
+            QuotaWindow(providerID: .antigravity, type: .fiveHour, used: 68, limit: 100,
+                        resetAt: reset5h, confidence: .providerReported, source: "preview",
+                        label: "Claude and GPT Models", bucketKey: "ag_claude_5h"),
+        ],
+        todayUsage: .unavailable, weekUsage: .unavailable,
+        warnings: [ProviderWarning(message: "Plan: Pro", level: .info)]
+    ))
+    vm.selectedProvider = .antigravity
+    return DashboardView().environmentObject(vm)
+        .frame(width: 1000, height: 800)
+}
+
+#Preview("Plan-only · Antigravity quota off/empty") {
+    UserDefaults.standard.set(false, forKey: "antigravityOnlineQuotaEnabled")
+    let vm = previewViewModel()
+    vm.snapshots.append(ProviderSnapshot(
+        providerID: .antigravity, displayName: "Antigravity", authStatus: .authenticated,
+        quotaWindows: [],
+        todayUsage: .unavailable, weekUsage: .unavailable,
+        warnings: [ProviderWarning(message: "Plan: Pro", level: .info)]
+    ))
+    vm.selectedProvider = .antigravity
+    return DashboardView().environmentObject(vm)
+        .frame(width: 900, height: 640)
 }
