@@ -194,8 +194,7 @@ struct SettingsPane: View {
                         .foregroundColor(PadzyTheme.muted)
                 }
             }
-            .toggleStyle(.switch)
-            .tint(PadzyTheme.accent)
+            .toggleStyle(.padzy)
 
             HairlineDivider()
 
@@ -326,8 +325,7 @@ struct SettingsPane: View {
                     .font(.mono(size: 11))
                     .foregroundColor(PadzyTheme.ink)
             }
-            .toggleStyle(.switch)
-            .tint(PadzyTheme.accent)
+            .toggleStyle(.padzy)
 
             Text("One switch backs both thresholds today (80% approaching, 95% exceeded).")
                 .font(.mono(size: 10))
