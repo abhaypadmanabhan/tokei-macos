@@ -24,7 +24,14 @@ struct ProviderCard: View {
                     .frame(width: 2)
             }
 
-            HStack {
+            HStack(spacing: 10) {
+                if isAvailable {
+                    ProviderBrandMark(providerID, size: 22)
+                } else {
+                    ProviderMark(providerID, size: 18, enabled: false)
+                        .frame(width: 22, height: 22)
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName.uppercased())
                         .font(.display(size: 13, weight: .bold))

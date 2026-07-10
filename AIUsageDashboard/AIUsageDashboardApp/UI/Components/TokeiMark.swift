@@ -46,31 +46,3 @@ struct TokeiMark: Shape {
         return image
     }()
 }
-
-/// Sparkline for daily token totals. Flat hairline when fewer than 2 points.
-struct Sparkline: View {
-    let values: [Int]
-
-    var body: some View {
-        GeometryReader { geo in
-            if values.count >= 2, let maxValue = values.max(), maxValue > 0 {
-                Path { path in
-                    let stepX = geo.size.width / CGFloat(values.count - 1)
-                    for (i, v) in values.enumerated() {
-                        let x = CGFloat(i) * stepX
-                        let y = geo.size.height * (1 - CGFloat(v) / CGFloat(maxValue) * 0.9)
-                        if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                        else { path.addLine(to: CGPoint(x: x, y: y)) }
-                    }
-                }
-                // Data trend, not a state — rendered in ink so the accent stays reserved.
-                .stroke(PadzyTheme.ink.opacity(0.55), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
-            } else {
-                Rectangle()
-                    .fill(PadzyTheme.muted.opacity(0.4))
-                    .frame(height: 1)
-                    .frame(maxHeight: .infinity, alignment: .center)
-            }
-        }
-    }
-}
