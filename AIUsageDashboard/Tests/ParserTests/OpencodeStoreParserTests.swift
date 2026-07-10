@@ -125,6 +125,30 @@ final class OpencodeStoreParserTests: XCTestCase {
         XCTAssertTrue(usage.warnings.isEmpty)
     }
 
+    func testBucketsHourlyTotalsWithinFourteenDayWindow() async throws {
+        let root = try makeRoot()
+        let hour = date("2026-01-22", hour: 5)
+        let sameHour = hour.addingTimeInterval(30 * 60)
+        let oldHour = date("2026-01-05", hour: 5)
+        try createOpencodeDatabase(at: root.appendingPathComponent("opencode.db"), rows: [
+            ("recent-a", "session-a", millis(hour), OpencodeFixtures.assistant(
+                id: "recent-a", createdMillis: millis(hour), input: 10, output: 0, cacheRead: 0, cacheWrite: 0
+            )),
+            ("recent-b", "session-a", millis(sameHour), OpencodeFixtures.assistant(
+                id: "recent-b", createdMillis: millis(sameHour), input: 20, output: 0, cacheRead: 0, cacheWrite: 0
+            )),
+            ("old", "session-a", millis(oldHour), OpencodeFixtures.assistant(
+                id: "old", createdMillis: millis(oldHour), input: 40, output: 0, cacheRead: 0, cacheWrite: 0
+            )),
+        ])
+
+        let usage = await makeParser().parse(rootDirectory: root)
+
+        XCTAssertEqual(usage.hourlyTotals?[hour], 30)
+        XCTAssertNil(usage.hourlyTotals?[oldHour])
+        XCTAssertEqual(usage.hourlyTotals?.values.reduce(0, +), 30)
+    }
+
     // MARK: - Helpers
 
     private func makeParser() -> OpencodeStoreParser {
@@ -145,8 +169,22 @@ final class OpencodeStoreParserTests: XCTestCase {
     }
 
     private func date(_ dayString: String) -> Date {
+        date(dayString, hour: 0)
+    }
+
+    private func date(_ dayString: String, hour: Int) -> Date {
         let parts = dayString.split(separator: "-").compactMap { Int($0) }
-        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))!
+        return calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: parts[0],
+            month: parts[1],
+            day: parts[2],
+            hour: hour
+        ))!
+    }
+
+    private func millis(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSince1970 * 1000)
     }
 
     private func createOpencodeDatabase(

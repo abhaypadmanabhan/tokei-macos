@@ -61,6 +61,7 @@ public actor CursorProvider: UsageProvider {
         var costUsage: CostUsage?
         var dailyTotals: [Date: Int]? = state.acceptedLinesByDate.isEmpty
             ? nil : state.acceptedLinesByDate
+        var hourlyTotals: [Date: Int]?
 
         if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
             switch await fetchOnlineUsage() {
@@ -72,6 +73,7 @@ public actor CursorProvider: UsageProvider {
                 lifetimeUsage = nil // the export may not span all history — don't claim lifetime.
                 costUsage = online.cost
                 if !online.dailyTotals.isEmpty { dailyTotals = online.dailyTotals }
+                hourlyTotals = online.hourlyTotals
                 if let summary = online.summary, let percent = summary.usedPercent {
                     quotaWindows = [QuotaWindow(
                         providerID: id,
@@ -110,7 +112,8 @@ public actor CursorProvider: UsageProvider {
             costUsage: costUsage,
             warnings: warnings,
             lastSyncedAt: Date(),
-            dailyTotals: dailyTotals
+            dailyTotals: dailyTotals,
+            hourlyTotals: hourlyTotals
         )
     }
 
@@ -128,6 +131,7 @@ public actor CursorProvider: UsageProvider {
         let month: TokenUsage
         let cost: CostUsage?
         let dailyTotals: [Date: Int]
+        let hourlyTotals: [Date: Int]?
         let summary: CursorUsageSummary?
     }
 
@@ -180,6 +184,7 @@ public actor CursorProvider: UsageProvider {
                     amount: totalCost, currency: "USD", confidence: .providerReported
                 ) : nil,
                 dailyTotals: windowed.dailyTotals,
+                hourlyTotals: windowed.hourlyTotals,
                 summary: summary
             ))
         } catch {
