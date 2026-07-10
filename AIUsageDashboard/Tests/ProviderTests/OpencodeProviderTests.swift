@@ -69,6 +69,7 @@ final class OpencodeProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.monthUsage?.totalTokens, 24_463)
         XCTAssertEqual(snapshot.lifetimeUsage?.totalTokens, 24_463)
         XCTAssertEqual(snapshot.dailyTotals?.values.reduce(0, +), 24_463)
+        XCTAssertEqual(snapshot.hourlyTotals?.values.reduce(0, +), 24_463)
         XCTAssertEqual(snapshot.costUsage?.amount ?? -1, 0.07, accuracy: 0.0001)
         XCTAssertEqual(snapshot.costUsage?.currency, "USD")
         XCTAssertEqual(snapshot.costUsage?.confidence, .providerReported)

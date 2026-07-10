@@ -43,6 +43,21 @@ final class ClineMessagesParserTests: XCTestCase {
         return utcCalendar.date(from: comps)!
     }
 
+    private func date(_ dayString: String, hour: Int) -> Date {
+        let parts = dayString.split(separator: "-").compactMap { Int($0) }
+        return utcCalendar.date(from: DateComponents(
+            timeZone: utcCalendar.timeZone,
+            year: parts[0],
+            month: parts[1],
+            day: parts[2],
+            hour: hour
+        ))!
+    }
+
+    private func millis(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSince1970 * 1000)
+    }
+
     private func makeParser(now: Date? = nil) -> ClineMessagesParser {
         let fixed = now ?? referenceNow()
         return ClineMessagesParser(calendar: utcCalendar, now: { fixed })
@@ -115,5 +130,26 @@ final class ClineMessagesParserTests: XCTestCase {
         XCTAssertEqual(usage.month.totalTokens, 60)
         XCTAssertEqual(usage.dailyTotals.values.reduce(0, +), 100)
         XCTAssertEqual(usage.totalCost, 0.004, accuracy: 0.0001)
+    }
+
+    func testBucketsHourlyTotalsWithinFourteenDayWindow() async {
+        let hour = date("2026-07-06", hour: 5)
+        let sameHour = hour.addingTimeInterval(30 * 60)
+        let oldHour = date("2026-06-20", hour: 5)
+        let sessionID = "1783325327533_hourly"
+        let content = """
+        {"version":1,"sessionId":"\(sessionID)","messages":[
+          {"id":"recent-a","role":"assistant","ts":\(millis(hour)),"metrics":{"inputTokens":10,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"cost":0.001}},
+          {"id":"recent-b","role":"assistant","ts":\(millis(sameHour)),"metrics":{"inputTokens":20,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"cost":0.001}},
+          {"id":"old","role":"assistant","ts":\(millis(oldHour)),"metrics":{"inputTokens":40,"outputTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0,"cost":0.001}}
+        ]}
+        """
+        let url = writeFixture(content, sessionID: sessionID)
+
+        let usage = await makeParser(now: referenceNow()).parse(logSources: [makeSource(url: url, sessionID: sessionID)])
+
+        XCTAssertEqual(usage.hourlyTotals?[hour], 30)
+        XCTAssertNil(usage.hourlyTotals?[oldHour])
+        XCTAssertEqual(usage.hourlyTotals?.values.reduce(0, +), 30)
     }
 }

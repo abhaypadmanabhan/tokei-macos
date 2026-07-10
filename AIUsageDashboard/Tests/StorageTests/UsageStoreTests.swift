@@ -50,6 +50,33 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.lifetimeUsage?.inputTokens, 1000)
     }
 
+    func testRoundTripPreservesHourlyTotals() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let hour = calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 7,
+            day: 10,
+            hour: 9
+        ))!
+        let snapshot = ProviderSnapshot(
+            providerID: .codex,
+            displayName: "Codex",
+            authStatus: .authenticated,
+            todayUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
+            weekUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
+            hourlyTotals: [hour: 42]
+        )
+
+        let store1 = UsageStore(directory: tempDirectory)
+        await store1.save(snapshot: snapshot)
+
+        let store2 = UsageStore(directory: tempDirectory)
+        let loaded = await store2.snapshot(providerID: .codex)
+        XCTAssertEqual(loaded?.hourlyTotals?[hour], 42)
+    }
+
     func testCorruptFileRecovery() async {
         let corruptURL = tempDirectory.appendingPathComponent("usage-store.json")
         try? "not valid json".write(to: corruptURL, atomically: true, encoding: .utf8)

@@ -27,6 +27,7 @@ extension ProviderSnapshot: Codable {
         case warnings
         case lastSyncedAt
         case dailyTotals
+        case hourlyTotals
     }
 
     public init(from decoder: Decoder) throws {
@@ -43,6 +44,7 @@ extension ProviderSnapshot: Codable {
         warnings = try container.decode([ProviderWarning].self, forKey: .warnings)
         lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt)
         dailyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .dailyTotals)
+        hourlyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .hourlyTotals)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -59,6 +61,7 @@ extension ProviderSnapshot: Codable {
         try container.encode(warnings, forKey: .warnings)
         try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
         try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
+        try container.encodeIfPresent(hourlyTotals, forKey: .hourlyTotals)
     }
 }
 

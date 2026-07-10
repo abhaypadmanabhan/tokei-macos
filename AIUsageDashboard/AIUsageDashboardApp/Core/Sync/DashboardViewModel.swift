@@ -15,12 +15,21 @@ public final class DashboardViewModel: ObservableObject {
     /// When true the dashboard's right pane shows the in-app Settings surface instead
     /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
     @Published public var showingSettings = false
+    @Published public var range: UsageRange = .sevenDay
 
     private let syncEngine: SyncEngine
+    private let calendar: Calendar
+    private let now: @Sendable () -> Date
     private var updatesTask: Task<Void, Never>?
 
-    public init(syncEngine: SyncEngine = .shared) {
+    public init(
+        syncEngine: SyncEngine = .shared,
+        calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
         self.syncEngine = syncEngine
+        self.calendar = calendar
+        self.now = now
     }
 
     deinit {
@@ -40,7 +49,7 @@ public final class DashboardViewModel: ObservableObject {
     public func beginAutoSync() {
         guard updatesTask == nil else { return }
         updatesTask = Task { [syncEngine, weak self] in
-            let stream = await syncEngine.updates
+            let stream = syncEngine.updates
             await syncEngine.startAutoSync()
             for await snapshots in stream {
                 guard let self else { return }
@@ -128,5 +137,120 @@ public final class DashboardViewModel: ObservableObject {
     public var aggregateUtilizationToday: Double? {
         aggregateUtilization?.usedPercent
     }
-}
 
+    // MARK: - Visual redesign analytics surface
+
+    public var overviewTrend: [(date: Date, tokens: Int)] {
+        UsageAnalytics.trend(
+            dailyTotals: overviewDailyTotals,
+            range: range,
+            calendar: calendar,
+            now: now()
+        )
+    }
+
+    public var providerSplit: [(provider: ProviderID, tokens: Int)] {
+        UsageAnalytics.providerSplit(
+            snapshots: snapshots,
+            range: range,
+            calendar: calendar,
+            now: now(),
+            hiddenProviders: hiddenProviders
+        )
+    }
+
+    public var overviewDelta: Double? {
+        let dailyTotals = overviewDailyTotals
+        let current = UsageAnalytics.total(dailyTotals: dailyTotals, range: range, calendar: calendar, now: now())
+        let previous = UsageAnalytics.previousTotal(
+            dailyTotals: dailyTotals,
+            range: range,
+            calendar: calendar,
+            now: now()
+        )
+        return UsageAnalytics.delta(current: current, previous: previous)
+    }
+
+    public var streak: (current: Int, longest: Int) {
+        UsageAnalytics.streak(dailyTotals: rangedOverviewDailyTotals, calendar: calendar, now: now())
+    }
+
+    public var bestDay: (date: Date, tokens: Int)? {
+        UsageAnalytics.bestDay(dailyTotals: rangedOverviewDailyTotals)
+    }
+
+    public var leastActiveDay: (date: Date, tokens: Int)? {
+        UsageAnalytics.leastActiveDay(dailyTotals: rangedOverviewDailyTotals)
+    }
+
+    public var dailyAverage: Int? {
+        UsageAnalytics.dailyAverage(dailyTotals: rangedOverviewDailyTotals)
+    }
+
+    public func trend(for id: ProviderID) -> [(date: Date, tokens: Int)] {
+        guard let dailyTotals = snapshot(for: id)?.dailyTotals else { return [] }
+        return UsageAnalytics.trend(dailyTotals: dailyTotals, range: range, calendar: calendar, now: now())
+    }
+
+    public func thisWeek(
+        for id: ProviderID
+    ) -> (peakDayWeekday: Int, peakDayTokens: Int, dailyAverage: Int, delta: Double?)? {
+        guard let dailyTotals = snapshot(for: id)?.dailyTotals else { return nil }
+        let current = UsageAnalytics.filteredDailyTotals(
+            dailyTotals,
+            range: .days(7),
+            calendar: calendar,
+            now: now()
+        )
+        guard let peak = UsageAnalytics.peakDay(dailyTotals: current, calendar: calendar),
+              let average = UsageAnalytics.dailyAverage(dailyTotals: current) else {
+            return nil
+        }
+        let currentTotal = current.values.reduce(0, +)
+        let previousTotal = UsageAnalytics.previousTotal(
+            dailyTotals: dailyTotals,
+            range: .sevenDay,
+            calendar: calendar,
+            now: now()
+        )
+        return (
+            peakDayWeekday: peak.weekday,
+            peakDayTokens: peak.tokens,
+            dailyAverage: average,
+            delta: UsageAnalytics.delta(current: currentTotal, previous: previousTotal)
+        )
+    }
+
+    public func heatmap(for id: ProviderID) -> [[Int?]]? {
+        guard let hourlyTotals = snapshot(for: id)?.hourlyTotals else { return nil }
+        return UsageAnalytics.heatmapMatrix(hourlyTotals: hourlyTotals, calendar: calendar)
+    }
+
+    public func peakHour(for id: ProviderID) -> (hour: Int, tokens: Int)? {
+        guard let hourlyTotals = snapshot(for: id)?.hourlyTotals else { return nil }
+        return UsageAnalytics.peakHour(hourlyTotals: hourlyTotals, calendar: calendar)
+    }
+
+    private var overviewDailyTotals: [Date: Int] {
+        UsageAnalytics.aggregateDailyTotals(
+            snapshots: snapshots,
+            hiddenProviders: hiddenProviders,
+            calendar: calendar
+        )
+    }
+
+    private var rangedOverviewDailyTotals: [Date: Int] {
+        UsageAnalytics.filteredDailyTotals(
+            overviewDailyTotals,
+            range: UsageAnalytics.dailyRange(for: range),
+            calendar: calendar,
+            now: now()
+        )
+    }
+
+    private var hiddenProviders: Set<ProviderID> {
+        Set(ProviderID.allCases.filter { providerID in
+            UserDefaults.standard.bool(forKey: "provider_hidden_\(providerID.rawValue)")
+        })
+    }
+}

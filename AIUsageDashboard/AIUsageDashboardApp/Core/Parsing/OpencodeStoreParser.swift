@@ -14,6 +14,7 @@ public actor OpencodeStoreParser {
         public let month: TokenUsage
         public let lifetime: TokenUsage
         public let dailyTotals: [Date: Int]
+        public let hourlyTotals: [Date: Int]?
         public let totalCost: Double
         public let sourceKind: SourceKind
         public let warnings: [ProviderWarning]
@@ -125,6 +126,7 @@ public actor OpencodeStoreParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals,
             totalCost: totalCost,
             sourceKind: sourceKind,
             warnings: warnings
