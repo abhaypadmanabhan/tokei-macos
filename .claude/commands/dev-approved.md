@@ -82,10 +82,19 @@ per package; `dev`/`main` safety net). Keep the Patch Bible linked as the audit 
 
 ## Step 9 — Website
 
-If a product website exists in/near the repo, update the release/product copy (version,
-new-provider support, changelog highlight). If NO website exists, create
-`tasks/reports/website-todo-<date>.md` listing exactly what to update when one exists
-(version, supported providers, feature highlights, download link).
+If a product website exists in/near the repo, update the release/product copy. If NO website
+exists, create `tasks/reports/website-todo-<date>.md` listing exactly what to update when one
+exists (version, supported providers, feature highlights, download link).
+
+**ALWAYS bump the website version (do NOT skip — it silently lags).** The Tokei marketing site
+lives at `website/` (gitignored, deployed separately). Its single source of truth is
+`website/lib/site.ts`:
+- Set `version` → the release version (e.g. `0.4.0`). It drives every displayed `v${site.version}`.
+- Update `downloadUrl` — the filename is pinned per-version (`Tokei-<version>-arm64.dmg`); a stale
+  filename 404s even though the path uses `/releases/latest/download/`.
+- Also review `description` (supported-provider list) + add a changelog/feature highlight for the release.
+Verify no other `0.X.Y` strings linger: `rg -n '0\.[0-9]+\.[0-9]+' website/lib website/app website/components`.
+The website deploy is outward — make the edits, but leave the actual deploy to the user unless told otherwise.
 
 ## Step 10 — Do not merge to main
 
