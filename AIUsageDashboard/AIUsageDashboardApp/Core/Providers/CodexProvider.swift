@@ -8,16 +8,19 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let fileManager: FileManager
     private let parser: CodexJSONLParser
     private let codexDirectory: URL
+    private let pricing: PricingService
 
     public init(
         fileManager: FileManager = .default,
         parser: CodexJSONLParser = .init(),
-        codexDirectory: URL? = nil
+        codexDirectory: URL? = nil,
+        pricing: PricingService = .shared
     ) {
         self.fileManager = fileManager
         self.parser = parser
         self.codexDirectory = codexDirectory ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex", isDirectory: true)
+        self.pricing = pricing
     }
 
     public func detectAvailability() async -> ProviderAvailability {
@@ -67,17 +70,25 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         )
     }
 
-    /// Estimates lifetime cost from `CodexPricing`'s static table, keyed by the most
-    /// recently configured model found in the logs. No pricing row for that model
-    /// (including model slugs newer than the table) yields `.unavailable`, never a
-    /// guessed number.
+    /// Estimates lifetime cost via the resilient `PricingService` (curated seed +
+    /// live LiteLLM table), keyed by the most recently configured model found in the
+    /// logs. No public rate for that model (including slugs newer than the table)
+    /// yields `.unavailable`, never a guessed number. Costs for previously-known
+    /// models are unchanged: the curated seed carries the same OpenAI/Codex rows the
+    /// old static table did, and Codex tokens never include cache-creation tokens.
+    ///
+    /// The live table refresh is kicked off in the background (never awaited) so this
+    /// snapshot resolves immediately against the best data on hand and never blocks.
     ///
     /// Note: this prices the *entire* `lifetime` aggregate at that one model's rate,
     /// not just tokens generated under it — a user who switched models mid-history
     /// will see their whole total skew toward the current model's price.
     private func costUsage(for lifetime: TokenUsage, logs: [LogSource]) async -> CostUsage {
-        guard let model = await parser.detectLatestModel(logSources: logs),
-              let amount = CodexPricing.estimateCost(tokens: lifetime, model: model) else {
+        guard let model = await parser.detectLatestModel(logSources: logs) else {
+            return CostUsage(confidence: .unavailable)
+        }
+        Task { [pricing] in await pricing.refreshIfStale() }
+        guard let amount = await pricing.cost(model: model, tokens: lifetime) else {
             return CostUsage(confidence: .unavailable)
         }
         return CostUsage(amount: amount, currency: "USD", confidence: .estimated)
