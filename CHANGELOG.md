@@ -3,6 +3,50 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.5.0] — 2026-07-13 (release candidate)
+
+Prepared via `/dev-approved`. On `dev`, PR [#50](https://github.com/abhaypadmanabhan/tokei-macos/pull/50);
+**not yet merged to `main` or tagged.** Audit trail: `tasks/patch-bibles/2026-07-12.md`.
+Manual QA completed against the `dev` Debug build (menu-bar item verified rendering).
+
+### Added
+- **Gemini connector (#26).** New provider surfacing Google Gemini CLI quota. Reads
+  `~/.gemini/oauth_creds.json` **read-only**, refreshes via `oauth2.googleapis.com`, then
+  queries cloudcode-pa `loadCodeAssist` → `retrieveUserQuota` for per-window used%/reset.
+  `.providerReported` confidence; degrades to a clean empty state when gemini-cli is absent
+  or not signed in. TLS uses default validation; the OAuth token is never logged or placed
+  in a URL. Only the **public** gemini-cli client id is bundled — no client secret.
+- **Live model pricing (LiteLLM).** Replaced the frozen ~15-model static price snapshot with
+  a resilient `PricingService`: fresh <24h disk cache → live LiteLLM fetch (async, off the UI
+  path) → stale cache → bundled seed, resolving ~2.5k models. Costs for previously-known
+  models are unchanged. Built on the existing `Core/Pricing` engine/seed.
+
+### Fixed
+- **Menu-bar battery drain.** The status item held an always-on `Timer.publish(0.15s)` that
+  woke the main runloop ~6.6×/s for the app's whole lifetime. The spinner now ticks only
+  during an active sync (via a `.task(id:)` loop) — nothing at idle.
+- **Menu-bar item render regression.** A first cut of the battery fix put a `TimelineView`
+  inside the `MenuBarExtra` label, which SwiftUI snapshots into the status-item image — that
+  broke the render and the item disappeared. Restored via a `@State`-backed `Image`.
+
+### Changed
+- **Internal dedup (#45).** Extracted the duplicated SQLite `-wal`/`-shm` sidecar-copy loop
+  (3 DB parsers) into one `SQLiteSidecarCopy` helper, and the RFC-1123 Retry-After /
+  cooldown-persistence logic (2 network clients) into one `CooldownStore`. Cooldown-write
+  failures are now logged instead of silently dropped (was causing repeat 429s across
+  relaunch). Behavior-preserving.
+
+### Known limitations
+- **Gemini expired-token refresh** needs the gemini-cli OAuth client secret, which is
+  deliberately not bundled. A valid token works fully; an expired one degrades to a "run
+  `gemini` to refresh" nudge until re-authed. (Greptile P1 — accepted for this release.)
+- **First-sync live pricing:** a model that exists only in the live LiteLLM table (not the
+  bundled seed) may show cost unavailable on the very first sync that triggers the background
+  refresh; it resolves on the next sync. (Greptile P2 — accepted.)
+- **Gemini live quota schema** modeled on the 2026-07-06 cloudcode-pa capture; unverified
+  against a live authed machine. Degrades to empty cleanly if Google's shape differs.
+- `mark_gemini` menu asset not yet added — the Gemini row falls back to an SF Symbol.
+
 ## [Unreleased] — dev (release candidate 2026-07-06)
 
 Prepared via `/dev-approved`. On `dev`, **not yet merged to `main` or tagged.**
