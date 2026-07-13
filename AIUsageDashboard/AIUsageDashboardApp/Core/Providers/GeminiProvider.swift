@@ -52,6 +52,11 @@ public actor GeminiProvider: UsageProvider {
                 ))
             }
             return snapshot(authStatus: .authenticated, windows: windows, warnings: warnings)
+        } catch GeminiUsageError.notAuthenticated {
+            // Creds file present but empty/malformed/token-less: this is NOT signed in.
+            // authStatus must agree with the warning (Greptile P2 — was reporting
+            // .authenticated while the warning said "not signed in").
+            return snapshot(authStatus: .unauthenticated, windows: [], warnings: [notSignedInWarning])
         } catch {
             return snapshot(authStatus: .authenticated, windows: [], warnings: [warning(for: error)])
         }
