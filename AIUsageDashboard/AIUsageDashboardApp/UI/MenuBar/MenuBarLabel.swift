@@ -21,8 +21,8 @@ struct MenuBarLabel: View {
     @AppStorage(MenuBarDisplayMode.storageKey)
     private var rawMode = MenuBarDisplayMode.todayTokens.rawValue
 
-    @State private var spinnerPhase = 0
-    private let spinnerTimer = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
+    /// One spinner frame every 0.15 s — the cadence the ring was tuned at.
+    private static let spinnerTick: TimeInterval = 0.15
 
     private var mode: MenuBarDisplayMode {
         MenuBarDisplayMode(rawValue: rawMode) ?? .todayTokens
@@ -37,11 +37,31 @@ struct MenuBarLabel: View {
         Image(nsImage: TokeiStatusIcon.image(percent: tightest?.usedPercent))
     }
 
+    /// Which discrete spinner frame maps to a given instant. A pure function of
+    /// time, so the animated branch derives its frame from `TimelineView`'s clock
+    /// instead of a perpetual timer; `spinnerImage` normalizes the returned index.
+    static func spinnerPhase(at date: Date) -> Int {
+        Int(date.timeIntervalSinceReferenceDate / spinnerTick)
+    }
+
     @ViewBuilder
     private var syncSpinner: some View {
         if viewModel.isLoading {
-            Image(nsImage: TokeiStatusIcon.spinnerImage(phase: reduceMotion ? 0 : spinnerPhase))
-                .accessibilityLabel("Syncing")
+            if reduceMotion {
+                // Reduce Motion: a single static frame, and — crucially — no
+                // ticking source is created at all.
+                Image(nsImage: TokeiStatusIcon.spinnerImage(phase: 0))
+                    .accessibilityLabel("Syncing")
+            } else {
+                // The tick lives ONLY inside this branch. TimelineView schedules
+                // redraws while it is in the view tree; the moment the sync ends
+                // (`isLoading` false) the spinner — and its schedule — are gone, so
+                // nothing wakes the main runloop at idle.
+                TimelineView(.periodic(from: .now, by: Self.spinnerTick)) { context in
+                    Image(nsImage: TokeiStatusIcon.spinnerImage(phase: Self.spinnerPhase(at: context.date)))
+                        .accessibilityLabel("Syncing")
+                }
+            }
         }
     }
 
@@ -68,10 +88,6 @@ struct MenuBarLabel: View {
             }
 
             syncSpinner
-        }
-        .onReceive(spinnerTimer) { _ in
-            guard viewModel.isLoading, !reduceMotion else { return }
-            spinnerPhase = (spinnerPhase + 1) % TokeiStatusIcon.spinnerPhases
         }
     }
 }
