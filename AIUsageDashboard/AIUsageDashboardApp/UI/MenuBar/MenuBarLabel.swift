@@ -24,6 +24,15 @@ struct MenuBarLabel: View {
     /// One spinner frame every 0.15 s — the cadence the ring was tuned at.
     private static let spinnerTick: TimeInterval = 0.15
 
+    /// Current spinner frame. Advanced by `spinnerLoop` ONLY while a sync is in
+    /// flight; a plain `Image` reads it. Deliberately NOT a `TimelineView`: this
+    /// view is a `MenuBarExtra` label, which SwiftUI snapshots into the status
+    /// item — a `TimelineView`'s self-driving clock breaks that render and the
+    /// item never appears. A `@State`-backed `Image` (the pattern shipped 0.4.0)
+    /// renders reliably; the async loop just gives us the battery win of no
+    /// ticking source at idle.
+    @State private var spinnerPhase = 0
+
     private var mode: MenuBarDisplayMode {
         MenuBarDisplayMode(rawValue: rawMode) ?? .todayTokens
     }
@@ -37,31 +46,24 @@ struct MenuBarLabel: View {
         Image(nsImage: TokeiStatusIcon.image(percent: tightest?.usedPercent))
     }
 
-    /// Which discrete spinner frame maps to a given instant. A pure function of
-    /// time, so the animated branch derives its frame from `TimelineView`'s clock
-    /// instead of a perpetual timer; `spinnerImage` normalizes the returned index.
-    static func spinnerPhase(at date: Date) -> Int {
-        Int(date.timeIntervalSinceReferenceDate / spinnerTick)
-    }
-
     @ViewBuilder
     private var syncSpinner: some View {
         if viewModel.isLoading {
-            if reduceMotion {
-                // Reduce Motion: a single static frame, and — crucially — no
-                // ticking source is created at all.
-                Image(nsImage: TokeiStatusIcon.spinnerImage(phase: 0))
-                    .accessibilityLabel("Syncing")
-            } else {
-                // The tick lives ONLY inside this branch. TimelineView schedules
-                // redraws while it is in the view tree; the moment the sync ends
-                // (`isLoading` false) the spinner — and its schedule — are gone, so
-                // nothing wakes the main runloop at idle.
-                TimelineView(.periodic(from: .now, by: Self.spinnerTick)) { context in
-                    Image(nsImage: TokeiStatusIcon.spinnerImage(phase: Self.spinnerPhase(at: context.date)))
-                        .accessibilityLabel("Syncing")
-                }
-            }
+            Image(nsImage: TokeiStatusIcon.spinnerImage(phase: reduceMotion ? 0 : spinnerPhase))
+                .accessibilityLabel("Syncing")
+        }
+    }
+
+    /// Ticks the spinner while `isLoading`, then stops. Bound via `.task(id:)` to
+    /// `isLoading`, so the loop is created when a sync starts and cancelled the
+    /// instant it ends — nothing wakes the main runloop at idle (the 0.4.0
+    /// `Timer.publish(…).autoconnect()` ran ~6.6×/s for the whole app lifetime).
+    private func spinnerLoop() async {
+        guard viewModel.isLoading, !reduceMotion else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(Self.spinnerTick * 1_000_000_000))
+            if Task.isCancelled { break }
+            spinnerPhase = (spinnerPhase + 1) % TokeiStatusIcon.spinnerPhases
         }
     }
 
@@ -88,6 +90,9 @@ struct MenuBarLabel: View {
             }
 
             syncSpinner
+        }
+        .task(id: viewModel.isLoading) {
+            await spinnerLoop()
         }
     }
 }
