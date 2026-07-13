@@ -73,3 +73,10 @@
   entitlements), do a 5-minute competitor/OSS prior-art scan BEFORE proposing fixes — reading a
   shipped solution beats reasoning one out. "Feels like a hack" is not a reason to exclude a
   candidate; evaluate against the actual trust/permission model.
+
+## 2026-07-12 — MenuBarExtra label must not contain a TimelineView
+
+- **Symptom:** dev build's menu-bar item vanished entirely (no mark, no value); process alive, no crash. Release 0.4.0 showed `▁▂▃▄ 9%` on the SAME machine → not menu-bar overflow, a dev regression.
+- **Root cause:** the battery-fix commit drove the sync spinner with `TimelineView(.periodic…)` placed INSIDE the `MenuBarExtra { } label:` view. SwiftUI snapshots a MenuBarExtra label into the status-item image; a `TimelineView`'s self-driving clock breaks that render and the item never appears (and doesn't recover after the initial `isLoading` sync).
+  - **Rule:** never put `TimelineView` (or other self-scheduling/animating views) in a `MenuBarExtra` label. Drive periodic label updates with a `@State` frame + plain `Image`, ticked by a `.task(id:)` async loop (created on demand, cancelled at idle → also no battery drain). The `@State`+`Image` path is what shipped 0.4.0 and renders reliably.
+- **Process rule:** a UI change that BUILDS is not verified. `xcodebuild build` PASSED and `/agents-done`'s build gate PASSED, yet the item was broken — build success ≠ visual render. Always LAUNCH a menu-bar/GUI change and screenshot the actual item. A/B against the last shipped build is the fastest way to separate a regression from an environment quirk (notch overflow, hider utilities).
