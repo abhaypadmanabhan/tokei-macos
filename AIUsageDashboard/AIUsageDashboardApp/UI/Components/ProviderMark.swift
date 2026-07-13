@@ -25,6 +25,7 @@ struct ProviderMark: View {
         case .antigravity: return "mark_antigravity"
         case .cline: return "mark_cline"
         case .opencode: return "mark_opencode"
+        case .gemini: return "mark_gemini"
         }
     }
 

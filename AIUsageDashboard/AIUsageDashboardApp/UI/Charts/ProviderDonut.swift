@@ -44,6 +44,7 @@ struct ProviderDonut: View {
         case .antigravity: return "Antigravity"
         case .cline: return "Cline"
         case .opencode: return "opencode"
+        case .gemini: return "Gemini"
         }
     }
 
