@@ -103,14 +103,7 @@ public actor CursorStateDBParser {
     }
 
     private func copyDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
-
-        for suffix in ["-wal", "-shm"] {
-            let sourceSidecar = URL(fileURLWithPath: sourceURL.path + suffix)
-            guard fileManager.fileExists(atPath: sourceSidecar.path) else { continue }
-            let destinationSidecar = URL(fileURLWithPath: destinationURL.path + suffix)
-            try? fileManager.copyItem(at: sourceSidecar, to: destinationSidecar)
-        }
+        try SQLiteSidecarCopy.copyDatabase(from: sourceURL, to: destinationURL, using: fileManager)
     }
 
     private func parseCopiedDatabase(at url: URL) throws -> OfflineState {
