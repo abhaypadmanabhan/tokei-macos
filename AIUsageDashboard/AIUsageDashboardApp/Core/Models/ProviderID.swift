@@ -7,4 +7,5 @@ public enum ProviderID: String, CaseIterable, Sendable {
     case antigravity = "antigravity"
     case cline = "cline"
     case opencode = "opencode"
+    case gemini = "gemini"
 }
