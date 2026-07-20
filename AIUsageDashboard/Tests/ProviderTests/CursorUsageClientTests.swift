@@ -214,6 +214,105 @@ final class CursorUsageClientImplTests: XCTestCase {
         XCTAssertEqual(MockCursorURLProtocol.requests.count, 4)
     }
 
+    func testPerCookieCooldownIsolation() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+        ]
+        let client = makePerCookieClient()
+        let cookieA = "WorkosCursorSessionToken=user_a%3A%3Ajwt-a"
+        let cookieB = "WorkosCursorSessionToken=user_b%3A%3Ajwt-b"
+
+        do {
+            _ = try await client.fetchUsageSummary(cookie: cookieA)
+            XCTFail("expected rateLimited")
+        } catch CursorUsageError.rateLimited {
+            // Expected.
+        }
+
+        // Cookie A's request should now fast-fail with cooldownActive.
+        do {
+            _ = try await client.fetchUsageSummary(cookie: cookieA)
+            XCTFail("expected cooldownActive")
+        } catch CursorUsageError.cooldownActive {
+            // Expected.
+        }
+
+        // Cookie B should proceed because the cooldown is scoped to cookie A.
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: cookieB)
+        XCTAssertFalse(data.isEmpty)
+
+        // Verify the raw cookie never appears in any filename or file contents.
+        let files = try FileManager.default.contentsOfDirectory(at: tempDirectory, includingPropertiesForKeys: nil)
+        for file in files {
+            let name = file.lastPathComponent
+            XCTAssertFalse(name.contains("user_a") || name.contains("jwt-a"), "raw cookie must not be in filename")
+            if name.hasSuffix(".json"), let contents = try? String(contentsOf: file) {
+                XCTAssertFalse(contents.contains("user_a") || contents.contains("jwt-a"), "raw cookie must not be in file contents")
+            }
+        }
+
+        // After expiry, cookie A works again.
+        now.value = now.value.addingTimeInterval(121)
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let dataA = try await client.fetchUsageSummary(cookie: cookieA)
+        XCTAssertFalse(dataA.isEmpty)
+    }
+
+    func testLegacyGlobalCooldownIsHonoredForRemainingDuration() async throws {
+        // Simulate an old global cooldown file written before per-cookie scoping.
+        let legacyURL = tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
+        let legacyUntil = now.value.addingTimeInterval(120)
+        let legacyData = try CooldownStore(cooldownURL: legacyURL, now: { self.now.value })
+            .encodedCooldown(CooldownStore.Cooldown(until: legacyUntil))
+        try legacyData.write(to: legacyURL, options: .atomic)
+
+        let client = makePerCookieClient()
+        let cookieA = "WorkosCursorSessionToken=user_a%3A%3Ajwt-a"
+
+        // Any cookie should be gated by the legacy cooldown until it expires.
+        do {
+            _ = try await client.fetchUsageSummary(cookie: cookieA)
+            XCTFail("expected cooldownActive")
+        } catch CursorUsageError.cooldownActive {
+            // Expected.
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
+
+        // Once elapsed, the legacy file is cleaned up and requests proceed.
+        now.value = now.value.addingTimeInterval(121)
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: cookieA)
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path), "expired legacy cooldown must be removed")
+    }
+
+    func testExpiredLegacyGlobalCooldownIsCleanedUpOnFirstCheck() async throws {
+        let legacyURL = tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
+        let legacyUntil = now.value.addingTimeInterval(-1)
+        let legacyData = try CooldownStore(cooldownURL: legacyURL, now: { self.now.value })
+            .encodedCooldown(CooldownStore.Cooldown(until: legacyUntil))
+        try legacyData.write(to: legacyURL, options: .atomic)
+
+        let client = makePerCookieClient()
+        let cookieA = "WorkosCursorSessionToken=user_a%3A%3Ajwt-a"
+
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: cookieA)
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path), "expired legacy cooldown must be removed")
+    }
+
     private var cooldownURL: URL {
         tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
     }
@@ -224,6 +323,18 @@ final class CursorUsageClientImplTests: XCTestCase {
         return CursorUsageClientImpl(
             urlSession: session,
             cooldownURL: cooldownURL,
+            now: { nowBox.value },
+            sleep: { interval in await sleeper.sleep(interval) }
+        )
+    }
+
+    private func makePerCookieClient() -> CursorUsageClientImpl {
+        let nowBox = now!
+        let sleeper = sleeper!
+        return CursorUsageClientImpl(
+            urlSession: session,
+            explicitCooldownURL: nil,
+            storageDirectory: tempDirectory,
             now: { nowBox.value },
             sleep: { interval in await sleeper.sleep(interval) }
         )

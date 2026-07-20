@@ -91,6 +91,65 @@ final class QuotaSeriesStoreTests: XCTestCase {
         XCTAssertEqual(samples.map(\.usedPercent), [30, 40, 50])
     }
 
+    func testPerSeriesRetentionDoesNotLetNoisySeriesEvictAnother() async {
+        let clock = TestClock(isoDate("2026-07-09T12:00:00Z"))
+        let store = QuotaSeriesStore(
+            now: clock.now,
+            directory: tempDirectory,
+            retentionLimit: 100,
+            perSeriesRetentionLimit: 5
+        )
+
+        // Slow series: 3 samples interleaved across the run.
+        let slowBucket = "slow-weekly"
+        let slowTimes = [0, 120, 240]
+        // Fast series: 10 samples, one every 10 seconds.
+        for fastTick in 0..<10 {
+            clock.set(isoDate("2026-07-09T12:00:00Z").addingTimeInterval(TimeInterval(fastTick * 10)))
+            if fastTick < slowTimes.count {
+                let slowTick = slowTimes[fastTick]
+                clock.set(isoDate("2026-07-09T12:00:00Z").addingTimeInterval(TimeInterval(slowTick)))
+                await store.append(from: [snapshot(windows: [
+                    window(.weekly, providerID: .codex, used: 10 + Double(slowTick), limit: 100, sampledBucket: slowBucket),
+                    window(.weekly, providerID: .codex, used: Double(fastTick), limit: 100, sampledBucket: "fast-weekly")
+                ])])
+            } else {
+                await store.append(from: [snapshot(windows: [
+                    window(.weekly, providerID: .codex, used: Double(fastTick), limit: 100, sampledBucket: "fast-weekly")
+                ])])
+            }
+        }
+
+        let slowSamples = await store.samples(for: .codex, windowType: .weekly, since: nil)
+            .filter { $0.bucketKey == slowBucket }
+        XCTAssertEqual(slowSamples.count, 3, "slow series rows must survive the fast series")
+
+        let fastSamples = await store.samples(for: .codex, windowType: .weekly, since: nil)
+            .filter { $0.bucketKey == "fast-weekly" }
+        XCTAssertEqual(fastSamples.count, 5, "fast series must be capped at perSeriesRetentionLimit")
+    }
+
+    func testPerSeriesRetentionRoundTripPreservesCaps() async throws {
+        let clock = TestClock(isoDate("2026-07-09T12:00:00Z"))
+        let store = QuotaSeriesStore(
+            now: clock.now,
+            directory: tempDirectory,
+            retentionLimit: 100,
+            perSeriesRetentionLimit: 3
+        )
+
+        for tick in 0..<5 {
+            clock.set(isoDate("2026-07-09T12:00:00Z").addingTimeInterval(TimeInterval(tick * 10)))
+            await store.append(from: [snapshot(windows: [
+                window(.weekly, providerID: .codex, used: Double(tick), limit: 100, sampledBucket: "codex-weekly")
+            ])])
+        }
+
+        let reloaded = QuotaSeriesStore(directory: tempDirectory, retentionLimit: 100, perSeriesRetentionLimit: 3)
+        let samples = await reloaded.samples(for: .codex, windowType: .weekly, since: nil)
+        XCTAssertEqual(samples.map(\.used), [2, 3, 4])
+    }
+
     func testAtomicWriteSurvivesLeftoverTempFile() async throws {
         let fileURL = tempDirectory.appendingPathComponent("quota-series.json")
         let tempURL = tempDirectory.appendingPathComponent(".quota-series.json.crash.tmp")
