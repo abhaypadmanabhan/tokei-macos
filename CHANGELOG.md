@@ -3,6 +3,29 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [Unreleased] — on `dev` (2026-07-19 wave)
+
+Audit trail: `tasks/patch-bibles/2026-07-19.md`. Awaiting manual QA (`/dev-approved`).
+
+### Added
+- **Value pane (#23).** "Am I using the tokens I pay for" — headline plan-value multiple
+  (API-equivalent USD ÷ configured monthly plan cost) with Maxxer tier (idle / warming /
+  break-even / maxxing / goblin mode), dense per-agent table (plan $, API-equiv $,
+  multiple, confidence), real empty/loading/error states. Totals are paired-only: a
+  provider without a configured plan cost never inflates the headline multiple.
+- **Plan costs in Settings (#23).** Per-provider monthly USD entry (blank = unset, never
+  $0), persisted to `maxxer.planCost.<providerID>`.
+- **Lifetime usage (#41).** "X tokens all-time" stat with confidence badge (reported
+  lifetime preferred, daily-totals floor as fallback) + fourth menu-bar display mode
+  showing all-time tokens.
+
+### Fixed
+- **QuotaSeriesStore retention now per-series (#48)** — a high-frequency series can no
+  longer evict another series' history (cap 2 000/series, global 20k backstop).
+- **Cursor cooldown scoped per account (#49)** — cooldown files keyed by SHA-256 hash of
+  the session cookie; a 429 on one account no longer gates another. Legacy global
+  cooldown honored for its remaining duration, then removed.
+
 ## [0.5.0] — 2026-07-13 (release candidate)
 
 Prepared via `/dev-approved`. On `dev`, PR [#50](https://github.com/abhaypadmanabhan/tokei-macos/pull/50);
