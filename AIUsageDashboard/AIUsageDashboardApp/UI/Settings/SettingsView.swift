@@ -21,6 +21,9 @@ struct SettingsPane: View {
     /// so a Rescan can immediately re-run the providers.
     @EnvironmentObject private var viewModel: DashboardViewModel
 
+    /// Per-provider monthly plan price, the input the value surface (#23) needs.
+    private let planCosts = MaxxerPlanCostStore()
+
     /// Routes to the Connections screen, where per-provider live-quota toggles live.
     let onOpenConnections: () -> Void
     /// Opens the `+` add-agent sheet.
@@ -40,6 +43,7 @@ struct SettingsPane: View {
                           alignment: .leading, spacing: 16) {
                     agentsCard
                     dataSourcesCard
+                    planCostsCard
                     limitsAlertsCard
                     appearanceCard
                     notificationsCard
@@ -184,7 +188,39 @@ struct SettingsPane: View {
             )
     }
 
-    // MARK: 3 · Limits & Alerts
+    // MARK: 3 · Plan costs
+
+    /// What the user actually pays per agent per month — the missing half of the
+    /// value equation (#23). Real, live, persisted; blank means "not set", which
+    /// is a different thing from "$0" and is never coerced into one.
+    private var planCostsCard: some View {
+        SectionCard("Plan costs") {
+            Text("What you pay each month, per agent. The Value pane weighs this against what the same tokens would cost at public API rates.")
+                .font(.mono(size: 10))
+                .foregroundColor(PadzyTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 8) {
+                ForEach(ProviderID.allCases, id: \.self) { providerID in
+                    PlanCostRow(
+                        providerID: providerID,
+                        displayName: viewModel.snapshot(for: providerID)?.displayName
+                            ?? providerID.rawValue.replacingOccurrences(of: "_", with: " "),
+                        store: planCosts
+                    )
+                }
+            }
+
+            HairlineDivider()
+
+            Text("Leave a field blank for agents you don't pay for — blank is unset, not $0. Amounts are USD and stay on this Mac.")
+                .font(.mono(size: 10))
+                .foregroundColor(PadzyTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: 4 · Limits & Alerts
 
     private var limitsAlertsCard: some View {
         SectionCard("Limits & Alerts") {
@@ -209,7 +245,7 @@ struct SettingsPane: View {
         }
     }
 
-    // MARK: 4 · Appearance
+    // MARK: 5 · Appearance
 
     private var appearanceCard: some View {
         SectionCard("Appearance") {
@@ -320,7 +356,7 @@ struct SettingsPane: View {
             .accessibilityHidden(true)
     }
 
-    // MARK: 5 · Notifications
+    // MARK: 6 · Notifications
 
     private var notificationsCard: some View {
         SectionCard("Notifications") {
@@ -344,7 +380,7 @@ struct SettingsPane: View {
         }
     }
 
-    // MARK: 6 · Advanced
+    // MARK: 7 · Advanced
 
     private var advancedCard: some View {
         SectionCard("Advanced") {
@@ -462,6 +498,95 @@ struct SettingsPane: View {
         )
         .opacity(0.7)
         .accessibilityLabel("\(title), coming soon")
+    }
+}
+
+/// One agent's monthly plan price. The app's first real text field, so it sets
+/// the pattern: hairline-bounded, mono numerals, trailing-aligned behind a fixed
+/// `$` sigil, and committed on blur/submit rather than per keystroke (so a
+/// half-typed "2" of "200" is never persisted).
+///
+/// Empty input clears the key outright — the value surface must be able to tell
+/// "user pays nothing here" apart from "user hasn't told us yet", and only `nil`
+/// says the latter. Unparseable input reverts to the last stored value instead
+/// of silently writing garbage or zero.
+private struct PlanCostRow: View {
+    let providerID: ProviderID
+    let displayName: String
+    let store: MaxxerPlanCostStore
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderMark(providerID, size: 16)
+                .frame(width: 24, height: 24)
+
+            Text(displayName.uppercased())
+                .font(.display(size: 11, weight: .bold))
+                .foregroundColor(PadzyTheme.ink)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 3) {
+                Text("$")
+                    .font(.mono(size: 11))
+                    .foregroundColor(text.isEmpty ? PadzyTheme.muted : PadzyTheme.ink)
+                TextField("—", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.mono(size: 11))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                    .foregroundColor(PadzyTheme.ink)
+                    .frame(width: 58)
+                    .focused($isFocused)
+                    .onSubmit { commit() }
+                    .accessibilityLabel("\(displayName) monthly plan cost in US dollars")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .overlay(
+                RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                    .stroke(isFocused ? PadzyTheme.accent : PadzyTheme.muted.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .onAppear { text = Self.fieldText(store.monthlyUSD(for: providerID.rawValue)) }
+        .onChange(of: isFocused) { _, focused in
+            if !focused { commit() }
+        }
+        // Section switches can tear the pane down without a focus change firing.
+        .onDisappear { commit() }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmed.isEmpty else {
+            store.setMonthlyUSD(nil, for: providerID.rawValue)
+            text = ""
+            return
+        }
+
+        let cleaned = trimmed
+            .replacingOccurrences(of: "$", with: "")
+            .replacingOccurrences(of: ",", with: "")
+
+        guard let value = Double(cleaned), value.isFinite, value >= 0 else {
+            text = Self.fieldText(store.monthlyUSD(for: providerID.rawValue))
+            return
+        }
+
+        store.setMonthlyUSD(value, for: providerID.rawValue)
+        text = Self.fieldText(value)
+    }
+
+    /// Plain two-decimal text — no grouping separators, because whatever this
+    /// renders must survive being read straight back by `commit()`.
+    private static func fieldText(_ value: Double?) -> String {
+        guard let value else { return "" }
+        return String(format: "%.2f", value)
     }
 }
 
