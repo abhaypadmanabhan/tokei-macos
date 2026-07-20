@@ -205,7 +205,7 @@ struct ValueView: View {
             // counts toward `totalAPIEquivalentUSD`). That inflates the headline, so
             // say so rather than letting a big number speak for itself.
             if hasUnpricedPlans {
-                Text("\(unpricedNames) \(unpricedCount == 1 ? "has" : "have") usage but no plan cost set, so the total multiple weighs their spend against only the plans you've priced. Add the missing prices for a true figure.")
+                Text("\(unpricedNames) \(unpricedCount == 1 ? "has" : "have") usage but no plan cost set, so \(unpricedCount == 1 ? "it's" : "they're") left out of the total multiple. Add the missing prices for the full picture.")
                     .font(.mono(size: 10))
                     .foregroundColor(PadzyTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -220,8 +220,8 @@ struct ValueView: View {
         }
     }
 
-    /// Agents whose usage is priced into the API-equivalent total but whose plan
-    /// cost the user has not entered — the reason the total multiple reads high.
+    /// Agents with priced usage but no user-entered plan cost — excluded from
+    /// the totals (paired-only), so the headline understates their spend.
     private var unpricedRows: [Row] {
         rows.filter { $0.value.apiEquivalentUSD != nil && $0.value.planMonthlyUSD == nil }
     }

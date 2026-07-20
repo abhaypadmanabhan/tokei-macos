@@ -68,10 +68,36 @@ final class MaxxerValueEngineTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(provider.apiEquivalentUSD), 3.00, accuracy: 0.000_001)
         XCTAssertNil(provider.planMonthlyUSD)
         XCTAssertNil(provider.valueMultiple)
-        XCTAssertEqual(try XCTUnwrap(scorecard.totalAPIEquivalentUSD), 3.00, accuracy: 0.000_001)
+        // Integration decision 2026-07-19 (Bible §8 WP-2 risk 1): totals only
+        // cover providers with BOTH api-equivalent and plan cost known, so an
+        // unplanned provider contributes to no total at all.
+        XCTAssertNil(scorecard.totalAPIEquivalentUSD)
         XCTAssertNil(scorecard.totalPlanUSD)
         XCTAssertNil(scorecard.totalValueMultiple)
         XCTAssertNil(scorecard.tier)
+    }
+
+    func testUnplannedProviderExcludedFromAllTotalsButListed() throws {
+        planCosts.setMonthlyUSD(1.50, for: ProviderID.claudeCode.rawValue)
+
+        let scorecard = MaxxerValueEngine.scorecard(
+            snapshots: [
+                snapshot(.claudeCode, monthUsage: tokens(input: 1_000_000)),
+                snapshot(.codex, monthUsage: tokens(input: 2_000_000)), // priced, no plan
+            ],
+            planCosts: planCosts,
+            now: now
+        )
+
+        let codex = try XCTUnwrap(scorecard.providers.first { $0.providerID == "codex" })
+        XCTAssertNotNil(codex.apiEquivalentUSD)
+        XCTAssertNil(codex.planMonthlyUSD)
+        XCTAssertNil(codex.valueMultiple)
+
+        XCTAssertEqual(try XCTUnwrap(scorecard.totalAPIEquivalentUSD), 3.00, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(scorecard.totalPlanUSD), 1.50, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(scorecard.totalValueMultiple), 2.00, accuracy: 0.000_001)
+        XCTAssertEqual(scorecard.tier, .maxxing)
     }
 
     func testAllUnavailableProvidersProduceEmptySafeScorecard() {

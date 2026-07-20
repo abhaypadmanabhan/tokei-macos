@@ -11,9 +11,14 @@ public enum MaxxerValueEngine {
             providerValue(for: snapshot, planCosts: planCosts, pricing: pricing, now: now)
         }
 
-        let pricedProviders = providers.filter { $0.apiEquivalentUSD != nil }
-        let totalAPIEquivalentUSD = sumOrNil(pricedProviders.compactMap(\.apiEquivalentUSD))
-        let totalPlanUSD = sumOrNil(pricedProviders.compactMap(\.planMonthlyUSD))
+        // Totals compare like with like: only providers where BOTH sides are
+        // known participate, so one priced-but-unplanned provider can't inflate
+        // the headline multiple (its usage still shows on its own row).
+        let pairedProviders = providers.filter {
+            $0.apiEquivalentUSD != nil && $0.planMonthlyUSD != nil
+        }
+        let totalAPIEquivalentUSD = sumOrNil(pairedProviders.compactMap(\.apiEquivalentUSD))
+        let totalPlanUSD = sumOrNil(pairedProviders.compactMap(\.planMonthlyUSD))
         let totalValueMultiple = totalAPIEquivalentUSD.flatMap { apiEquivalentUSD in
             totalPlanUSD.map { apiEquivalentUSD / $0 }
         }
