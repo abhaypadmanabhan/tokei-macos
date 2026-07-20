@@ -185,7 +185,8 @@ struct AddAgentSheet: View {
 }
 
 /// The `+` affordance itself — a square, hairline-bounded button. One shared look
-/// for the Overview header and the sidebar.
+/// for the blank-canvas call to action and the Connections header. (The chip
+/// strip's trailing `+` is its own compact chip, matched to the chip metrics.)
 struct AddAgentButton: View {
     var compact: Bool = false
     let action: () -> Void

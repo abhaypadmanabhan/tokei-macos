@@ -106,9 +106,9 @@ struct SettingsPane: View {
                 }
             }
 
-            comingSoonRow("DRAG TO REORDER SIDEBAR")
+            comingSoonRow("DRAG TO REORDER CHIPS")
 
-            Text("Hidden agents are skipped in the sidebar, menu bar, and keyboard navigation.")
+            Text("Hidden agents are skipped in the chip strip, menu bar, and keyboard navigation.")
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -425,7 +425,8 @@ struct SettingsPane: View {
 
     // MARK: Building blocks
 
-    /// A hairline-bounded text action, styled to match the sidebar entries.
+    /// A hairline-bounded text action, in the same grammar as the dashboard's
+    /// back and chip affordances.
     private func linkButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
