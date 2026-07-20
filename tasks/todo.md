@@ -25,9 +25,10 @@ Branch `patch/2026-07-19/ui-ia-consolidation`. Scope lock: `AIUsageDashboardApp/
 - [x] `PadzyMotion` tokens (settle/quick/toggle). Radii add window 10 / cell 4 / chip 4.
 - [x] `TokeiStatusIcon` accent now `NSColor(PadzyTheme.accent)`; heatmap ramp + areaGradient recoloured neutral; TokenFormatter → mockup fmt (nil→"—").
 
-## Phase 1 — Agent identity / logos  (1 commit)
-- [ ] Tinted glyph container (`glyphCss` equiv): rounded square, `tint@14%` bg, `tint@55%` border, tint text/mark.
-- [ ] Refine `ProviderMark`; ensure all 7 marks exist + tint per-agent. One toggle style (`PadzyToggle`) app-wide; retire native `.switch`.
+## Phase 1 — Agent identity / logos  (DONE — build green)
+- [x] Tinted glyph: `ProviderBrandMark(tint:)` + `.tinted(_:size:)` — tint@8% bg, tint@33% border, tinted mark, radius 3/4.
+- [x] `ProviderMark(tint:)` per-agent; 6 brand assets present, gemini → `sparkle` SF Symbol fallback (per-provider fallbacks, template-tinted).
+- [x] `PadzyToggle` → mockup pill (36×21, neutral off / accent on, white knob). Native `.switch` retire folded into P5 (only user = ConnectionRow, which P5 rebuilds).
 
 ## Phase 2 — Shell  (1–2 commits)
 - [ ] TabBar: plain `Overview / Value / Agents`, 2px tick, no kicker. Range chips only on Overview+usage. Gear → settings drawer.
