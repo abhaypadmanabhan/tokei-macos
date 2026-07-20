@@ -12,9 +12,19 @@ struct DashboardView: View {
     /// into `viewModel.showingSettings` so existing Core consumers stay in sync.
     @State private var section: AppSection = .overview
 
-    /// Drives the `+` add-agent sheet, shared by the Overview header button and the
-    /// sidebar `+ ADD AGENT` row.
+    /// The tab the content returns to when a drill-in is dismissed, and the pane
+    /// that stays rendered underneath one. Only ever written by a tab selection,
+    /// so drilling in and backing out is a round trip.
+    @State private var homeTab: DashboardTab = .overview
+
+    /// Drives the `+` add-agent sheet, shared by the chip strip's `+` and the
+    /// blank-canvas call to action.
     @State private var showingAddAgent = false
+
+    /// Read-only here — the VALUE tab pill needs the same scorecard the Value pane
+    /// renders. The pane's own data path is unchanged; this is a second reader of
+    /// the same pure function, not a second source of truth.
+    private let planCosts = MaxxerPlanCostStore()
 
     @State private var pulseOpacity: Double = 1.0
     @State private var countdownTick = Date()
@@ -40,8 +50,8 @@ struct DashboardView: View {
         ProviderCapabilityTier.classify(selectedSnapshot)
     }
 
-    /// First non-hidden provider in sidebar order — the row that up-arrow escapes
-    /// upward from (into Overview) and that down-arrow from Overview lands on.
+    /// First non-hidden provider in chip-strip order — the chip that down-arrow
+    /// from a tab drills into, and the one left-arrow stops at.
     private var firstVisibleProvider: ProviderID? {
         ProviderID.allCases.first { !ProviderVisibility.isHidden($0) }
     }
@@ -64,13 +74,28 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                sidebar
-                Rectangle()
-                    .fill(PadzyTheme.muted.opacity(0.3))
-                    .frame(width: 1)
-                rightPane
+            DashboardTabBar(
+                activeTab: section.tab,
+                stats: tabStats,
+                isSettingsActive: section == .settings,
+                showsRangeSelector: section.usesTimeRange,
+                range: $viewModel.range,
+                onSelect: { select(tab: $0) },
+                onOpenSettings: { openSettings() }
+            )
+            HairlineDivider()
+
+            if section.showsProviderChips {
+                ProviderChipStrip(
+                    selected: drilledInProvider,
+                    onSelect: { openProvider($0) },
+                    onAddAgent: { showingAddAgent = true },
+                    onRetry: { Task { await viewModel.refresh() } }
+                )
+                HairlineDivider()
             }
+
+            content
             statusStrip
         }
         .background(PadzyTheme.ground)
@@ -81,37 +106,34 @@ struct DashboardView: View {
                 .environmentObject(viewModel)
         }
         .focusable()
+        // Arrow semantics follow the new layout's axes: horizontal moves along
+        // whatever horizontal run you're in (the tab pills, or the chip strip once
+        // drilled in), vertical moves between the two rows — down enters the chip
+        // strip from a tab, up leaves any drill-in for the tab that owns it.
         .onMoveCommand { direction in
             switch direction {
-            case .up:
-                // Only meaningful from within the provider list: escape to Overview
-                // when already on the top provider, otherwise step up one row.
+            case .left:
                 if case .provider = section {
-                    if viewModel.selectedProvider == firstVisibleProvider {
-                        section = .overview
-                    } else {
-                        selectPreviousVisible()
-                        section = .provider(viewModel.selectedProvider)
-                    }
-                    viewModel.showingSettings = false
+                    selectPreviousVisible()
+                    openProvider(viewModel.selectedProvider)
+                } else if let tab = section.tab, let previous = tab.previous {
+                    select(tab: previous)
+                }
+            case .right:
+                if case .provider = section {
+                    selectNextVisible()
+                    openProvider(viewModel.selectedProvider)
+                } else if let tab = section.tab, let next = tab.next {
+                    select(tab: next)
                 }
             case .down:
-                switch section {
-                case .overview:
-                    // Enter the provider list at its top row.
-                    if let first = firstVisibleProvider {
-                        viewModel.selectedProvider = first
-                        section = .provider(first)
-                        viewModel.showingSettings = false
-                    }
-                case .provider:
-                    selectNextVisible()
-                    section = .provider(viewModel.selectedProvider)
-                    viewModel.showingSettings = false
-                default:
-                    break
+                // From a tab, drop into the chip strip at its first chip.
+                if section.tab != nil, let first = firstVisibleProvider {
+                    openProvider(first)
                 }
-            default:
+            case .up:
+                if section.isDrillIn { goBack() }
+            @unknown default:
                 break
             }
         }
@@ -138,111 +160,193 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: Providers
+    // MARK: Navigation
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            overviewSidebarRow
-            HairlineDivider()
-            valueSidebarRow
-            HairlineDivider()
-
-            HStack {
-                SectionLabel("Providers")
-                AddAgentButton(compact: true) { showingAddAgent = true }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-            HairlineDivider()
-
-            ForEach(ProviderID.allCases, id: \.self) { providerID in
-                SidebarProviderRow(providerID: providerID, section: $section)
-            }
-            Spacer(minLength: 0)
-            settingsSidebarRow
-        }
-        .frame(width: 230)
+    /// The provider whose chip is currently drilled into, or `nil` on a tab.
+    private var drilledInProvider: ProviderID? {
+        if case let .provider(providerID) = section { return providerID }
+        return nil
     }
 
-    /// Top sidebar entry that routes the right pane to the consolidated Overview.
-    /// Mirrors `settingsSidebarRow`'s 2px leading accent tick + surface fill on active.
-    private var overviewSidebarRow: some View {
-        let isActive = section == .overview
-        return Button(action: {
-            section = .overview
-            viewModel.showingSettings = false
-        }) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(isActive ? PadzyTheme.accent : Color.clear)
-                    .frame(width: 2)
-                Text("OVERVIEW")
-                    .font(.display(size: 13, weight: .bold))
-                    .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
-                Spacer(minLength: 0)
-            }
-            .background(isActive ? PadzyTheme.surface : Color.clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(.isButton)
+    private func select(tab: DashboardTab) {
+        homeTab = tab
+        navigate(to: tab.section)
+        viewModel.showingSettings = false
     }
 
-    /// Sidebar entry for the value surface (#23 / #41). Same active grammar as the
-    /// Overview row above it.
-    private var valueSidebarRow: some View {
-        let isActive = section == .value
-        return Button(action: {
-            section = .value
-            viewModel.showingSettings = false
-        }) {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(isActive ? PadzyTheme.accent : Color.clear)
-                    .frame(width: 2)
-                Text("VALUE")
-                    .font(.display(size: 13, weight: .bold))
-                    .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 14)
-                Spacer(minLength: 0)
-            }
-            .background(isActive ? PadzyTheme.surface : Color.clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(.isButton)
+    private func openProvider(_ providerID: ProviderID) {
+        viewModel.selectedProvider = providerID
+        navigate(to: .provider(providerID))
+        viewModel.showingSettings = false
     }
 
-    /// Bottom-pinned sidebar entry that swaps the right pane to the in-app Settings
-    /// surface. Mirrors ProviderCard's 2px leading accent tick + surface fill on active.
-    private var settingsSidebarRow: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HairlineDivider()
-            Button(action: {
-                section = .settings
-                viewModel.showingSettings = true
-            }) {
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(section == .settings ? PadzyTheme.accent : Color.clear)
-                        .frame(width: 2)
-                    Text("SETTINGS")
-                        .font(.display(size: 13, weight: .bold))
-                        .foregroundColor(section == .settings ? PadzyTheme.ink : PadzyTheme.muted)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                    Spacer(minLength: 0)
+    private func openSettings() {
+        navigate(to: .settings)
+        viewModel.showingSettings = true
+    }
+
+    private func openConnections() {
+        navigate(to: .connections)
+        viewModel.showingSettings = false
+    }
+
+    /// Dismiss any drill-in back to the tab that owns the content behind it.
+    private func goBack() {
+        navigate(to: homeTab.section)
+        viewModel.showingSettings = false
+    }
+
+    /// Single write point for `section`, so the drill-in transition is animated
+    /// in exactly one place — and skipped entirely under Reduce Motion, where the
+    /// pane swap happens instantly instead of sliding.
+    private func navigate(to destination: AppSection) {
+        if reduceMotion {
+            section = destination
+        } else {
+            withAnimation(.easeOut(duration: 0.18)) { section = destination }
+        }
+    }
+
+    // MARK: Content
+
+    /// The tab pane always stays mounted; a drill-in renders opaquely over it and
+    /// slides away on dismiss, which is what makes the chip strip read as a
+    /// selector rather than as navigation to somewhere else.
+    private var content: some View {
+        ZStack(alignment: .topLeading) {
+            tabPane
+            if section.isDrillIn {
+                VStack(spacing: 0) {
+                    backBar
+                    HairlineDivider()
+                    drillInPane
                 }
-                .background(section == .settings ? PadzyTheme.surface : Color.clear)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(PadzyTheme.ground)
+                .transition(
+                    reduceMotion
+                        ? .identity
+                        : .asymmetric(
+                            insertion: .move(edge: .trailing).combined(with: .opacity),
+                            removal: .opacity
+                        )
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipped()
+    }
+
+    @ViewBuilder
+    private var tabPane: some View {
+        switch homeTab {
+        case .overview:
+            OverviewView(
+                onOpen: { openProvider($0) },
+                onConnect: { openConnections() },
+                onAddAgent: { showingAddAgent = true }
+            )
+        case .value:
+            ValueView(onOpenPlanCosts: { openSettings() })
+        }
+    }
+
+    @ViewBuilder
+    private var drillInPane: some View {
+        switch section {
+        case .provider:
+            providerDetailPane
+        case .connections:
+            ConnectionsView()
+        case .settings:
+            SettingsPane(
+                onOpenConnections: { openConnections() },
+                onAddAgent: { showingAddAgent = true }
+            )
+        case .overview, .value:
+            EmptyView()
+        }
+    }
+
+    /// Back affordance for every drill-in: an explicit button (Esc also works)
+    /// plus a breadcrumb naming the tab the content will return to.
+    private var backBar: some View {
+        HStack(spacing: 12) {
+            Button(action: { goBack() }) {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("BACK")
+                        .font(.mono(size: 10))
+                        .tracking(0.5)
+                }
+                .foregroundColor(PadzyTheme.ink)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                        .stroke(PadzyTheme.muted.opacity(0.35), lineWidth: 1)
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityAddTraits(.isButton)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Back to \(homeTab.accessibilityName)")
+
+            Text(breadcrumb)
+                .font(.mono(size: 10))
+                .tracking(0.5)
+                .foregroundColor(PadzyTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+    }
+
+    private var breadcrumb: String {
+        let leaf: String
+        switch section {
+        case let .provider(providerID):
+            leaf = (viewModel.snapshot(for: providerID)?.displayName ?? providerID.rawValue)
+                .replacingOccurrences(of: "_", with: " ")
+        case .connections: leaf = "Connections"
+        case .settings: leaf = "Settings"
+        case .overview, .value: leaf = ""
+        }
+        return "\(homeTab.accessibilityName) / \(leaf)".uppercased()
+    }
+
+    // MARK: Tab stats
+
+    /// The live number each tab pill carries. Both are computed from the same
+    /// published snapshots the panes read — the pills are a readout of the panes,
+    /// never a second source of truth.
+    private var tabStats: [DashboardTab: DashboardTabBar.Stat] {
+        let visible = ProviderVisibility.visible(viewModel.snapshots)
+        let today = MaxxerMath.mergedTodayUsage(in: visible.filter {
+            viewModel.isAvailable($0.providerID)
+        })
+        let multiple = MaxxerValueEngine.scorecard(
+            snapshots: visible,
+            planCosts: planCosts,
+            now: Date()
+        ).totalValueMultiple
+
+        return [
+            .overview: DashboardTabBar.Stat(
+                value: today.totalTokens.map { TokenFormatter.format($0) } ?? "—",
+                caption: "today",
+                isKnown: today.totalTokens != nil
+            ),
+            .value: DashboardTabBar.Stat(
+                value: MaxxerMath.formatMultiple(multiple),
+                caption: "plan value",
+                isKnown: multiple != nil
+            ),
+        ]
     }
 
     // MARK: 02 / USAGE
@@ -277,43 +381,6 @@ struct DashboardView: View {
 
     /// Provider-detail surface: resolves to error → tailored empty (Claude not
     /// installed) → loading → generic empty → loaded, in that precedence.
-    @ViewBuilder
-    private var rightPane: some View {
-        switch section {
-        case .overview:
-            OverviewView(
-                onOpen: { providerID in
-                    section = .provider(providerID)
-                    viewModel.selectedProvider = providerID
-                    viewModel.showingSettings = false
-                },
-                onConnect: {
-                    section = .connections
-                    viewModel.showingSettings = false
-                },
-                onAddAgent: { showingAddAgent = true },
-                onOpenValue: {
-                    section = .value
-                    viewModel.showingSettings = false
-                }
-            )
-        case .value:
-            ValueView(onOpenPlanCosts: {
-                section = .settings
-                viewModel.showingSettings = true
-            })
-        case .connections:
-            ConnectionsView()
-        case .settings:
-            SettingsPane(onOpenConnections: {
-                section = .connections
-                viewModel.showingSettings = false
-            }, onAddAgent: { showingAddAgent = true })
-        case .provider:
-            providerDetailPane
-        }
-    }
-
     @ViewBuilder
     private var providerDetailPane: some View {
         if let errorMessage = viewModel.errorMessage {
@@ -484,10 +551,7 @@ struct DashboardView: View {
                     }
 
                     if providerID == .cursor {
-                        Button(action: {
-                            section = .settings
-                            viewModel.showingSettings = true
-                        }) {
+                        Button(action: { openSettings() }) {
                             Text("ENABLE ONLINE IN SETTINGS")
                                 .font(.mono(size: 12))
                                 .foregroundColor(PadzyTheme.ground)
@@ -891,57 +955,11 @@ struct DashboardView: View {
     }
 }
 
-/// One sidebar entry, gated by the per-provider hide toggle (Settings). Holds its
-/// own `@AppStorage` so hiding/showing a provider updates the sidebar instantly.
-private struct SidebarProviderRow: View {
-    let providerID: ProviderID
-    @Binding var section: AppSection
-    @EnvironmentObject private var viewModel: DashboardViewModel
-    @AppStorage private var isHidden: Bool
-
-    init(providerID: ProviderID, section: Binding<AppSection>) {
-        self.providerID = providerID
-        _section = section
-        _isHidden = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
-    }
-
-    var body: some View {
-        if !isHidden {
-            let isSelected = viewModel.selectedProvider == providerID && section == .provider(providerID)
-            let isAvailable = viewModel.isAvailable(providerID)
-            let snapshot = viewModel.snapshot(for: providerID)
-            let tier = ProviderCapabilityTier.classify(snapshot)
-
-            Button(action: {
-                if isAvailable {
-                    section = .provider(providerID)
-                    viewModel.selectedProvider = providerID
-                    viewModel.showingSettings = false
-                }
-            }) {
-                ProviderCard(
-                    providerID: providerID,
-                    displayName: snapshot?.displayName ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").uppercased(),
-                    todayUsage: snapshot?.todayUsage,
-                    tier: tier,
-                    isSelected: isSelected,
-                    isAvailable: isAvailable
-                )
-            }
-            .buttonStyle(.plain)
-            .disabled(!isAvailable)
-            .accessibilityAddTraits(.isButton)
-
-            HairlineDivider()
-        }
-    }
-}
-
 // MARK: - Previews
 
 @MainActor
 private func previewViewModel() -> DashboardViewModel {
-    // Make every provider visible so the sidebar + panes render deterministically.
+    // Make every provider visible so the chip strip + panes render deterministically.
     for id in ProviderID.allCases { ProviderVisibility.setHidden(false, for: id) }
     let vm = DashboardViewModel()
     vm.lastSyncedAt = Date(timeIntervalSince1970: 1_769_000_000)
