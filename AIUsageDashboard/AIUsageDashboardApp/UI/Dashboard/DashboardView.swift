@@ -144,6 +144,8 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 0) {
             overviewSidebarRow
             HairlineDivider()
+            valueSidebarRow
+            HairlineDivider()
 
             HStack {
                 SectionLabel("Providers")
@@ -176,6 +178,32 @@ struct DashboardView: View {
                     .fill(isActive ? PadzyTheme.accent : Color.clear)
                     .frame(width: 2)
                 Text("OVERVIEW")
+                    .font(.display(size: 13, weight: .bold))
+                    .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 14)
+                Spacer(minLength: 0)
+            }
+            .background(isActive ? PadzyTheme.surface : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// Sidebar entry for the value surface (#23 / #41). Same active grammar as the
+    /// Overview row above it.
+    private var valueSidebarRow: some View {
+        let isActive = section == .value
+        return Button(action: {
+            section = .value
+            viewModel.showingSettings = false
+        }) {
+            HStack(spacing: 0) {
+                Rectangle()
+                    .fill(isActive ? PadzyTheme.accent : Color.clear)
+                    .frame(width: 2)
+                Text("VALUE")
                     .font(.display(size: 13, weight: .bold))
                     .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
                     .padding(.horizontal, 12)
@@ -263,8 +291,17 @@ struct DashboardView: View {
                     section = .connections
                     viewModel.showingSettings = false
                 },
-                onAddAgent: { showingAddAgent = true }
+                onAddAgent: { showingAddAgent = true },
+                onOpenValue: {
+                    section = .value
+                    viewModel.showingSettings = false
+                }
             )
+        case .value:
+            ValueView(onOpenPlanCosts: {
+                section = .settings
+                viewModel.showingSettings = true
+            })
         case .connections:
             ConnectionsView()
         case .settings:
