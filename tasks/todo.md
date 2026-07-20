@@ -30,12 +30,13 @@ Branch `patch/2026-07-19/ui-ia-consolidation`. Scope lock: `AIUsageDashboardApp/
 - [x] `ProviderMark(tint:)` per-agent; 6 brand assets present, gemini → `sparkle` SF Symbol fallback (per-provider fallbacks, template-tinted).
 - [x] `PadzyToggle` → mockup pill (36×21, neutral off / accent on, white knob). Native `.switch` retire folded into P5 (only user = ConnectionRow, which P5 rebuilds).
 
-## Phase 2 — Shell  (1–2 commits)
-- [ ] TabBar: plain `Overview / Value / Agents`, 2px tick, no kicker. Range chips only on Overview+usage. Gear → settings drawer.
-- [ ] Pressure banner (tightest live quota; bg tinted by pct).
-- [ ] Persistent status bar (sync dot+label, conf mix, path, Sync now).
-- [ ] Settings drawer overlay (scrim + 380px): plan cost · quota alerts (steppers) · appearance+accent · notifications · version/update. Real controls only.
-- [ ] Add-agent drawer (detected-first + all agents). Wire to real Core state.
+## Phase 2 — Shell  (P2a 2e330e5; P2b done — build green)
+- [x] TabBar: plain `Overview / Value / Agents`, 2px tick, no kicker. Range chips only on Overview. Gear → settings drawer. (Range kept Core 7D/30D/90D — Today/Week/Month/All = Core change, follow-up.)
+- [x] Pressure banner (tightest live quota via MaxxerMath.tightestWindow; bg tinted by pct; taps to drill in).
+- [x] Persistent status bar (sync dot+label, confidence, watched path, Sync now; ViewThatFits reflow).
+- [x] Settings drawer (scrim + 380px): plan cost (MaxxerPlanCostStore) · appearance (Theme Dark + real menu-bar readout) · notifications (single real flag) · version + Sparkle update. Deviations: no accent swatches / no threshold steppers (no backing store — would be inert). Deleted dead SettingsView.swift + AddAgentSheet.swift.
+- [x] Add-agent drawer (detected-first + all agents; AddAgentModel; add→refresh).
+- Follow-ups: remove unused ProviderChipStrip.swift (cleanup); range-set + accent-override = post-WP-5.
 
 ## Phase 3 — Overview  (1–2 commits)
 - [ ] Metric selector Usage / Quota. Hero 62px mono + delta + sub.

@@ -8,7 +8,8 @@ import AIUsageDashboardCore
 /// flag and re-runs the providers on change.
 struct ConnectionsView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
-    @State private var showingAddAgent = false
+    /// Opens the shell's Add-agent drawer (overlaid on the whole window).
+    var onAddAgent: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,7 +22,7 @@ struct ConnectionsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                AddAgentButton { showingAddAgent = true }
+                AddAgentButton { onAddAgent() }
                     .fixedSize()
             }
             .padding(.horizontal, 28)
@@ -62,10 +63,6 @@ struct ConnectionsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(PadzyTheme.ground)
-        .sheet(isPresented: $showingAddAgent) {
-            AddAgentSheet()
-                .environmentObject(viewModel)
-        }
     }
 }
 

@@ -62,14 +62,44 @@ struct DashboardView: View {
     }
 
     var body: some View {
+        ZStack {
+            shell
+
+            // Settings drawer — driven directly by `viewModel.showingSettings`
+            // (the gear toggles it; the menu-bar Settings action sets it true).
+            if viewModel.showingSettings {
+                SettingsDrawer(
+                    onClose: { viewModel.showingSettings = false },
+                    onOpenAgents: { select(tab: .agents) }
+                )
+                .zIndex(1)
+            }
+
+            // Add-agent drawer — driven by the shell's `showingAddAgent` flag,
+            // shared by Overview's blank canvas and the Agents tab's + button.
+            if showingAddAgent {
+                AddAgentDrawer(onClose: { showingAddAgent = false })
+                    .zIndex(1)
+            }
+        }
+        .frame(minWidth: 640, minHeight: 480)
+        .preferredColorScheme(.dark)
+        // Slide/fade the drawers in and out; static under Reduce Motion.
+        .animation(reduceMotion ? nil : PadzyMotion.quick, value: viewModel.showingSettings)
+        .animation(reduceMotion ? nil : PadzyMotion.quick, value: showingAddAgent)
+    }
+
+    /// The dashboard shell — tab bar, ambient quota banner, routed content, and the
+    /// status strip. The Settings and Add-agent drawers overlay this in `body`.
+    private var shell: some View {
         VStack(spacing: 0) {
             DashboardTabBar(
                 activeTab: section.tab,
-                isSettingsActive: section == .settings,
+                isSettingsActive: viewModel.showingSettings,
                 showsRangeSelector: section.usesTimeRange,
                 range: $viewModel.range,
                 onSelect: { select(tab: $0) },
-                onOpenSettings: { openSettings() }
+                onOpenSettings: { viewModel.showingSettings.toggle() }
             )
 
             // Ambient quota strip: only on a non-drill-in, non-Agents tab, and only
@@ -88,12 +118,6 @@ struct DashboardView: View {
             statusStrip
         }
         .background(PadzyTheme.ground)
-        .preferredColorScheme(.dark)
-        .frame(minWidth: 640, minHeight: 480)
-        .sheet(isPresented: $showingAddAgent) {
-            AddAgentSheet()
-                .environmentObject(viewModel)
-        }
         .focusable()
         // Arrow semantics: horizontal moves along the current run — the tab strip on
         // a tab, or between providers while drilled into one. Down enters the first
@@ -126,19 +150,10 @@ struct DashboardView: View {
                 break
             }
         }
-        // Menu-bar Settings sets `viewModel.showingSettings`; route the pane there on
-        // the RISING edge only, so section-driven writes back to `false` don't fight it.
-        .onChange(of: viewModel.showingSettings) { _, isShowing in
-            if isShowing { section = .settings }
-        }
-        // Catch the case where the flag was already true before this view appeared —
-        // e.g. the dashboard window is created fresh by the menu-bar Settings action,
-        // so `onChange` never sees the transition.
         .onAppear {
             // Seed the canvas once so a brand-new user (no agents on disk) leads with
             // the + instead of a wall of empty provider rows; idempotent thereafter.
             AddAgentModel.seedOnFirstLaunchIfNeeded()
-            if viewModel.showingSettings { section = .settings }
         }
         .onReceive(countdownTimer) { _ in
             countdownTick = Date()
@@ -175,8 +190,9 @@ struct DashboardView: View {
         viewModel.showingSettings = false
     }
 
+    /// Opens the Settings drawer (used by the Cursor "enable online" hand-off). The
+    /// gear toggles the same flag; the × / scrim / Escape clear it.
     private func openSettings() {
-        navigate(to: .settings)
         viewModel.showingSettings = true
     }
 
@@ -245,7 +261,7 @@ struct DashboardView: View {
         case .value:
             ValueView(onOpenPlanCosts: { openSettings() })
         case .agents:
-            ConnectionsView()
+            ConnectionsView(onAddAgent: { showingAddAgent = true })
         }
     }
 
@@ -254,11 +270,6 @@ struct DashboardView: View {
         switch section {
         case .provider:
             providerDetailPane
-        case .settings:
-            SettingsPane(
-                onOpenConnections: { openConnections() },
-                onAddAgent: { showingAddAgent = true }
-            )
         case .overview, .value, .connections:
             EmptyView()
         }
@@ -308,7 +319,6 @@ struct DashboardView: View {
         case let .provider(providerID):
             leaf = (viewModel.snapshot(for: providerID)?.displayName ?? providerID.rawValue)
                 .replacingOccurrences(of: "_", with: " ")
-        case .settings: leaf = "Settings"
         case .overview, .value, .connections: leaf = ""
         }
         return "\(homeTab.accessibilityName) / \(leaf)".uppercased()
