@@ -17,24 +17,13 @@ struct DashboardView: View {
     /// so drilling in and backing out is a round trip.
     @State private var homeTab: DashboardTab = .overview
 
-    /// Drives the `+` add-agent sheet, shared by the chip strip's `+` and the
-    /// blank-canvas call to action.
+    /// Drives the `+` add-agent sheet, shared by Overview's blank-canvas call to
+    /// action and the Settings pane.
     @State private var showingAddAgent = false
-
-    /// Read-only here — the VALUE tab pill needs the same scorecard the Value pane
-    /// renders. The pane's own data path is unchanged; this is a second reader of
-    /// the same pure function, not a second source of truth.
-    private let planCosts = MaxxerPlanCostStore()
 
     @State private var pulseOpacity: Double = 1.0
     @State private var countdownTick = Date()
     private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
-
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 
     private var isClaudeInstalled: Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -76,24 +65,24 @@ struct DashboardView: View {
         VStack(spacing: 0) {
             DashboardTabBar(
                 activeTab: section.tab,
-                stats: tabStats,
                 isSettingsActive: section == .settings,
                 showsRangeSelector: section.usesTimeRange,
                 range: $viewModel.range,
                 onSelect: { select(tab: $0) },
                 onOpenSettings: { openSettings() }
             )
-            HairlineDivider()
 
-            if section.showsProviderChips {
-                ProviderChipStrip(
-                    selected: drilledInProvider,
-                    onSelect: { openProvider($0) },
-                    onAddAgent: { showingAddAgent = true },
-                    onRetry: { Task { await viewModel.refresh() } }
+            // Ambient quota strip: only on a non-drill-in, non-Agents tab, and only
+            // when a live window actually exists (the banner carries its own top
+            // hairline; the divider below closes the strip and rules off the content).
+            if !section.isDrillIn, section.tab != .agents, let tightest = tightestUtilization {
+                PressureBanner(
+                    utilization: tightest,
+                    providerDisplayName: providerDisplayName(for: tightest.providerID),
+                    onTap: { openProvider($0) }
                 )
-                HairlineDivider()
             }
+            HairlineDivider()
 
             content
             statusStrip
@@ -106,10 +95,10 @@ struct DashboardView: View {
                 .environmentObject(viewModel)
         }
         .focusable()
-        // Arrow semantics follow the new layout's axes: horizontal moves along
-        // whatever horizontal run you're in (the tab pills, or the chip strip once
-        // drilled in), vertical moves between the two rows — down enters the chip
-        // strip from a tab, up leaves any drill-in for the tab that owns it.
+        // Arrow semantics: horizontal moves along the current run — the tab strip on
+        // a tab, or between providers while drilled into one. Down enters the first
+        // provider's detail from a tab (the drill-in the mockup's agent grid will own
+        // later); up leaves any drill-in for the tab that owns the content behind it.
         .onMoveCommand { direction in
             switch direction {
             case .left:
@@ -127,7 +116,7 @@ struct DashboardView: View {
                     select(tab: next)
                 }
             case .down:
-                // From a tab, drop into the chip strip at its first chip.
+                // From a tab, drop into the first provider's detail.
                 if section.tab != nil, let first = firstVisibleProvider {
                     openProvider(first)
                 }
@@ -162,10 +151,16 @@ struct DashboardView: View {
 
     // MARK: Navigation
 
-    /// The provider whose chip is currently drilled into, or `nil` on a tab.
-    private var drilledInProvider: ProviderID? {
-        if case let .provider(providerID) = section { return providerID }
-        return nil
+    /// The single tightest live window across providers — drives the ambient
+    /// pressure banner. `nil` when no provider reports a live quota anywhere.
+    private var tightestUtilization: Utilization? {
+        MaxxerMath.tightestWindow(in: viewModel.utilization)
+    }
+
+    /// Resolved provider name for the banner (falls back to a de-underscored id).
+    private func providerDisplayName(for providerID: ProviderID) -> String {
+        viewModel.snapshot(for: providerID)?.displayName
+            ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ")
     }
 
     private func select(tab: DashboardTab) {
@@ -185,9 +180,10 @@ struct DashboardView: View {
         viewModel.showingSettings = true
     }
 
+    /// Connections is now the Agents tab, so routing there is a tab selection —
+    /// it updates `homeTab` so the tab bar highlight and the mounted pane agree.
     private func openConnections() {
-        navigate(to: .connections)
-        viewModel.showingSettings = false
+        select(tab: .agents)
     }
 
     /// Dismiss any drill-in back to the tab that owns the content behind it.
@@ -248,6 +244,8 @@ struct DashboardView: View {
             )
         case .value:
             ValueView(onOpenPlanCosts: { openSettings() })
+        case .agents:
+            ConnectionsView()
         }
     }
 
@@ -256,14 +254,12 @@ struct DashboardView: View {
         switch section {
         case .provider:
             providerDetailPane
-        case .connections:
-            ConnectionsView()
         case .settings:
             SettingsPane(
                 onOpenConnections: { openConnections() },
                 onAddAgent: { showingAddAgent = true }
             )
-        case .overview, .value:
+        case .overview, .value, .connections:
             EmptyView()
         }
     }
@@ -312,41 +308,10 @@ struct DashboardView: View {
         case let .provider(providerID):
             leaf = (viewModel.snapshot(for: providerID)?.displayName ?? providerID.rawValue)
                 .replacingOccurrences(of: "_", with: " ")
-        case .connections: leaf = "Connections"
         case .settings: leaf = "Settings"
-        case .overview, .value: leaf = ""
+        case .overview, .value, .connections: leaf = ""
         }
         return "\(homeTab.accessibilityName) / \(leaf)".uppercased()
-    }
-
-    // MARK: Tab stats
-
-    /// The live number each tab pill carries. Both are computed from the same
-    /// published snapshots the panes read — the pills are a readout of the panes,
-    /// never a second source of truth.
-    private var tabStats: [DashboardTab: DashboardTabBar.Stat] {
-        let visible = ProviderVisibility.visible(viewModel.snapshots)
-        let today = MaxxerMath.mergedTodayUsage(in: visible.filter {
-            viewModel.isAvailable($0.providerID)
-        })
-        let multiple = MaxxerValueEngine.scorecard(
-            snapshots: visible,
-            planCosts: planCosts,
-            now: Date()
-        ).totalValueMultiple
-
-        return [
-            .overview: DashboardTabBar.Stat(
-                value: today.totalTokens.map { TokenFormatter.format($0) } ?? "—",
-                caption: "today",
-                isKnown: today.totalTokens != nil
-            ),
-            .value: DashboardTabBar.Stat(
-                value: MaxxerMath.formatMultiple(multiple),
-                caption: "plan value",
-                isKnown: multiple != nil
-            ),
-        ]
     }
 
     // MARK: 02 / USAGE
@@ -828,12 +793,14 @@ struct DashboardView: View {
 
     // MARK: Status
 
-    /// Bottom status strip. Reflows responsively: at comfortable widths it shows the
-    /// full status line and a labelled SYNC NOW; when the window is squeezed toward
-    /// the 640pt minimum the WATCHING path drops and SYNC NOW collapses to an
-    /// icon-only button, so nothing ever clips or overlaps.
+    /// Bottom status bar (mockup): a live sync dot, a relative "Synced …" line, the
+    /// today-usage confidence, the watched path, and a trailing "Sync now". Reflows
+    /// toward the 640pt minimum by dropping the confidence first, then the path — the
+    /// dot, the status line, and Sync now always stay so nothing critical clips.
     private var statusStrip: some View {
         VStack(spacing: 0) {
+            // Non-info warnings ride above the bar as their own hairline-bounded
+            // sub-banner (kept from the prior status strip).
             if let warnings = selectedSnapshot?.warnings.filter({ $0.level != .info }), !warnings.isEmpty {
                 HairlineDivider()
                 HStack(spacing: 8) {
@@ -842,76 +809,84 @@ struct DashboardView: View {
                         .foregroundColor(PadzyTheme.accent)
                     Text(warnings.map(\.message).joined(separator: "  ·  ").uppercased())
                         .font(.mono(size: 10))
-                        .foregroundColor(PadzyTheme.muted)
+                        .foregroundColor(PadzyTheme.ink4)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer()
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 18)
                 .padding(.vertical, 8)
+                .background(PadzyTheme.statusBar)
             }
             HairlineDivider()
             ViewThatFits(in: .horizontal) {
-                statusRow(showLabel: true, statusText: statusLine)
-                statusRow(showLabel: true, statusText: statusLineCompact)
-                statusRow(showLabel: false, statusText: statusLineCompact)
+                statusRow(showConfidence: true, showPath: true)
+                statusRow(showConfidence: false, showPath: true)
+                statusRow(showConfidence: false, showPath: false)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .background(PadzyTheme.statusBar)
         }
     }
 
-    /// One status-strip layout. `showLabel` toggles the SYNC NOW word vs an
-    /// icon-only refresh; `statusText` is the (full or shortened) status line.
-    private func statusRow(showLabel: Bool, statusText: String) -> some View {
-        HStack(spacing: 16) {
-            SectionLabel("Status", size: 11)
+    /// One status-bar layout. `showConfidence` / `showPath` are toggled by the
+    /// `ViewThatFits` reflow above; the dot, the "Synced …" line, and Sync now are
+    /// always present. The path is the flexible, middle-truncating segment.
+    private func statusRow(showConfidence: Bool, showPath: Bool) -> some View {
+        HStack(spacing: 10) {
+            statusDot
+
+            Text(syncStatusText)
+                .font(.sans(size: 11.5))
+                .foregroundColor(PadzyTheme.ink3)
+                .lineLimit(1)
                 .fixedSize()
 
-            if viewModel.isLoading {
-                Rectangle()
-                    .fill(PadzyTheme.accent)
-                    .frame(width: 6, height: 6)
-                    .opacity(pulseOpacity)
-                    .onAppear {
-                        if !reduceMotion {
-                            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                                pulseOpacity = 0.2
-                            }
-                        }
-                    }
+            if showConfidence, let confidence = confidenceLabel {
+                Text(confidence)
+                    .font(.sans(size: 11.5))
+                    .foregroundColor(PadzyTheme.ink4)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
-            Text(statusText)
-                .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            if showPath, let path = watchedPath {
+                Text(path)
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
 
             Spacer(minLength: 8)
 
-            syncButton(showLabel: showLabel)
+            syncButton
         }
     }
 
-    private func syncButton(showLabel: Bool) -> some View {
-        Button(action: { Task { await viewModel.refresh() } }) {
-            Group {
-                if showLabel {
-                    Text("SYNC NOW")
-                        .font(.mono(size: 12))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .bold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
+    /// 6px status dot: warn + pulsing while a sync is in flight, else a steady good.
+    /// The pulse is gated on Reduce Motion (static full opacity when it is set).
+    private var statusDot: some View {
+        Circle()
+            .fill(viewModel.isLoading ? PadzyTheme.warn : PadzyTheme.good)
+            .frame(width: 6, height: 6)
+            .opacity(viewModel.isLoading ? pulseOpacity : 1)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    pulseOpacity = 0.2
                 }
             }
-            .foregroundColor(PadzyTheme.ground)
-            .background(PadzyTheme.accent)
-            .contentShape(Rectangle())
+            .accessibilityHidden(true)
+    }
+
+    private var syncButton: some View {
+        Button(action: { Task { await viewModel.refresh() } }) {
+            Text("Sync now")
+                .font(.sans(size: 11.5, weight: .semibold))
+                .foregroundColor(viewModel.isLoading ? PadzyTheme.ink5 : PadzyTheme.accent)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .keyboardShortcut("r", modifiers: .command)
@@ -919,19 +894,38 @@ struct DashboardView: View {
         .accessibilityLabel("Sync now")
     }
 
-    private var statusLine: String {
-        let synced = viewModel.lastSyncedAt.map { Self.timeFormatter.string(from: $0) } ?? "NEVER"
-        let confidence = selectedSnapshot?.todayUsage.confidence.displayName.uppercased() ?? "—"
-        let pathName = ProviderMetadata.localPaths(for: viewModel.selectedProvider).first ?? "—"
-        return "SYNCED \(synced)  ·  \(confidence)  ·  WATCHING \(pathName)"
+    /// "Syncing…" while a refresh is in flight, else "Synced <relative>" (or a
+    /// first-run "Not synced yet").
+    private var syncStatusText: String {
+        if viewModel.isLoading { return "Syncing…" }
+        guard let syncedRelative else { return "Not synced yet" }
+        return "Synced \(syncedRelative)"
     }
 
-    /// Shortened status for tight widths: drops the WATCHING path (the longest,
-    /// least-critical segment) so the strip never has to clip.
-    private var statusLineCompact: String {
-        let synced = viewModel.lastSyncedAt.map { Self.timeFormatter.string(from: $0) } ?? "NEVER"
-        let confidence = selectedSnapshot?.todayUsage.confidence.displayName.uppercased() ?? "—"
-        return "SYNCED \(synced)  ·  \(confidence)"
+    /// Relative age of the last sync — "just now", "3m ago", "2h ago", "1d ago".
+    /// `nil` before the first sync. Recomputed each second via `countdownTick`.
+    private var syncedRelative: String? {
+        _ = countdownTick
+        guard let last = viewModel.lastSyncedAt else { return nil }
+        let seconds = max(0, Int(Date().timeIntervalSince(last)))
+        if seconds < 5 { return "just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        return "\(hours / 24)d ago"
+    }
+
+    /// Today-usage confidence for the selected provider, sentence-case (subtle, per
+    /// the mockup — no shouting REPORTED/ESTIMATED chip on this surface).
+    private var confidenceLabel: String? {
+        selectedSnapshot?.todayUsage.confidence.displayName
+    }
+
+    /// The first local path Tokei watches for the selected provider.
+    private var watchedPath: String? {
+        ProviderMetadata.localPaths(for: viewModel.selectedProvider).first
     }
 
     // MARK: Empty state

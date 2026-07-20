@@ -1,23 +1,22 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The two in-content tabs at the top of the dashboard. They replace the former
-/// sidebar's OVERVIEW / VALUE rows: same two destinations, no 230pt of chrome.
-///
-/// Each pill also carries a live stat, so the tab strip doubles as the top-level
-/// KPI row rather than being pure navigation — which is what lets the Overview's
-/// old "Value" summary card be deleted without losing the number.
+/// The three plain tabs at the top of the dashboard: OVERVIEW / VALUE / AGENTS.
+/// The mockup dropped the numbered `NN /` kickers and the per-tab live number —
+/// each tab is now pure navigation, a plain word with a 2px accent tick when active.
 enum DashboardTab: String, CaseIterable, Identifiable {
     case overview
     case value
+    case agents
 
     var id: String { rawValue }
 
-    /// Numbered mono kicker (`01 / OVERVIEW`) — the tab label itself.
-    var kicker: String {
+    /// Plain tab label — the mockup's word, no numbered kicker.
+    var label: String {
         switch self {
-        case .overview: return "01 / OVERVIEW"
-        case .value: return "02 / VALUE"
+        case .overview: return "Overview"
+        case .value: return "Value"
+        case .agents: return "Agents"
         }
     }
 
@@ -25,23 +24,20 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return .overview
         case .value: return .value
+        case .agents: return .connections
         }
     }
 
-    /// Spoken label — the kicker's `01 /` prefix is decoration to VoiceOver.
-    var accessibilityName: String {
-        switch self {
-        case .overview: return "Overview"
-        case .value: return "Value"
-        }
-    }
+    /// Spoken label — identical to the visible label now that the kicker is gone.
+    var accessibilityName: String { label }
 
     /// Neighbours for left/right arrow navigation. Deliberately non-wrapping, so
     /// holding an arrow key stops at the end of the strip instead of cycling.
     var next: DashboardTab? {
         switch self {
         case .overview: return .value
-        case .value: return nil
+        case .value: return .agents
+        case .agents: return nil
         }
     }
 
@@ -49,12 +45,13 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         switch self {
         case .overview: return nil
         case .value: return .overview
+        case .agents: return .value
         }
     }
 }
 
-/// The five destinations the dashboard pane routes between. Held as local
-/// `@State` in `DashboardView`; `Core` stays untouched.
+/// The destinations the dashboard pane routes between. Held as local `@State` in
+/// `DashboardView`; `Core` stays untouched.
 ///
 /// This local state is the source of truth for navigation. `viewModel.showingSettings`
 /// is reconciled in one direction each way, not a true two-way binding: selecting a
@@ -62,24 +59,27 @@ enum DashboardTab: String, CaseIterable, Identifiable {
 /// external RISING edge of the flag (e.g. the menu-bar Settings action) routes the
 /// pane to `.settings`. Clearing the flag never changes the section.
 ///
-/// Two of the five are *tabbed* (`.overview`, `.value`); the other three replace
-/// the tab content and are entered by drilling in — a provider chip, a Connect
-/// action, or the gear — so each of them renders a back affordance instead of a
-/// tab highlight.
+/// Three of these are *tab-owned* (`.overview`, `.value`, and `.connections` — the
+/// Agents tab). The remaining two (`.provider`, `.settings`) are drill-in panes that
+/// replace the tab content and render a back affordance instead of a tab highlight.
 enum AppSection: Equatable {
     case overview
     /// Plan value vs. API-equivalent cost, and lifetime totals (#23 / #41).
     case value
     case provider(ProviderID)
     case settings
+    /// The Agents tab's content (the former Connections drill-in). Owned by the
+    /// `.agents` tab, so it is NOT a drill-in.
     case connections
 
-    /// The tab that owns this section, or `nil` for the three drill-in panes.
+    /// The tab that owns this section, or `nil` for the two drill-in panes
+    /// (`.provider`, `.settings`).
     var tab: DashboardTab? {
         switch self {
         case .overview: return .overview
         case .value: return .value
-        case .provider, .settings, .connections: return nil
+        case .connections: return .agents
+        case .provider, .settings: return nil
         }
     }
 
@@ -88,22 +88,12 @@ enum AppSection: Equatable {
 
     /// Whether the shared time-range control actually governs this pane. Overview
     /// analytics and the provider detail are both ranged by `viewModel.range`;
-    /// Value is month-to-date and Settings/Connections have no series at all, so
-    /// the control is hidden there rather than shown as a dead knob.
+    /// Value is month-to-date, and Agents/Settings have no series at all, so the
+    /// control is hidden there rather than shown as a dead knob.
     var usesTimeRange: Bool {
         switch self {
         case .overview, .provider: return true
         case .value, .settings, .connections: return false
-        }
-    }
-
-    /// Whether the provider chip strip belongs on this pane. Overview, Value and
-    /// the provider drill-in are all provider-scoped; Settings and Connections
-    /// are not, so the strip is suppressed there.
-    var showsProviderChips: Bool {
-        switch self {
-        case .overview, .value, .provider: return true
-        case .settings, .connections: return false
         }
     }
 }

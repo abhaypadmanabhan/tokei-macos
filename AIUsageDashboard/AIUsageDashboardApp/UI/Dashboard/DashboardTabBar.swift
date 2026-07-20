@@ -1,27 +1,18 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The dashboard's top bar: in-content tab pills, the shared time-range control,
-/// and the Settings gear. Replaces the 230pt sidebar's OVERVIEW / VALUE /
+/// The dashboard's top bar: three plain in-content tabs, the shared time-range
+/// control, and the Settings gear. Replaces the 230pt sidebar's OVERVIEW / VALUE /
 /// SETTINGS rows.
 ///
-/// Each pill is a numbered mono kicker over one live number, so the tab strip is
-/// also the top-level KPI row — navigation and data in the same 56pt instead of
-/// a column of chrome. Active state is the 2px accent tick under the pill (the
-/// only accent on this surface); an inactive pill is muted, never a second hue.
+/// The mockup made these tabs pure navigation — a plain word, no numbered kicker
+/// and no live number (those moved into the content). Active state is the 2px
+/// accent tick under the label (the only accent on this surface); an inactive tab
+/// is muted, never a second hue.
 struct DashboardTabBar: View {
-    /// One pill's live number. `isKnown == false` renders the value muted, which
-    /// is how "—" reads as "not computable" rather than as a small number.
-    struct Stat: Equatable {
-        let value: String
-        let caption: String
-        var isKnown: Bool = true
-    }
-
-    /// The active tab, or `nil` while a drill-in pane (provider / settings /
-    /// connections) owns the content.
+    /// The active tab, or `nil` while a drill-in pane (provider / settings) owns
+    /// the content.
     let activeTab: DashboardTab?
-    let stats: [DashboardTab: Stat]
     let isSettingsActive: Bool
     /// Whether the range control governs the current pane (Overview + provider
     /// detail). Hidden elsewhere rather than shown as a control that does nothing.
@@ -37,76 +28,47 @@ struct DashboardTabBar: View {
     ]
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 0) {
-            ForEach(DashboardTab.allCases) { tab in
-                pill(tab)
+        HStack(alignment: .center, spacing: 0) {
+            HStack(spacing: 20) {
+                ForEach(DashboardTab.allCases) { tab in
+                    tabButton(tab)
+                }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 16) {
                 if showsRangeSelector {
                     TimeRangeSelector(range: $range, options: Self.rangeOptions)
                 }
                 gearButton
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 28)
         .padding(.top, 12)
+        .padding(.bottom, 14)
     }
 
-    // MARK: Tab pill
+    // MARK: Tab
 
-    private func pill(_ tab: DashboardTab) -> some View {
+    private func tabButton(_ tab: DashboardTab) -> some View {
         let isActive = activeTab == tab
-        let stat = stats[tab]
         return Button(action: { onSelect(tab) }) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(tab.kicker)
-                    .font(.mono(size: 11))
-                    .tracking(11 * 0.08)
-                    .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.muted)
-                    .lineLimit(1)
-
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(stat?.value ?? "—")
-                        .font(.mono(size: 17))
-                        .monospacedDigit()
-                        .foregroundColor(statColor(isActive: isActive, isKnown: stat?.isKnown ?? false))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    if let caption = stat?.caption, !caption.isEmpty {
-                        Text(caption.uppercased())
-                            .font(.mono(size: 9))
-                            .tracking(0.4)
-                            .foregroundColor(PadzyTheme.muted)
-                            .lineLimit(1)
-                    }
+            Text(tab.label)
+                .font(.sans(size: 14, weight: .medium))
+                .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.ink5)
+                .padding(.bottom, 3)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(isActive ? PadzyTheme.accent : Color.clear)
+                        .frame(height: 2)
                 }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 6)
-            .padding(.bottom, 10)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(isActive ? PadzyTheme.accent : Color.clear)
-                    .frame(height: 2)
-            }
-            .contentShape(Rectangle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
-        .accessibilityLabel("\(tab.accessibilityName) tab, \(stat?.value ?? "no value") \(stat?.caption ?? "")")
-    }
-
-    /// An unknown value stays muted even on the active tab — dimness is the
-    /// signal that the number could not be computed.
-    private func statColor(isActive: Bool, isKnown: Bool) -> Color {
-        guard isKnown else { return PadzyTheme.muted }
-        return isActive ? PadzyTheme.ink : PadzyTheme.ink.opacity(0.7)
+        .accessibilityLabel("\(tab.accessibilityName) tab")
     }
 
     // MARK: Gear
@@ -114,14 +76,9 @@ struct DashboardTabBar: View {
     private var gearButton: some View {
         Button(action: onOpenSettings) {
             Image(systemName: "gearshape")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundColor(isSettingsActive ? PadzyTheme.ink : PadzyTheme.muted)
-                .frame(width: 30, height: 26)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isSettingsActive ? PadzyTheme.accent : Color.clear)
-                        .frame(height: 2)
-                }
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(isSettingsActive ? PadzyTheme.accent : PadzyTheme.ink5)
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -131,44 +88,35 @@ struct DashboardTabBar: View {
     }
 }
 
-/// Shared time-range control (Posh inline-range pattern): one selector in the top
-/// bar governing the whole pane, instead of a per-card copy. Hairline-bounded,
-/// 2px accent tick under the active option — accent as state, never as a data hue.
+/// Shared time-range control, restyled to the mockup's plain range chips: text-only
+/// buttons (no bordered box), mono numerals, the active option in primary ink over
+/// a faint fill — accent is reserved for the tabs' active tick, never spent here.
 struct TimeRangeSelector: View {
     @Binding var range: UsageRange
     let options: [(range: UsageRange, label: String)]
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 2) {
             ForEach(options, id: \.label) { option in
                 let isSelected = range == option.range
                 Button {
                     range = option.range
                 } label: {
                     Text(option.label)
-                        .font(.mono(size: 11))
-                        .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.muted)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(isSelected ? PadzyTheme.accent : Color.clear)
-                                .frame(height: 2)
-                        }
+                        .font(.mono(size: 11.5, weight: .medium))
+                        .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.ink5)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                                .fill(isSelected ? PadzyTheme.window : Color.clear)
+                        )
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .fill(PadzyTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .stroke(PadzyTheme.muted.opacity(0.25), lineWidth: 1)
-        )
         .fixedSize()
     }
 }
@@ -179,18 +127,13 @@ private struct TabBarPreview: View {
     @State private var range: UsageRange = .sevenDay
     let activeTab: DashboardTab?
     let isSettingsActive: Bool
-    var stats: [DashboardTab: DashboardTabBar.Stat] = [
-        .overview: .init(value: "533.6M", caption: "today"),
-        .value: .init(value: "3.4×", caption: "plan value"),
-    ]
 
     var body: some View {
         VStack(spacing: 0) {
             DashboardTabBar(
                 activeTab: activeTab,
-                stats: stats,
                 isSettingsActive: isSettingsActive,
-                showsRangeSelector: activeTab != .value && !isSettingsActive,
+                showsRangeSelector: activeTab == .overview,
                 range: $range,
                 onSelect: { _ in },
                 onOpenSettings: {}
@@ -209,14 +152,10 @@ private struct TabBarPreview: View {
     TabBarPreview(activeTab: .value, isSettingsActive: false).frame(width: 900)
 }
 
-#Preview("Tab bar · settings active, unknown stats") {
-    TabBarPreview(
-        activeTab: nil,
-        isSettingsActive: true,
-        stats: [
-            .overview: .init(value: "—", caption: "today", isKnown: false),
-            .value: .init(value: "—", caption: "plan value", isKnown: false),
-        ]
-    )
-    .frame(width: 640)
+#Preview("Tab bar · agents active") {
+    TabBarPreview(activeTab: .agents, isSettingsActive: false).frame(width: 900)
+}
+
+#Preview("Tab bar · settings active") {
+    TabBarPreview(activeTab: nil, isSettingsActive: true).frame(width: 640)
 }
