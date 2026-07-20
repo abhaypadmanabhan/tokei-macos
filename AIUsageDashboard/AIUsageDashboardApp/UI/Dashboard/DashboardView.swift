@@ -254,8 +254,7 @@ struct DashboardView: View {
         switch homeTab {
         case .overview:
             OverviewView(
-                onOpen: { openProvider($0) },
-                onConnect: { openConnections() },
+                onSelectProvider: { openProvider($0) },
                 onAddAgent: { showingAddAgent = true }
             )
         case .value:

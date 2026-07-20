@@ -97,18 +97,22 @@ struct ActivityHeatmap: View {
             }
             .frame(height: 12)
 
-            HStack(spacing: 5) {
-                Text("LOW")
+            // "less → more" continuous gradient legend (mockup): a single-hue ramp
+            // bar bracketed by muted labels, matching the neutral cell fill.
+            HStack(spacing: 6) {
+                Text("less")
                     .font(.mono(size: 9))
-                    .foregroundColor(PadzyTheme.muted)
-                ForEach(Array(PadzyChartPalette.heatmapRamp.enumerated()), id: \.offset) { _, color in
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(color)
-                        .frame(width: 14, height: 6)
-                }
-                Text("HIGH")
+                    .foregroundColor(PadzyTheme.ink5)
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [PadzyChartPalette.heatCell(0.0), PadzyChartPalette.heatCell(1.0)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ))
+                    .frame(width: 96, height: 6)
+                Text("more")
                     .font(.mono(size: 9))
-                    .foregroundColor(PadzyTheme.muted)
+                    .foregroundColor(PadzyTheme.ink5)
             }
             .padding(.top, 2)
         }

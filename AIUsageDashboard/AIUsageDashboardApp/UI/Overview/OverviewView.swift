@@ -1,106 +1,162 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The consolidated Overview home: TODAY hero with metric tiles,
-/// token-usage-over-time line, usage-by-provider donut, streak/pattern stats,
-/// the daily-activity heatmap, and one glanceable per-provider quota row each —
-/// rows remain jump-off points into the provider drill-in.
-///
-/// Density pass (WP-4): the pane no longer owns a header. Its old aggregate
-/// headline moved onto the `Limits` card, its range selector moved to the shared
-/// top-bar control, its `+` moved to the chip strip, and its Value summary card
-/// moved onto the `02 / VALUE` tab pill — which is what pays for the four
-/// remaining cards being able to breathe. The hero's small area spark also went:
-/// it plotted the same series the trend card below plots at full size.
+/// The consolidated Overview home, rebuilt to the WP-5 mockup: a Usage/Quota metric
+/// selector, a big hero number + delta + one-line context, a full-width trend (or
+/// per-agent quota bars), the 1px-gap agent grid, the usage-split donut beside the
+/// by-weekday bars, and the when-you-work heatmap. Sections are ruled off by
+/// hairlines and named with mono kickers — no card stack, no numbered `NN /` labels.
 ///
 /// All analytics come from the frozen `DashboardViewModel` §4 surface
-/// (`overviewTrend/providerSplit/overviewDelta/streak/bestDay/leastActiveDay/
-/// dailyAverage/heatmap(for:)`, ranged by `viewModel.range`). Every widget
-/// renders an honest empty state when its source is absent.
+/// (`overviewTrend / providerSplit / overviewDelta / streak / dailyAverage /
+/// utilization / heatmap(for:)`, ranged by `viewModel.range`), plus `MaxxerMath`
+/// for the merged-today total and the tightest window. Every widget renders an
+/// honest empty state when its source is absent, and unknowns read `—`, never `0`.
 struct OverviewView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Open a provider's drill-in (wired by `DashboardView` to set nav state).
-    var onOpen: (ProviderID) -> Void = { _ in }
-    /// Route to the Connections screen for a provider with no live quota.
-    var onConnect: () -> Void = {}
-    /// Open the `+` add-agent sheet (blank-canvas primary action).
+    /// Open a provider's drill-in (wired by `DashboardView` to `openProvider`).
+    var onSelectProvider: (ProviderID) -> Void = { _ in }
+    /// Open the `+` add-agent sheet (blank-canvas + AGENTS-row primary action).
     var onAddAgent: () -> Void = {}
 
-    // MARK: Snapshot-derived display state
+    /// Usage vs Quota lens — local pane state, animated on change (reduce-motion safe).
+    @State private var metric: OverviewMetric = .usage
+    /// Measured content width, drives the split row's side-by-side ↔ stacked reflow.
+    @State private var contentWidth: CGFloat = 0
 
-    /// One display model per visible provider: identity + its tightest window.
-    private struct Entry: Identifiable {
-        let providerID: ProviderID
-        let displayName: String
-        let plan: String?
-        let tightest: Utilization?
-        var id: ProviderID { providerID }
-        /// Sort key: tighter windows first; no-quota rows sink to the bottom.
-        var rank: Double { tightest?.usedPercent ?? -1 }
-    }
+    // MARK: Derived display state (data sources preserved from the prior pane)
 
-    /// Visible providers, each reduced to its tightest window, sorted by that
-    /// window's used percent descending (unavailable providers last).
-    private var entries: [Entry] {
-        ProviderID.allCases
-            .filter { !ProviderVisibility.isHidden($0) }
-            .map { id in
-                let tightest = viewModel.utilization
-                    .filter { $0.providerID == id }
-                    .max(by: { $0.usedPercent < $1.usedPercent })
-                return Entry(
-                    providerID: id,
-                    displayName: viewModel.snapshot(for: id)?.displayName ?? fallbackName(id),
-                    plan: tightest?.plan,
-                    tightest: tightest
-                )
-            }
-            .sorted { $0.rank > $1.rank }
+    /// Every non-hidden provider — one agent cell each, in `ProviderID` order.
+    private var visibleProviders: [ProviderID] {
+        ProviderID.allCases.filter { !ProviderVisibility.isHidden($0) }
     }
 
     private func fallbackName(_ id: ProviderID) -> String {
         id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    /// The provider to nudge new work toward (emptiest plan with real headroom),
-    /// or `nil` when routing advice would be noise (#37).
-    private var routeTargetID: ProviderID? {
-        MaxxerMath.routeTarget(in: viewModel.utilization)?.providerID
+    private func displayName(_ id: ProviderID) -> String {
+        viewModel.snapshot(for: id)?.displayName ?? fallbackName(id)
     }
 
-    private var aggregateLine: String {
-        guard let agg = viewModel.aggregateUtilization else {
-            return "— NO LIVE QUOTA CONNECTED"
-        }
-        // MEAN of per-provider peaks (Core), so label it "AVG".
-        return "\(Int(round(agg.usedPercent)))% AVG · \(agg.coveredProviders.count) LIVE"
-    }
-
-    /// Today's per-metric usage merged across available providers — straight off
-    /// the published snapshots via the existing Core merge. Shared with the
-    /// `01 / OVERVIEW` tab pill so the hero and the pill can never disagree.
+    /// Today's per-metric usage merged across the visible + available providers —
+    /// the same Core merge the `01 / OVERVIEW` tab pill uses, so hero and pill can
+    /// never disagree. (Preserved verbatim from the prior pane.)
     private var mergedToday: TokenUsage {
         MaxxerMath.mergedTodayUsage(in: ProviderVisibility.visible(viewModel.snapshots).filter {
             viewModel.isAvailable($0.providerID)
         })
     }
 
-    /// All-time tokens across visible providers (#41) — shown as a hero tile so
-    /// the number survived the Value summary card's removal.
-    private var lifetime: MaxxerMath.LifetimeTotal? {
-        MaxxerMath.lifetimeTotal(
-            in: viewModel.snapshots,
-            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
-        )
+    /// Visible providers that actually report token data today — the hero's "N
+    /// active agents" (Antigravity/Gemini with no token data are excluded).
+    private var activeAgentCount: Int {
+        ProviderVisibility.visible(viewModel.snapshots)
+            .filter { $0.todayUsage.totalTokens != nil }
+            .count
+    }
+
+    /// The single tightest live window across providers (the constraint that
+    /// actually bites) — the Quota hero and the ambient banner share this.
+    private var tightestWindow: Utilization? {
+        MaxxerMath.tightestWindow(in: viewModel.utilization)
+    }
+
+    /// Each provider reduced to its tightest (highest-used) live window.
+    private var tightestByProvider: [ProviderID: Utilization] {
+        var result: [ProviderID: Utilization] = [:]
+        for util in viewModel.utilization {
+            if let existing = result[util.providerID] {
+                if util.usedPercent > existing.usedPercent { result[util.providerID] = util }
+            } else {
+                result[util.providerID] = util
+            }
+        }
+        return result
+    }
+
+    /// The single provider with the most quota headroom (lowest max-used% among
+    /// providers that have quota) — earns the green "route new work here" dot. Only
+    /// when at least two agents have quota, so the hint always implies a choice.
+    private var headroomProviderID: ProviderID? {
+        let quotaBearing: [(id: ProviderID, pct: Double)] = visibleProviders.compactMap { id in
+            tightestByProvider[id].map { (id, $0.usedPercent) }
+        }
+        guard quotaBearing.count >= 2 else { return nil }
+        return quotaBearing.min(by: { $0.pct < $1.pct })?.id
+    }
+
+    /// One resolved cell per visible provider for the agent grid.
+    private var agentModels: [AgentCellModel] {
+        let headroom = headroomProviderID
+        return visibleProviders.map { id in
+            let today = viewModel.snapshot(for: id)?.todayUsage
+            let tightest = tightestByProvider[id]
+
+            let stat: String
+            let color: Color
+            var estimated = false
+            if let today, let total = today.totalTokens {
+                stat = TokenFormatter.format(total)
+                color = PadzyTheme.ink
+                estimated = today.confidence == .estimated
+            } else if let tightest {
+                stat = "\(Int(round(tightest.usedPercent)))%"
+                color = PadzyTheme.ink2
+            } else {
+                stat = "—"
+                color = PadzyTheme.ink5
+            }
+
+            return AgentCellModel(
+                providerID: id,
+                name: displayName(id),
+                stat: stat,
+                statColor: color,
+                isEstimated: estimated,
+                hasHeadroom: id == headroom
+            )
+        }
+    }
+
+    /// Per-agent quota bars for the Quota metric — tightest window per provider,
+    /// sorted fullest-first.
+    private var quotaBars: [(id: ProviderID, name: String, pct: Double)] {
+        visibleProviders
+            .compactMap { id -> (id: ProviderID, name: String, pct: Double)? in
+                guard let util = tightestByProvider[id] else { return nil }
+                return (id, displayName(id), util.usedPercent)
+            }
+            .sorted { $0.pct > $1.pct }
+    }
+
+    /// Average tokens per weekday (Mon→Sun), bucketing the ranged trend by
+    /// `Calendar.component(.weekday)`.
+    private var weekdayBars: [(label: String, value: Int)] {
+        let order = [2, 3, 4, 5, 6, 7, 1] // Calendar weekday (1=Sun); Monday-first display.
+        let labels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+        var sums: [Int: Int] = [:]
+        var counts: [Int: Int] = [:]
+        let calendar = Calendar.current
+        for point in viewModel.overviewTrend {
+            let weekday = calendar.component(.weekday, from: point.date)
+            sums[weekday, default: 0] += point.tokens
+            counts[weekday, default: 0] += 1
+        }
+        return zip(order, labels).map { weekday, label in
+            let count = counts[weekday] ?? 0
+            let avg = count > 0 ? (sums[weekday] ?? 0) / count : 0
+            return (label, avg)
+        }
     }
 
     /// Element-wise union of the visible providers' §4 heatmaps: a cell is `nil`
     /// only when NO provider reports it; otherwise the sum of those that do.
-    /// `nil` overall when no visible provider has an hourly source yet.
+    /// (Preserved verbatim from the prior pane.)
     private var combinedHeatmap: [[Int?]]? {
-        let matrices = ProviderID.allCases
-            .filter { !ProviderVisibility.isHidden($0) }
+        let matrices = visibleProviders
             .compactMap { viewModel.heatmap(for: $0) }
             .filter { $0.count == 7 }
         guard !matrices.isEmpty else { return nil }
@@ -115,159 +171,229 @@ struct OverviewView: View {
         }
     }
 
+    // MARK: Body
+
     var body: some View {
         Group {
-            if entries.isEmpty {
+            if let error = viewModel.errorMessage {
+                SurfaceStateView(
+                    header: "Overview",
+                    kind: .error(headline: "Sync failed", detail: error),
+                    onRetry: { Task { await viewModel.refresh() } }
+                )
+            } else if visibleProviders.isEmpty {
                 blankCanvas
+            } else if viewModel.isLoading && viewModel.snapshots.isEmpty {
+                SurfaceStateView(header: "Overview", kind: .loading(message: "Reading local logs"))
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        heroCard
-                        chartsRow
-                        patternsRow
-                        limitsCard
-                    }
-                    .padding(20)
-                }
+                content
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PadzySpace.xl) {
+                OverviewMetricSelector(metric: $metric)
+
+                VStack(alignment: .leading, spacing: PadzySpace.l) {
+                    hero
+                    mainChart
+                }
+                .animation(reduceMotion ? nil : PadzyMotion.settle, value: metric)
+
+                agentsSection
+                splitAndWeekdaySection
+                heatmapSection
+            }
+            .padding(PadzySpace.xl)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: OverviewContentWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
+        }
+    }
+
     // MARK: Hero
 
-    /// TODAY: the headline total and its delta on the left, every component
-    /// metric as a tile on the right — one row of the pane, no chart, because the
-    /// full-size trend card sits directly beneath it.
-    private var heroCard: some View {
-        SectionCard("Today", trailing: {
-            ConfidenceBadge(confidence: mergedToday.confidence)
-        }) {
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—")
-                        .font(.mono(size: 46))
-                        .monospacedDigit()
-                        .foregroundColor(PadzyTheme.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.4)
-                    if let delta = viewModel.overviewDelta {
-                        DeltaLabel(delta: delta, caption: AnalyticsFormat.deltaCaption(viewModel.range))
-                    }
-                }
-                .frame(minWidth: 140, alignment: .leading)
-
-                // Capped width so all five tiles sit on one row at comfortable
-                // widths instead of leaving a 4 + 1 orphan, and still wrap cleanly
-                // when the window is squeezed.
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 116, maximum: 190), spacing: 10)], spacing: 10) {
-                    StatCard(kicker: "Input", value: format(mergedToday.inputTokens))
-                    StatCard(kicker: "Output", value: format(mergedToday.outputTokens))
-                    StatCard(kicker: "Cache read", value: format(mergedToday.cacheReadTokens))
-                    StatCard(kicker: "Cache write", value: format(mergedToday.cacheCreationTokens))
-                    StatCard(kicker: "All-time",
-                             value: lifetime.map { TokenFormatter.format($0.tokens) } ?? "—",
-                             deltaCaption: lifetime?.usedDailyFallback == true ? "at least" : nil)
-                }
-                // Without this the grid sizes to its content and leaves the right
-                // third of the card empty while the tiles wrap 4 + 1.
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private func format(_ value: Int?) -> String {
-        value.map { TokenFormatter.format($0) } ?? "—"
-    }
-
-    // MARK: Charts row
-
-    private var chartsRow: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
-            SectionCard("Token usage over time", trailing: {
-                Text(AnalyticsFormat.rangeTitle(viewModel.range))
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-            }) {
-                LineTrendChart(points: viewModel.overviewTrend)
-                    .frame(height: 200)
-            }
-
-            SectionCard("Usage by provider") {
-                ProviderDonut(slices: viewModel.providerSplit)
-                    .frame(minHeight: 200)
-            }
-        }
-    }
-
-    // MARK: Patterns + heatmap
-
-    /// Two range-governed cards side by side at comfortable widths, stacked when
-    /// squeezed — same adaptive grid as the charts row above, so the pane reads as
-    /// one column rhythm rather than a stack of full-width slabs.
-    private var patternsRow: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
-            SectionCard("Patterns", trailing: {
-                Text(AnalyticsFormat.rangeTitle(viewModel.range))
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-            }) {
-                let streak = viewModel.streak
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 10)], spacing: 10) {
-                    StatCard(kicker: "Current streak",
-                             value: streak.current > 0 ? "\(streak.current) DAYS" : "—")
-                    StatCard(kicker: "Longest streak",
-                             value: streak.longest > 0 ? "\(streak.longest) DAYS" : "—")
-                    StatCard(kicker: "Best day",
-                             value: viewModel.bestDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                             deltaCaption: viewModel.bestDay.map { AnalyticsFormat.shortDay($0.date) })
-                    StatCard(kicker: "Least active",
-                             value: viewModel.leastActiveDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                             deltaCaption: viewModel.leastActiveDay.map { AnalyticsFormat.shortDay($0.date) })
-                    StatCard(kicker: "Daily average",
-                             value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—")
-                }
-            }
-
-            SectionCard("Daily activity") {
-                ActivityHeatmap(matrix: combinedHeatmap ?? [])
-                    .frame(minHeight: 96)
-            }
-        }
-    }
-
-    // MARK: Limits
-
-    /// Per-provider quota pressure — the chip strip above carries identity and
-    /// volume, this carries the bar, the pace notch, the reset countdown and the
-    /// connect affordance. The aggregate headline that used to sit in the pane
-    /// header now labels this card, which is the thing it actually summarises.
-    private var limitsCard: some View {
-        SectionCard("Limits", trailing: {
-            Text(aggregateLine)
-                .font(.mono(size: 10))
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.s) {
+            Text(heroNumber)
+                .font(.mono(size: 62, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(viewModel.aggregateUtilization == nil ? PadzyTheme.muted : PadzyTheme.ink)
+                .foregroundColor(PadzyTheme.ink)
                 .lineLimit(1)
-        }) {
-            VStack(spacing: 0) {
-                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    ProviderOverviewRow(
-                        providerID: entry.providerID,
-                        displayName: entry.displayName,
-                        plan: entry.plan,
-                        tightest: entry.tightest,
-                        isRouteTarget: entry.providerID == routeTargetID,
-                        horizontalPadding: 4,
-                        onOpen: { onOpen(entry.providerID) },
-                        onConnect: onConnect
-                    )
-                    if index < entries.count - 1 {
-                        HairlineDivider()
-                    }
+                .lineSpacing(0)
+                .minimumScaleFactor(0.4)
+                .accessibilityLabel("\(metric.title), \(heroNumber)")
+
+            if metric == .usage, let delta = viewModel.overviewDelta {
+                deltaLine(delta)
+            }
+
+            Text(heroSubtitle)
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var heroNumber: String {
+        switch metric {
+        case .usage: return mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—"
+        case .quota: return tightestWindow.map { "\(Int(round($0.usedPercent)))%" } ?? "—"
+        }
+    }
+
+    private var heroSubtitle: String {
+        switch metric {
+        case .usage:
+            let count = activeAgentCount
+            return "tokens today across \(count) active agent\(count == 1 ? "" : "s")"
+        case .quota:
+            guard let tightest = tightestWindow else { return "No live quota connected yet." }
+            return "\(displayName(tightest.providerID)) is your tightest window right now."
+        }
+    }
+
+    private func deltaLine(_ delta: Double) -> some View {
+        HStack(spacing: 6) {
+            Text("\(delta >= 0 ? "▲" : "▼") \(String(format: "%.1f", abs(delta)))%")
+                .font(.mono(size: 12.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink3)
+            Text(AnalyticsFormat.deltaCaption(viewModel.range))
+                .font(.sans(size: 12.5))
+                .foregroundColor(PadzyTheme.ink5)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(delta >= 0 ? "up" : "down") \(String(format: "%.1f", abs(delta))) percent \(AnalyticsFormat.deltaCaption(viewModel.range))")
+    }
+
+    // MARK: Main chart / quota bars
+
+    @ViewBuilder
+    private var mainChart: some View {
+        if metric == .usage {
+            LineTrendChart(points: viewModel.overviewTrend)
+                .frame(height: 200)
+                .transition(.opacity)
+        } else {
+            AgentQuotaBars(bars: quotaBars)
+                .transition(.opacity)
+        }
+    }
+
+    // MARK: Agents
+
+    private var agentsSection: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            HairlineDivider()
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                kicker("Agents · \(visibleProviders.count)")
+                Spacer(minLength: 8)
+                Button(action: onAddAgent) {
+                    Text("+ Add agent")
+                        .font(.sans(size: 12))
+                        .foregroundColor(PadzyTheme.ink4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add agent")
+            }
+            AgentGrid(models: agentModels, onSelect: onSelectProvider)
+        }
+    }
+
+    // MARK: Usage split + by weekday
+
+    private var splitAndWeekdaySection: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.l) {
+            HairlineDivider()
+            if contentWidth > 0 && contentWidth < 620 {
+                VStack(alignment: .leading, spacing: PadzySpace.xl) {
+                    usageSplitColumn
+                    weekdayColumn
+                }
+            } else {
+                HStack(alignment: .top, spacing: PadzySpace.xxl) {
+                    usageSplitColumn
+                    weekdayColumn
                 }
             }
         }
+    }
+
+    private var usageSplitColumn: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            kicker("Usage split · \(AnalyticsFormat.rangeTitle(viewModel.range))")
+            ProviderDonut(slices: viewModel.providerSplit)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var weekdayColumn: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            kicker("By weekday")
+            WeekdayBars(bars: weekdayBars)
+            HStack(alignment: .top, spacing: PadzySpace.xxl) {
+                miniStat(
+                    "Daily average",
+                    value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—"
+                )
+                let streak = viewModel.streak
+                miniStat(
+                    "Active streak",
+                    value: streak.current > 0 ? "\(streak.current)d" : "—",
+                    caption: streak.longest > 0 ? "best \(streak.longest)d" : nil
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: When you work
+
+    private var heatmapSection: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            HairlineDivider()
+            kicker("When you work")
+            ActivityHeatmap(matrix: combinedHeatmap ?? [])
+                .frame(minHeight: 96)
+        }
+    }
+
+    // MARK: Small parts
+
+    private func kicker(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.mono(size: 10))
+            .tracking(10 * 0.16)
+            .foregroundColor(PadzyTheme.ink5)
+            .lineLimit(1)
+    }
+
+    private func miniStat(_ title: String, value: String, caption: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.mono(size: 9))
+                .tracking(9 * 0.16)
+                .foregroundColor(PadzyTheme.ink5)
+            Text(value)
+                .font(.mono(size: 16, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+            if let caption {
+                Text(caption.uppercased())
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.ink5)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Blank canvas
@@ -289,6 +415,15 @@ struct OverviewView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// Measures the content column width for the split-row reflow (separate from the
+/// agent grid's own width key so the two readers never race).
+struct OverviewContentWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -379,7 +514,7 @@ private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double, inH
                          windows: [window(.antigravity, .fiveHour, used: 32, inHours: 3)]),
             mockSnapshot(.codex, name: "Codex",
                          windows: [window(.codex, .weekly, used: 12, inHours: 60)],
-                         today: TokenUsage(inputTokens: 3_800_000, outputTokens: 700_000, confidence: .localParsed),
+                         today: TokenUsage(inputTokens: 3_800_000, outputTokens: 700_000, confidence: .estimated),
                          dailyTotals: previewDailyTotals(days: 7)),
         ]))
         .frame(width: 980, height: 1250)
