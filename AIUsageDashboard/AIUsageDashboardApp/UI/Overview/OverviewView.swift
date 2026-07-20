@@ -1,10 +1,17 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The consolidated Overview home (redesign mockup 4): TODAY hero with metric
-/// tiles, token-usage-over-time line, usage-by-provider donut, streak/pattern
-/// stats, the daily-activity heatmap, and one glanceable per-provider quota
-/// row each — rows remain jump-off points into the detail tab.
+/// The consolidated Overview home: TODAY hero with metric tiles,
+/// token-usage-over-time line, usage-by-provider donut, streak/pattern stats,
+/// the daily-activity heatmap, and one glanceable per-provider quota row each —
+/// rows remain jump-off points into the provider drill-in.
+///
+/// Density pass (WP-4): the pane no longer owns a header. Its old aggregate
+/// headline moved onto the `Limits` card, its range selector moved to the shared
+/// top-bar control, its `+` moved to the chip strip, and its Value summary card
+/// moved onto the `02 / VALUE` tab pill — which is what pays for the four
+/// remaining cards being able to breathe. The hero's small area spark also went:
+/// it plotted the same series the trend card below plots at full size.
 ///
 /// All analytics come from the frozen `DashboardViewModel` §4 surface
 /// (`overviewTrend/providerSplit/overviewDelta/streak/bestDay/leastActiveDay/
@@ -13,25 +20,12 @@ import AIUsageDashboardCore
 struct OverviewView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
 
-    /// Open a provider's detail tab (wired by `DashboardView` to set nav state).
+    /// Open a provider's drill-in (wired by `DashboardView` to set nav state).
     var onOpen: (ProviderID) -> Void = { _ in }
     /// Route to the Connections screen for a provider with no live quota.
     var onConnect: () -> Void = {}
-    /// Open the `+` add-agent sheet (blank-canvas primary action + header button).
+    /// Open the `+` add-agent sheet (blank-canvas primary action).
     var onAddAgent: () -> Void = {}
-    /// Jump to the full value surface (#23 / #41).
-    var onOpenValue: () -> Void = {}
-
-    /// Read-only here — Overview only summarises the value surface; the plan-cost
-    /// fields themselves live in Settings.
-    private let planCosts = MaxxerPlanCostStore()
-
-    /// The ranges the segmented selector offers (drives `viewModel.range`).
-    private static let rangeOptions: [(range: UsageRange, label: String)] = [
-        (.sevenDay, "7D"),
-        (.thirtyDay, "30D"),
-        (.ninetyDay, "90D"),
-    ]
 
     // MARK: Snapshot-derived display state
 
@@ -84,12 +78,21 @@ struct OverviewView: View {
     }
 
     /// Today's per-metric usage merged across available providers — straight off
-    /// the published snapshots via the existing Core merge.
+    /// the published snapshots via the existing Core merge. Shared with the
+    /// `01 / OVERVIEW` tab pill so the hero and the pill can never disagree.
     private var mergedToday: TokenUsage {
-        viewModel.snapshots
-            .filter { viewModel.isAvailable($0.providerID) }
-            .map(\.todayUsage)
-            .reduce(TokenUsage.unavailable) { $0.merging($1) }
+        MaxxerMath.mergedTodayUsage(in: ProviderVisibility.visible(viewModel.snapshots).filter {
+            viewModel.isAvailable($0.providerID)
+        })
+    }
+
+    /// All-time tokens across visible providers (#41) — shown as a hero tile so
+    /// the number survived the Value summary card's removal.
+    private var lifetime: MaxxerMath.LifetimeTotal? {
+        MaxxerMath.lifetimeTotal(
+            in: viewModel.snapshots,
+            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
+        )
     }
 
     /// Element-wise union of the visible providers' §4 heatmaps: a cell is `nil`
@@ -113,21 +116,16 @@ struct OverviewView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            HairlineDivider()
-
+        Group {
             if entries.isEmpty {
                 blankCanvas
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         heroCard
-                        valueCard
                         chartsRow
-                        patternsCard
-                        heatmapCard
-                        providersCard
+                        patternsRow
+                        limitsCard
                     }
                     .padding(20)
                 }
@@ -136,72 +134,19 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionLabel("Overview")
-                Text(aggregateLine)
-                    .font(.mono(size: 18))
-                    .monospacedDigit()
-                    .foregroundColor(viewModel.aggregateUtilization == nil ? PadzyTheme.muted : PadzyTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-            }
-            Spacer(minLength: 12)
-            rangeSelector
-            AddAgentButton { onAddAgent() }
-                .fixedSize()
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
-    }
-
-    /// Segmented range control bound to `viewModel.range`: hairline-bounded,
-    /// accent tick under the active option (accent = active state, not a data hue).
-    private var rangeSelector: some View {
-        HStack(spacing: 0) {
-            ForEach(Self.rangeOptions, id: \.label) { option in
-                let isSelected = viewModel.range == option.range
-                Button {
-                    viewModel.range = option.range
-                } label: {
-                    Text(option.label)
-                        .font(.mono(size: 11))
-                        .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.muted)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .overlay(alignment: .bottom) {
-                            Rectangle()
-                                .fill(isSelected ? PadzyTheme.accent : Color.clear)
-                                .frame(height: 2)
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .fill(PadzyTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .stroke(PadzyTheme.muted.opacity(0.25), lineWidth: 1)
-        )
-    }
-
     // MARK: Hero
 
+    /// TODAY: the headline total and its delta on the left, every component
+    /// metric as a tile on the right — one row of the pane, no chart, because the
+    /// full-size trend card sits directly beneath it.
     private var heroCard: some View {
-        SectionCard("Today") {
-            HStack(alignment: .top, spacing: 20) {
+        SectionCard("Today", trailing: {
+            ConfidenceBadge(confidence: mergedToday.confidence)
+        }) {
+            HStack(alignment: .top, spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—")
-                        .font(.mono(size: 52))
+                        .font(.mono(size: 46))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
                         .lineLimit(1)
@@ -210,72 +155,29 @@ struct OverviewView: View {
                         DeltaLabel(delta: delta, caption: AnalyticsFormat.deltaCaption(viewModel.range))
                     }
                 }
-                Spacer(minLength: 12)
-                // Single total-tokens trend (per-metric hero sparklines need a
-                // per-day metric split that doesn't exist yet — out of scope).
-                AreaTrendChart(values: viewModel.overviewTrend.map(\.tokens))
-                    .frame(width: 200, height: 64)
-                    .accessibilityHidden(true)
-            }
+                .frame(minWidth: 140, alignment: .leading)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
-                StatCard(kicker: "Input", value: format(mergedToday.inputTokens))
-                StatCard(kicker: "Output", value: format(mergedToday.outputTokens))
-                StatCard(kicker: "Cache read", value: format(mergedToday.cacheReadTokens))
-                StatCard(kicker: "Cache write", value: format(mergedToday.cacheCreationTokens))
+                // Capped width so all five tiles sit on one row at comfortable
+                // widths instead of leaving a 4 + 1 orphan, and still wrap cleanly
+                // when the window is squeezed.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 116, maximum: 190), spacing: 10)], spacing: 10) {
+                    StatCard(kicker: "Input", value: format(mergedToday.inputTokens))
+                    StatCard(kicker: "Output", value: format(mergedToday.outputTokens))
+                    StatCard(kicker: "Cache read", value: format(mergedToday.cacheReadTokens))
+                    StatCard(kicker: "Cache write", value: format(mergedToday.cacheCreationTokens))
+                    StatCard(kicker: "All-time",
+                             value: lifetime.map { TokenFormatter.format($0.tokens) } ?? "—",
+                             deltaCaption: lifetime?.usedDailyFallback == true ? "at least" : nil)
+                }
+                // Without this the grid sizes to its content and leaves the right
+                // third of the card empty while the tiles wrap 4 + 1.
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     private func format(_ value: Int?) -> String {
         value.map { TokenFormatter.format($0) } ?? "—"
-    }
-
-    // MARK: Value
-
-    /// Compact summary of the value surface (#23) plus the all-time total (#41).
-    /// Deliberately shows only the two headline numbers — the per-agent table
-    /// lives on the Value pane, one click away.
-    private var valueCard: some View {
-        let scorecard = MaxxerValueEngine.scorecard(
-            snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
-            planCosts: planCosts,
-            now: Date()
-        )
-        let lifetime = MaxxerMath.lifetimeTotal(
-            in: viewModel.snapshots,
-            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
-        )
-
-        return SectionCard("Value", trailing: {
-            Button(action: onOpenValue) {
-                Text("OPEN →")
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.ink)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open the value surface")
-        }) {
-            HStack(alignment: .top, spacing: 24) {
-                StatCard(kicker: "Plan value",
-                         value: MaxxerMath.formatMultiple(scorecard.totalValueMultiple),
-                         boxed: false)
-                StatCard(kicker: "All-time tokens",
-                         value: lifetime.map { TokenFormatter.format($0.tokens) } ?? "—",
-                         boxed: false)
-                if let tier = scorecard.tier {
-                    TierChip(tier: tier)
-                }
-            }
-
-            if scorecard.totalValueMultiple == nil {
-                Text("Add each agent's monthly plan price in Settings to see what your plans are actually worth.")
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 
     // MARK: Charts row
@@ -298,45 +200,56 @@ struct OverviewView: View {
         }
     }
 
-    // MARK: Patterns
+    // MARK: Patterns + heatmap
 
-    private var patternsCard: some View {
-        SectionCard("Patterns", trailing: {
-            Text(AnalyticsFormat.rangeTitle(viewModel.range))
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-        }) {
-            let streak = viewModel.streak
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
-                StatCard(kicker: "Current streak",
-                         value: streak.current > 0 ? "\(streak.current) DAYS" : "—")
-                StatCard(kicker: "Longest streak",
-                         value: streak.longest > 0 ? "\(streak.longest) DAYS" : "—")
-                StatCard(kicker: "Best day",
-                         value: viewModel.bestDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                         deltaCaption: viewModel.bestDay.map { AnalyticsFormat.shortDay($0.date) })
-                StatCard(kicker: "Least active",
-                         value: viewModel.leastActiveDay.map { TokenFormatter.format($0.tokens) } ?? "—",
-                         deltaCaption: viewModel.leastActiveDay.map { AnalyticsFormat.shortDay($0.date) })
-                StatCard(kicker: "Daily average",
-                         value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—")
+    /// Two range-governed cards side by side at comfortable widths, stacked when
+    /// squeezed — same adaptive grid as the charts row above, so the pane reads as
+    /// one column rhythm rather than a stack of full-width slabs.
+    private var patternsRow: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 16)], alignment: .leading, spacing: 16) {
+            SectionCard("Patterns", trailing: {
+                Text(AnalyticsFormat.rangeTitle(viewModel.range))
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+            }) {
+                let streak = viewModel.streak
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 116), spacing: 10)], spacing: 10) {
+                    StatCard(kicker: "Current streak",
+                             value: streak.current > 0 ? "\(streak.current) DAYS" : "—")
+                    StatCard(kicker: "Longest streak",
+                             value: streak.longest > 0 ? "\(streak.longest) DAYS" : "—")
+                    StatCard(kicker: "Best day",
+                             value: viewModel.bestDay.map { TokenFormatter.format($0.tokens) } ?? "—",
+                             deltaCaption: viewModel.bestDay.map { AnalyticsFormat.shortDay($0.date) })
+                    StatCard(kicker: "Least active",
+                             value: viewModel.leastActiveDay.map { TokenFormatter.format($0.tokens) } ?? "—",
+                             deltaCaption: viewModel.leastActiveDay.map { AnalyticsFormat.shortDay($0.date) })
+                    StatCard(kicker: "Daily average",
+                             value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—")
+                }
+            }
+
+            SectionCard("Daily activity") {
+                ActivityHeatmap(matrix: combinedHeatmap ?? [])
+                    .frame(minHeight: 96)
             }
         }
     }
 
-    // MARK: Heatmap
+    // MARK: Limits
 
-    private var heatmapCard: some View {
-        SectionCard("Daily activity") {
-            ActivityHeatmap(matrix: combinedHeatmap ?? [])
-                .frame(minHeight: 96)
-        }
-    }
-
-    // MARK: Providers
-
-    private var providersCard: some View {
-        SectionCard("Providers") {
+    /// Per-provider quota pressure — the chip strip above carries identity and
+    /// volume, this carries the bar, the pace notch, the reset countdown and the
+    /// connect affordance. The aggregate headline that used to sit in the pane
+    /// header now labels this card, which is the thing it actually summarises.
+    private var limitsCard: some View {
+        SectionCard("Limits", trailing: {
+            Text(aggregateLine)
+                .font(.mono(size: 10))
+                .monospacedDigit()
+                .foregroundColor(viewModel.aggregateUtilization == nil ? PadzyTheme.muted : PadzyTheme.ink)
+                .lineLimit(1)
+        }) {
             VStack(spacing: 0) {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     ProviderOverviewRow(
