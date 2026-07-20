@@ -42,6 +42,15 @@ struct MenuBarLabel: View {
         MaxxerMath.tightestWindow(in: viewModel.utilization)
     }
 
+    /// All-time tokens across visible providers (#41). Hidden agents are skipped
+    /// here exactly as they are in the sidebar and the rest of the menu bar.
+    private var lifetimeTotal: MaxxerMath.LifetimeTotal? {
+        MaxxerMath.lifetimeTotal(
+            in: viewModel.snapshots,
+            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
+        )
+    }
+
     private var mark: some View {
         Image(nsImage: TokeiStatusIcon.image(percent: tightest?.usedPercent))
     }
@@ -85,6 +94,17 @@ struct MenuBarLabel: View {
                         .monospacedDigit()
                 } else {
                     // No live quota anywhere yet — honest placeholder, never a "0%".
+                    Text("—")
+                }
+
+            case .lifetime:
+                if let lifetimeTotal {
+                    // Still ONE aggregate value: `TokenFormatter` caps it at a
+                    // "1.2B"-shaped string, so the item's width stays fixed.
+                    Text(TokenFormatter.format(lifetimeTotal.tokens))
+                        .monospacedDigit()
+                } else {
+                    // No provider reports a lifetime figure or keeps daily logs.
                     Text("—")
                 }
             }
