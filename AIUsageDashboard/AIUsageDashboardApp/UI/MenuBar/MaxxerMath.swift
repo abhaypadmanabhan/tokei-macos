@@ -1,14 +1,21 @@
 import Foundation
 import AIUsageDashboardCore
 
-/// Pure math for the Token-Maxxer surface — pace against a linear burn and the
-/// single tightest window across providers. No I/O, no clock, no SwiftUI: every
+/// Pure math for the Token-Maxxer surface — pace against a linear burn, the
+/// single tightest window across providers, lifetime token totals (#41), and the
+/// value-surface number formatting (#23). No I/O, no clock, no SwiftUI: every
 /// value is derived from arguments so the same inputs always yield the same
 /// output, which is what makes it unit-testable from the Core test bundle even
 /// though it physically lives under `UI/`.
 ///
-/// It reads only the frozen `QuotaWindow`/`Utilization` shapes — it never mutates
-/// Core state and holds no credentials (see the `Utilization` security invariant).
+/// It reads only the frozen `QuotaWindow`/`Utilization`/`ProviderSnapshot` shapes
+/// — it never mutates Core state and holds no credentials (see the `Utilization`
+/// security invariant).
+///
+/// This file is the app's ONLY `UI/` source compiled into `AIUsageDashboardCoreTests`
+/// (see `project.yml`), so pure logic that the value/lifetime surfaces need
+/// covered lives here rather than beside its view. It therefore may reference
+/// only Foundation + `AIUsageDashboardCore` — never another app-target type.
 public enum MaxxerMath {
 
     // MARK: - Linear-pace verdict
@@ -145,4 +152,126 @@ public enum MaxxerMath {
               tightest.usedPercent - least.usedPercent >= minSpread else { return nil }
         return least
     }
+
+    // MARK: - Lifetime totals (#41)
+
+    /// All-time tokens across providers, plus how much of that figure is a
+    /// fallback rather than a provider-reported lifetime number.
+    public struct LifetimeTotal: Sendable, Equatable {
+        /// Summed all-time tokens across contributing providers.
+        public let tokens: Int
+        /// Worst confidence among the contributors — the headline can only be as
+        /// trustworthy as its weakest input.
+        public let confidence: MetricConfidence
+        /// True when at least one provider had no `lifetimeUsage` and was summed
+        /// from `dailyTotals` instead, so the total is a floor, not a true all-time.
+        public let usedDailyFallback: Bool
+        /// How many providers actually contributed a number.
+        public let contributingProviders: Int
+
+        public init(tokens: Int, confidence: MetricConfidence, usedDailyFallback: Bool, contributingProviders: Int) {
+            self.tokens = tokens
+            self.confidence = confidence
+            self.usedDailyFallback = usedDailyFallback
+            self.contributingProviders = contributingProviders
+        }
+    }
+
+    /// Aggregate all-time tokens, mirroring the `.lifetime` branch of
+    /// `UsageAnalytics.tokens(for:range:)` (`UsageAnalytics.swift:247`):
+    /// prefer the provider's own `lifetimeUsage`, else sum its `dailyTotals`.
+    ///
+    /// Differs from that line in ONE deliberate way: a provider with neither
+    /// source contributes *nothing* instead of `0`. Summing zeros would let
+    /// Cursor/Antigravity/Gemini (which report `nil` lifetime by design) silently
+    /// drag a real total toward a number the UI would then present as all-time
+    /// truth. Returns `nil` when no provider contributed at all, so the surface
+    /// renders "—" rather than a confident "0 tokens all-time".
+    public static func lifetimeTotal(
+        in snapshots: [ProviderSnapshot],
+        hiddenProviders: Set<ProviderID> = []
+    ) -> LifetimeTotal? {
+        var tokens = 0
+        var confidences: [MetricConfidence] = []
+        var usedFallback = false
+        var contributors = 0
+
+        for snapshot in snapshots where !hiddenProviders.contains(snapshot.providerID) {
+            if let reported = snapshot.lifetimeUsage?.totalTokens {
+                tokens += reported
+                confidences.append(snapshot.lifetimeUsage?.confidence ?? .unavailable)
+                contributors += 1
+            } else if let daily = snapshot.dailyTotals, !daily.isEmpty {
+                tokens += daily.values.reduce(0, +)
+                // Locally summed day buckets — exactly what `.localParsed` means.
+                confidences.append(.localParsed)
+                usedFallback = true
+                contributors += 1
+            }
+        }
+
+        guard contributors > 0 else { return nil }
+
+        return LifetimeTotal(
+            tokens: tokens,
+            confidence: worstConfidence(confidences),
+            usedDailyFallback: usedFallback,
+            contributingProviders: contributors
+        )
+    }
+
+    /// Degradation order shared with `TokenUsage.merging` — a merged metric is only
+    /// as good as its weakest input.
+    public static func worstConfidence(_ confidences: [MetricConfidence]) -> MetricConfidence {
+        let order: [MetricConfidence] = [.exact, .providerReported, .localParsed, .estimated, .unavailable]
+        let ranks = confidences.compactMap { order.firstIndex(of: $0) }
+        guard let worst = ranks.max() else { return .unavailable }
+        return order[worst]
+    }
+
+    // MARK: - Value-surface formatting (#23)
+
+    /// Placeholder for every unknown number on the value surface. An unset plan
+    /// cost or an unpriceable provider must never render as "$0.00" or "0×".
+    public static let unknownPlaceholder = "—"
+
+    /// USD in the fixed two-decimal form the value table uses (`$684.20`).
+    /// Locale-independent on purpose: these are USD figures from the pricing
+    /// tables, not amounts in the user's local currency, and a locale-shifted
+    /// separator would also make the table's mono columns stop lining up.
+    public static func formatUSD(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return unknownPlaceholder }
+        return usdFormatter.string(from: NSNumber(value: value)).map { "$\($0)" } ?? unknownPlaceholder
+    }
+
+    /// Value multiple as `3.4×` (true multiplication sign, not the letter x).
+    /// `nil`/non-finite renders the placeholder — a multiple over an unset or
+    /// zero plan cost is undefined, never "0×" or "∞".
+    public static func formatMultiple(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return unknownPlaceholder }
+        return "\(multipleFormatter.string(from: NSNumber(value: value)) ?? "\(value)")\u{00D7}"
+    }
+
+    private static let usdFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = ","
+        formatter.decimalSeparator = "."
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }()
+
+    private static let multipleFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.usesGroupingSeparator = false
+        formatter.decimalSeparator = "."
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        return formatter
+    }()
 }
