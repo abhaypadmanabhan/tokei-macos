@@ -62,7 +62,6 @@ struct ValueView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            HairlineDivider()
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -73,32 +72,27 @@ struct ValueView: View {
 
     // MARK: Header
 
+    /// Pane header. The `02 / VALUE` tab pill above already prints the total
+    /// multiple and names the surface, so this header no longer repeats either —
+    /// it carries what the pill cannot: the tier and what the tier means.
+    /// Suppressed entirely when there is no tier to state, so the states below
+    /// start at the top of the pane instead of under an empty bar.
+    @ViewBuilder
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionLabel("Value")
-                headline
-            }
-            Spacer(minLength: 12)
-            if hasAnyPlanCost, let tier = scorecard.tier {
+        if hasAnyPlanCost, let tier = scorecard.tier {
+            HStack(alignment: .center, spacing: 12) {
                 TierChip(tier: tier)
+                Text(tier.blurb)
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            HairlineDivider()
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
-    }
-
-    /// "3.4× PLAN VALUE" — or an honest degradation when the multiple can't be
-    /// computed, which is a different sentence from a small multiple.
-    private var headline: some View {
-        let multiple = scorecard.totalValueMultiple
-        return Text(multiple == nil ? "— PLAN VALUE" : "\(MaxxerMath.formatMultiple(multiple)) PLAN VALUE")
-            .font(.mono(size: 18))
-            .monospacedDigit()
-            .foregroundColor(multiple == nil ? PadzyTheme.muted : PadzyTheme.ink)
-            .lineLimit(1)
-            .minimumScaleFactor(0.6)
     }
 
     // MARK: State routing
