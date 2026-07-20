@@ -38,7 +38,9 @@ public enum CursorUsageError: LocalizedError, Sendable {
 
 public actor CursorUsageClientImpl: CursorUsageClient {
     private let urlSession: URLSession
-    private let cooldownStore: CooldownStore
+    private let explicitCooldownURL: URL?
+    private let storageDirectory: URL
+    private let legacyCooldownStore: CooldownStore?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (TimeInterval) async -> Void
 
@@ -51,11 +53,32 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     ) {
-        self.urlSession = urlSession
-        self.cooldownStore = CooldownStore(
-            cooldownURL: cooldownURL ?? Self.defaultStorageURL(filename: "cursor-usage-cooldown.json"),
-            now: now
+        self.init(
+            urlSession: urlSession,
+            explicitCooldownURL: cooldownURL,
+            storageDirectory: nil,
+            now: now,
+            sleep: sleep
         )
+    }
+
+    internal init(
+        urlSession: URLSession,
+        explicitCooldownURL: URL?,
+        storageDirectory: URL?,
+        now: @escaping @Sendable () -> Date,
+        sleep: @escaping @Sendable (TimeInterval) async -> Void
+    ) {
+        self.urlSession = urlSession
+        self.explicitCooldownURL = explicitCooldownURL
+        let directory = storageDirectory ?? Self.defaultStorageDirectory()
+        self.storageDirectory = directory
+        self.legacyCooldownStore = explicitCooldownURL == nil
+            ? CooldownStore(
+                cooldownURL: directory.appendingPathComponent("cursor-usage-cooldown.json"),
+                now: now
+            )
+            : nil
         self.now = now
         self.sleep = sleep
     }
@@ -73,7 +96,8 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     }
 
     private func get(_ url: URL, cookie: String, accept: String) async throws -> Data {
-        if cooldownStore.isActive(at: now()) {
+        let referenceDate = now()
+        if isCooldownActive(for: cookie, at: referenceDate) {
             throw CursorUsageError.cooldownActive
         }
 
@@ -98,6 +122,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             case 200..<300:
                 return data
             case 429:
+                let cooldownStore = self.cooldownStore(for: cookie)
                 let retryAfter = cooldownStore.retryAfter(from: httpResponse)
                 lastRetryAfter = retryAfter
                 if attempt < Self.maxAttempts {
@@ -108,16 +133,50 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             }
         }
 
-        cooldownStore.record(duration: lastRetryAfter)
+        cooldownStore(for: cookie).record(duration: lastRetryAfter)
         throw CursorUsageError.rateLimited(retryAfter: lastRetryAfter)
     }
 
-    private static func defaultStorageURL(filename: String) -> URL {
+    private func cooldownStore(for cookie: String) -> CooldownStore {
+        let url = explicitCooldownURL ?? perCookieCooldownURL(for: cookie)
+        return CooldownStore(cooldownURL: url, now: now)
+    }
+
+    private func perCookieCooldownURL(for cookie: String) -> URL {
+        let hash = CursorSession.identityHash(for: cookie)
+        return storageDirectory.appendingPathComponent("cursor-usage-cooldown-\(hash).json")
+    }
+
+    private func isCooldownActive(for cookie: String, at referenceDate: Date) -> Bool {
+        if cooldownStore(for: cookie).isActive(at: referenceDate) {
+            return true
+        }
+        // Migration: an existing global cooldown file (pre-per-cookie schema) is
+        // honored for its remaining duration, then removed. New cooldowns are
+        // written per-cookie, so this fallback eventually disappears.
+        guard let legacy = legacyCooldownStore else { return false }
+        if legacy.isActive(at: referenceDate) {
+            return true
+        }
+        // Once the legacy cooldown has elapsed, clean it up so it never becomes
+        // a permanently stuck file.
+        cleanupExpiredLegacyCooldownIfNeeded()
+        return false
+    }
+
+    private func cleanupExpiredLegacyCooldownIfNeeded() {
+        guard let legacy = legacyCooldownStore else { return }
+        legacy.remove()
+    }
+
+    private static func defaultStorageDirectory() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return base
-            .appendingPathComponent("AIUsageDashboard", isDirectory: true)
-            .appendingPathComponent(filename)
+        return base.appendingPathComponent("AIUsageDashboard", isDirectory: true)
+    }
+
+    private static func defaultStorageURL(filename: String) -> URL {
+        defaultStorageDirectory().appendingPathComponent(filename)
     }
 
     private static let usageEventsCSVURL = URL(

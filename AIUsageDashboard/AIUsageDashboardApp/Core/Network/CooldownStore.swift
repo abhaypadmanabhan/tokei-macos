@@ -86,6 +86,18 @@ struct CooldownStore: Sendable {
         return try? Self.decoder.decode(Cooldown.self, from: data)
     }
 
+    /// Removes the persisted cooldown file, ignoring any filesystem error.
+    /// Used during one-time migration cleanup so an expired cooldown never
+    /// becomes a stuck file.
+    func remove() {
+        try? FileManager.default.removeItem(at: cooldownURL)
+    }
+
+    /// Test helper: returns the on-disk encoding for a cooldown without writing it.
+    func encodedCooldown(_ cooldown: Cooldown) throws -> Data {
+        try Self.encoder.encode(cooldown)
+    }
+
     struct Cooldown: Codable, Equatable {
         let until: Date
     }

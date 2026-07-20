@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Assembles the WorkOS session cookie Cursor's web dashboard endpoints require.
 ///
@@ -34,7 +35,7 @@ enum CursorSession {
 
     /// Mirrors the Cursor CLI's `normalizeCursorSubject`:
     /// - a subject ending in `|user_XXXX` (any provider prefix) → just `user_XXXX`
-    /// - a subject matching `^(google-oauth2|github|oidc|auth0)|<id>$` → verbatim
+    /// - a subject matching `^(google-oauth2|github|oidc|auth0)\|<id>$` → verbatim
     /// - anything else → `nil`
     static func normalizeSubject(_ subject: String) -> String? {
         if let barIndex = subject.lastIndex(of: "|") {
@@ -48,6 +49,17 @@ enum CursorSession {
             return subject
         }
         return nil
+    }
+
+    /// Stable, non-reversible identifier for a cookie. Used as a filename suffix
+    /// so per-account cooldown files don't collide and the raw cookie never appears
+    /// on disk. SHA-256 truncated to 128 bits (32 hex chars) gives ample collision
+    /// resistance for this local file-keying purpose.
+    static func identityHash(for cookie: String) -> String {
+        SHA256.hash(data: Data(cookie.utf8))
+            .prefix(16)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 
     private static func decodeBase64URL(_ segment: String) -> Data? {
