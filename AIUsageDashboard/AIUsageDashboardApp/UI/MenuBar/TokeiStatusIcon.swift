@@ -50,7 +50,10 @@ enum TokeiStatusIcon {
     /// A small lick rising just past the tallest bar's tip — subtle, not a spike.
     private static let flameRect = CGRect(x: 12.9, y: 0.6, width: 3.4, height: 4.0)
 
-    private static let accentColor = NSColor(srgbRed: 0xFF / 255, green: 0x3B / 255, blue: 0x70 / 255, alpha: 1)
+    // Single-sourced from `PadzyTheme.accent`; sRGB-resolved for bitmap drawing,
+    // with a defensive fallback only if the conversion ever returns nil.
+    private static let accentColor = NSColor(PadzyTheme.accent).usingColorSpace(.sRGB)
+        ?? NSColor(srgbRed: 0xFF / 255, green: 0x3B / 255, blue: 0x70 / 255, alpha: 1)
     private static let dimAlpha: CGFloat = 0.3
 
     private static var cache: [String: NSImage] = [:]

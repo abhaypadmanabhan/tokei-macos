@@ -1,189 +1,69 @@
-# AI Usage Dashboard (native macOS) — Plan
+# WP-5 — Visual redesign wiring (Tokei Dashboard.html → SwiftUI)
 
-## Phase 0 — Research (in progress)
-- [x] Local scout: verify provider data on this machine
-- [x] Deep-research workflow — stopped early to save tokens; 31/~40 agent results salvaged
-      → raw: research/raw-findings.md, distilled: research/provider-research.md
-      (verify phase cut short — treat unverified claims section with caution)
+Branch `patch/2026-07-19/ui-ia-consolidation`. Scope lock: `AIUsageDashboardApp/UI/` + `Assets.xcassets/ProviderMarks/` + `MenuBar/`. Never touch `Core/`, `App/`, `project.yml`, or Bible §4 frozen contracts. Wire new UI to the REAL Core view models — the mockup's providers array is illustrative only.
 
-## Local scout findings (2026-07-05)
-- **Codex** `~/.codex/sessions/**/*.jsonl` — 38 files. `token_count` events carry:
-  - `rate_limits.primary`: `used_percent`, `window_minutes: 300` (5h session), `resets_at` (epoch) — plus likely `secondary` = weekly window
-  - `total_token_usage`: input / cached_input / output / reasoning_output / total
-  - `auth.json`: OAuth tokens (access_token, account_id) — enables account usage endpoints if needed
-  - → Session %, reset countdown, full token splits: ALL LOCAL, no network
-- **Claude Code** `~/.claude/projects/**/*.jsonl` — 639 files, 30 projects. Per-message `usage`:
-  input / cache_creation / cache_read / output tokens → ccusage-style aggregation (daily/weekly/lifetime)
-  - Session/weekly LIMITS not in transcripts — need OAuth usage endpoint (research pending)
-- **Cursor** — `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (SQLite) present; dashboard API needs session auth (research pending)
-- **Antigravity** — installed (`~/Library/Application Support/Antigravity`, `~/.antigravity`); data source TBD
-- **Cline** — CLI installed at `~/.cline` (601MB data). Per-message `metrics` in
-  `~/.cline/data/sessions/<id>/<id>.messages.json`: inputTokens / outputTokens /
-  cacheReadTokens / cacheWriteTokens / **cost** ($) + `modelInfo` (provider/model, e.g. cline-pass/glm-5.2).
-  `sessions.db` SQLite: session_id, provider, model, started/ended_at, status.
-  `providers.json`: cline + cline-pass configured. → Tokens + real cost: ALL LOCAL.
-  Credits balance/subscription: needs app.cline.bot API (research pending)
+## Locked decisions (2026-07-20)
+- Settings = **380px right drawer + scrim** (plan-cost inline; data-sources → Agents tab). Retire the 7-card `SettingsPane`.
+- Palette = **migrate PadzyTheme app-wide** to the darker mockup ramp. Re-verify menu bar + status icon after.
+- Logos = **refine existing `ProviderMark` vector marks, tint per-agent**. Draw any missing (codex/cline/opencode/gemini).
 
-## Phase 1 — Architecture + design (after research)
-- [ ] Provider capability matrix → final report
-- [ ] Architecture doc (provider plugin protocol, Keychain, SwiftData, WidgetKit, refresh)
-- [ ] /padzy-os design pass for UI
-- [ ] Implementation plan split into agent-delegable work packages
+## Held directives
+- No `01/` `02/` numbered kickers (plain tab labels; unnumbered mono section kickers OK).
+- Confidence SUBTLE: dotted underline + `title=`/help tooltip. No shouting chips. Drill header may show one small tier word.
+- Heatmap + donut STAY on Overview.
+- Mono for numbers/paths/kickers ONLY; sans for names/body/buttons. 5-step ink ramp for hierarchy.
+- Per-agent tints are DATA/identity color (low-chroma); accent FF3B70 stays state-only.
+- All `tk-*` animations need a `prefers-reduced-motion` static path.
+- Keep the 3 real strengths: honest empty/loading/error, `—` not `0`, ViewThatFits reflow @ 640×480.
 
-## Phase 2 — Build (delegated grunt work: Codex, Kimi, Cursor, GLM, Antigravity agents)
-- [x] Xcode project scaffold (Kimi; xcodegen, builds clean, 8 tests pass)
-- [ ] Core: provider protocol, local parsers (Codex, Claude first)
-- [ ] Menu bar + dashboard UI
-- [ ] Widgets, notifications, settings
+## Phase 0 — Foundation: tokens + motion  (DONE — build green)
+- [x] PadzyTheme app-wide dark ramp: ground `0B0B0D` · window/cell `0F0F12` · panel `131316` · hairline `1C1C21` · border2 `26262C` · scrim.
+- [x] Ink ramp: `ECECF1 · C4C4CC · 9A9AA4 · 6E6E78 · 54545C` (+ good/warn/danger status hues).
+- [x] Accent `FF3B70` + hover `FF5A86`. `quotaColor(pct)`. `PaceVerdict(pct,elapsed)` → word+color.
+- [x] `AgentTint.color(_:)` map (new file, needs Core).
+- [x] `PadzySpace` scale + `Font.sans` + `Font.mono(weight:)`.
+- [x] `PadzyMotion` tokens (settle/quick/toggle). Radii add window 10 / cell 4 / chip 4.
+- [x] `TokeiStatusIcon` accent now `NSColor(PadzyTheme.accent)`; heatmap ramp + areaGradient recoloured neutral; TokenFormatter → mockup fmt (nil→"—").
 
-## Phase 3 — Fable audit + MVP orchestration (2026-07-06)
-Audit verdict: builds clean, 8/8 tests pass, architecture sound — BUT parser targets
-a fictional JSONL schema. Verified on real logs: dedupe dead (2.34x overcount:
-2.63B naive vs 1.12B correct) + fractional-second timestamps unparsed (today/week/month
-always 0). Tests pass because fixtures use the same fictional schema.
+## Phase 1 — Agent identity / logos  (1 commit)
+- [ ] Tinted glyph container (`glyphCss` equiv): rounded square, `tint@14%` bg, `tint@55%` border, tint text/mark.
+- [ ] Refine `ProviderMark`; ensure all 7 marks exist + tint per-agent. One toggle style (`PadzyToggle`) app-wide; retire native `.switch`.
 
-Decisions:
-- Persistence = JSON file store, NOT SwiftData (strict concurrency `complete` in Core).
-- Widget target DEFERRED post-MVP (app-group/signing risk).
-- Codex agent NOT used; Fable does integration.
-- .xcodeproj gitignored — regenerate via `xcodegen generate`.
-- Padzy theme "aitracker" proposed (cool dark + signal pink #FF3B70) — pending Abhay confirm;
-  see AIUsageDashboard/docs/07-padzy-theme.md.
+## Phase 2 — Shell  (1–2 commits)
+- [ ] TabBar: plain `Overview / Value / Agents`, 2px tick, no kicker. Range chips only on Overview+usage. Gear → settings drawer.
+- [ ] Pressure banner (tightest live quota; bg tinted by pct).
+- [ ] Persistent status bar (sync dot+label, conf mix, path, Sync now).
+- [ ] Settings drawer overlay (scrim + 380px): plan cost · quota alerts (steppers) · appearance+accent · notifications · version/update. Real controls only.
+- [ ] Add-agent drawer (detected-first + all agents). Wire to real Core state.
 
-Work packages (prompts in tasks/agent-prompts/):
-- [x] A Kimi — persistence (JSON store + daily rollups) + FSEvents watcher + auto-sync — branch agent/kimi-storage-watcher
-- [x] B Cursor — parser rewrite vs real schema + dedupe + tests — branch agent/cursor-parser
-- [x] C Antigravity — Padzy UI: dashboard, menu bar live count, shared VM — branch agent/antigravity-ui
-- [x] D Fable — review diffs, merge, integrate updates stream into VM, build/tests, final report
+## Phase 3 — Overview  (1–2 commits)
+- [ ] Metric selector Usage / Quota. Hero 62px mono + delta + sub.
+- [ ] Main line/area chart (neutral ink, cap line, accent end dot, hover). Restyle `LineTrendChart`.
+- [ ] Agent grid (headroom dot · tinted glyph · name · stat + confidence underline). Replaces chip-strip-as-KPI.
+- [ ] Usage-split donut (per-agent tint) + legend. Weekday bars (tk-grow, busiest=accent). Daily-avg + active-streak. Heatmap (7×24 single neutral hue) + when-you-work.
 
-## Definition of done (MVP) — ALL MET 2026-07-06
-- [x] Claude tokens correct vs independent dedupe baseline (<0.1% divergence; delta = live log growth between runs)
-- [x] Dashboard: today/7D/30D/lifetime + confidence labels; other providers marked unavailable (screenshot-verified)
-- [x] Menu bar: live today total (⌾ 20.9M observed) + sync status
-- [x] Auto-refresh on ~/.claude/projects changes (observed: SYNCED advanced + TODAY grew with no manual refresh)
-- [x] History persisted to Application Support (usage-store.json written on first run)
-- [x] Build + all 27 tests green
+## Phase 4 — Value  (1 commit)
+- [ ] PLAN VALUE hero 84px + tier chip + insight (◆). Per-agent rows (plan→api w/ confidence underline, mult). TOTAL row. Excluded note.
 
-Integration fixes by Fable post-merge:
-- .DS_Store in ~/.claude/projects crashed log discovery (caught by new real-logs smoke test) → skip non-directories
-- Daily rollup stored lifetime-cumulative → changed to per-day todayUsage (lifetime shrinks on log rotation)
-- Wired SyncEngine.updates AsyncStream + startAutoSync into DashboardViewModel (beginAutoSync, idempotent)
-- Deleted unreferenced .jsonl fixtures; added RealLogsSmokeTests
+## Phase 5 — Agents tab  (1 commit)
+- [ ] Promote Connections → 3rd tab. Per-agent cards: tinted glyph · name · tier chip · path · Show toggle · watch dot+rescan · LIVE QUOTA state (off/connecting/live) toggle.
 
-Known limitations (accepted for MVP):
-- SyncEngine stopAutoSync→startAutoSync cycle dead (AsyncStream terminates on cancel); app starts auto-sync once at launch
-- updates stream single-consumer (the shared view model)
-- Padzy theme "aitracker" still pending Abhay confirmation
+## Phase 6 — Drill-in (ProviderDetail)  (1–2 commits)
+- [ ] Back · tinted glyph · name · route-work chip · planLabel · confidence · meta grid · insight · gauge+verdict · stats.
+- [ ] PLAN & CREDITS (plan-only variant: credits bar, not-measured note, enable-sync). Quota-windows-by-model + pace markers. Daily history (agent tint). Token split. De-dup the quota-row shared with the shell.
 
-## Leg 3 — Antigravity UI (current session)
-- [x] Add selectedProvider & selection logic to DashboardViewModel
-- [x] Implement available providers checks & keyboard navigation helpers
-- [x] Generalize DashboardView to selected provider
-- [x] Add Codex Quota Gauges with countdown & warning markers
-- [x] Display Cline lifetime cost
-- [x] Update menu bar sum and list all active providers in panel
-- [x] Validate with build & test suite
+## Phase 7 — Menu bar  (1 commit)
+- [ ] Restyle popover: tokens-today hero · plan value+tier · tightest quota+dot+who · top-3 agents · Open/Quit. Readout picker (tokens/quota/all-time/icon).
 
+## Phase 8 — States · reflow · motion  (1 commit)
+- [ ] Empty/loading/error restyled. narrow reflow <720 (agentGrid auto-fit · splitGrid 1fr · valueGrid · hide reset/conf) + 640×480 min. All tk-* w/ reduced-motion static path.
 
-## Relay (post-MVP) — COMPLETE 2026-07-06
-- [x] Leg 1 Codex — CodexProvider: tokens + REAL quota windows (verified 0.41% vs baseline; quotas live)
-- [x] Leg 2 Cursor — ClineProvider: tokens + $ cost (exact match: 131,011,355 tokens / $22.74); Cursor detection
-- [x] Leg 3 Antigravity — multi-provider UI, quota gauges w/ countdowns, cost display, menu bar sum (screenshot-verified)
-- [x] Leg 4 Kimi — notification thresholds 80/95% (11 tests, no-spam re-arm), QUOTA ALERTS toggle, docs
-- [x] Fable final: accent-as-data cost fix, full verification — 59/59 tests, build green
-Remaining post-relay: Cursor metrics (dashboard API auth), Antigravity data source, WidgetKit, app polish.
+## Phase 9 — Verify (gate before "done")
+- [ ] `xcodegen generate` → Core tests 302 green → App build.
+- [ ] Launch worktree build (DerivedData `-dfmeddobpfrxvxeqtepfotxljyha`), screenshot every state + 640×480 reflow. (No macOS computer-use tool this session → screencapture/osascript fallback or hand to user.)
+- [ ] Restore any test UserDefaults; relaunch user's dev build. Append WP-5 note to `tasks/patch-bibles/2026-07-19.md` §8.
 
-## padzy-os skill enhancement — 2026-07-06
-
-Gap analysis done (baseline: current skill cannot answer these build questions):
-dataviz/charts absent (Tokei IS a dashboard); anti-slop = one phrase; no data-formatting
-spec; focus-visible contradiction ("no glow ring" vs a11y); no overlay/scrim/toast spec;
-no dark-ground rules; no empty/error/destructive patterns; decks/PDF promised but missing;
-stale theme lists; no responsive/metrics/voice/perf thresholds.
-
-- [x] NEW `references/antislop.md` — AI-slop tell taxonomy (visual/layout/copy/motion/dataviz) + Padzy replacement per tell
-- [x] NEW `references/dataviz.md` — chart rules: one-accent series logic, hairline axes, mono ticks, stat tiles, sparklines, chart states
-- [x] NEW `references/decks-print.md` — decks, PDFs, docs surface rules
-- [x] `language.md` — data formatting, measure cap, focus-visible spec, dark-ground rules, responsive degradation, voice
-- [x] `components.md` — modal/scrim, toast, command palette, empty state, destructive pattern, control metrics
-- [x] `ux-principles.md` — perceived-performance thresholds
-- [x] `themes.md` — fix stale: volini + aitracker now locked
-- [x] `SKILL.md` — wire new refs, fix stale theme list, extend shipping checklist
-- [x] Verify: subagent probe PASSED — agent routed to dataviz.md + antislop.md via SKILL.md alone; all 5 specs compliant (focus+context series, tile anatomy, empty state, slop-free hero, focus-visible outline)
-- [x] NEW `references/image-mockups.md` — GPT Images mockup loop (prompt recipe + image→code reconciliation); wired as SKILL.md step 4
-- [x] Verify: Auto Coach probe PASSED — agent hit image-mockups.md via routing, produced full-recipe prompt (theme hexes, positive invariants, negative slop bans, aspect, single-variable variations) + correct reconciliation plan
-
-## Cursor + Antigravity connections — 2026-07-06 (active)
-
-Decision: Cursor = **A + B behind toggle**. Antigravity = offline (no decision needed).
-Data shapes machine-verified today; see [[usage-data-sources]].
-
-### Ground truth (verified on this Mac)
-- **Cursor `state.vscdb` has NO tokens.** Only `aiCodeTracking.dailyStats.v1.5.<date>` =
-  `{date, tabSuggestedLines, tabAcceptedLines, composerSuggestedLines, composerAcceptedLines}` (LINES).
-  Current `CursorStateDBParser` hunts token keys that don't exist → Cursor card empty. That's the bug.
-  Real tokens/quota = network only: `GET https://api2.cursor.sh/auth/usage`, `Authorization: Bearer <JWT>`,
-  JWT = `ItemTable['cursorAuth/accessToken']`.
-- **Antigravity `state.vscdb` fully offline.** `antigravityAuthStatus` JSON → `userStatusProtoBinaryBase64`
-  protobuf: plan at `13→1→2` = "Pro", quota ints (50000/150000/25000…). `modelCredits` protobuf →
-  available 1000 / min 50. protoc decode_raw confirmed.
-- No network layer in app yet. `ProviderSnapshot` has NO plan/email field. Settings uses `@AppStorage`.
-  New stored props MUST be mirrored in `ModelCodableExtensions.swift` (else persistence breaks).
-
-### Phase 1 — Antigravity (offline, unblocked)
-- [ ] `Core/Parsing/AntigravityStateDBParser.swift` — reuse Cursor's read-only temp-copy SQLite pattern;
-      read `antigravityAuthStatus` (JSON) + `antigravityUnifiedStateSync.modelCredits`.
-- [ ] `Core/Parsing/Protobuf/MiniProtobuf.swift` — ~120-line varint/wiretype walker, zero deps.
-      Extract plan string (13→1→2), quota ints, credits (available/min; values are nested base64).
-- [ ] Fill `AntigravityProvider`: `detectAvailability` = DB exists; `authStatus = .authenticated`;
-      `quotaWindows` = `.credits` (used/limit/remaining) + `.monthly` from quota ints;
-      `capabilities = [.localLog, .quota]`; confidence `.localParsed`.
-- [ ] Surface plan "Pro" — start with `ProviderWarning(.info)` (no schema churn); add `planName` field only
-      if UI needs it (then update `ModelCodableExtensions.swift`).
-- [ ] Tests: `AntigravityStateDBParserTests` (fixed protobuf fixture) + `AntigravityRealLogsSmokeTests`
-      (live DB: plan=="Pro", credits>0). NEVER log `apiKey`/OAuth token.
-
-### Phase 2 — Cursor A (offline lines; fix empty card)
-- [ ] Rewrite `CursorStateDBParser`: parse `aiCodeTracking.dailyStats.v1.5.<date>` → per-day accepted/
-      suggested lines (tab + composer). Stop scanning nonexistent token keys.
-- [ ] Metric surface: lines ≠ tokens. `dailyTotals` = accepted lines/day; today/week = accepted lines.
-      Card copy "lines accepted". `capabilities = [.localLog]`, confidence `.localParsed`.
-- [ ] `CursorProvider.authStatus = .authenticated` if `cursorAuth/accessToken` present (presence only).
-- [ ] Tests: update `CursorProviderTests` + parser vs real `dailyStats` shape; live smoke test.
-
-### Phase 3 — Cursor B (network quota, toggle OFF by default)
-- [ ] `Core/Network/CursorUsageClient.swift` — minimal URLSession `GET api2.cursor.sh/auth/usage`,
-      Bearer JWT from state.vscdb. Timeout + graceful failure → warning, never crash.
-- [ ] Settings: `@AppStorage("cursorNetworkUsageEnabled") = false` toggle ("Fetch Cursor usage online");
-      copy warns it makes an authenticated request to Cursor.
-- [ ] `CursorProvider.fetchSnapshot`: toggle on → call client → real request/token quota →
-      `quotaWindows` (`.monthly`/`.session`), `capabilities += [.quota,.tokenUsage,.providerEndpoint]`,
-      confidence `.providerReported`. Toggle off or call fails → Phase-2 offline path unchanged.
-- [ ] Tests: client via mocked URLProtocol (no live CI hit); provider both toggle states.
-      Manual: flip once vs live endpoint, verify vs cursor.com dashboard.
-
-### Gates / done
-- [ ] `cd AIUsageDashboard && xcodegen generate` before build (.xcodeproj gitignored).
-- [ ] `.claude/gates/run-all.sh` green (build/format/lint/test/no-secret).
-- [ ] BACKLOG.md: move "Cursor real metrics" + "Antigravity data source" → DONE.
-- [ ] Verify per CLAUDE.md: run the real app; Cursor + Antigravity cards populate with live data.
-
-## Antigravity Stale-Serve Quota Cache — 2026-07-08 (active)
-- [/] Create task.md in artifacts
-- [ ] Modify Core/Network/AntigravityQuotaClient.swift to implement cache logic
-- [ ] Modify Tests/ProviderTests/AntigravityQuotaClientTests.swift to add tests
-- [ ] Run tests and verify
-- [ ] Update tasks/lessons.md with lessons
-- [ ] Append completion note to Patch Bible (§W2.6)
-
-## Tokei Website — 2026-07-08 (LIVE 2026-07-09)
-Marketing site, Display tier, aitracker theme + awwwards motion direction. Next.js 16 + Tailwind v4 + GSAP/ScrollTrigger/SplitText + Lenis + react-parallax-tilt.
-- [x] padzy-os skill + aitracker theme; mockup image received
-- [x] Abhay correction: numbered kickers dead → terminal `// section` eyebrows; wants scroll motion (lessons.md)
-- [x] Research: awwwards trends + motion stack (2 subagents)
-- [x] Scaffold `website/` (pnpm, shadcn base-nova)
-- [x] Built: nav / scramble eyebrow / SplitText char-reveal hero / live ticking DashboardCard (tilt) / data marquee / pinned horizontal features (4 panels, mobile+reduced-motion fallback) / privacy count-ups / magnetic download CTA / footer
-- [x] Deployed: https://tokei-website.vercel.app (project tokei-website, production target)
-- [x] Verified live via screenshots: hero, marquee, horizontal pin scrub, tickers ticking, footer; DMG link 200
-- [ ] Commit website/ (awaiting Abhay)
-- [ ] Optional: custom domain, OG image, real app screenshot in hero
+## Execution notes
+- Small reviewable commits (pre-commit hook: no-secret / no-large-artifact / format).
+- Offload heavy per-surface builds to focused subagents (context hygiene — last session died of context). Foundation (P0–1) lands first, shared; surfaces can then parallelize.
+- Checkpoint for visual review after Overview renders (Phase 3) before continuing.
