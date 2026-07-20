@@ -229,6 +229,89 @@ public enum MaxxerMath {
         return order[worst]
     }
 
+    // MARK: - Today across providers
+
+    /// Today's per-metric usage merged across the given snapshots, via the Core
+    /// merge (so confidence degrades to the weakest contributor exactly as it does
+    /// everywhere else). Callers pass an already-filtered list — this makes no
+    /// judgement about which providers count.
+    ///
+    /// Shared by the Overview hero and the `01 / OVERVIEW` tab pill so the two can
+    /// never print different totals for the same day.
+    ///
+    /// Only providers that actually measured something contribute. Two reasons,
+    /// both about the confidence the badge prints:
+    /// - Seeding the fold with `.unavailable` would pin every result to
+    ///   `.unavailable`, since `merging` keeps the weaker of two confidences.
+    /// - So would including a provider that reports no token usage at all — a
+    ///   Cursor with nothing to say would make a day of `.exact` Claude tokens
+    ///   render as "UNAVAILABLE".
+    ///
+    /// Totals are unaffected: an unmeasured provider merges as zeros anyway. Same
+    /// principle as `lifetimeTotal` — absent is not zero, and it is not evidence
+    /// against the providers that did report.
+    public static func mergedTodayUsage(in snapshots: [ProviderSnapshot]) -> TokenUsage {
+        var iterator = snapshots.lazy
+            .map(\.todayUsage)
+            .filter { $0.totalTokens != nil }
+            .makeIterator()
+        guard var merged = iterator.next() else { return .unavailable }
+        while let next = iterator.next() { merged = merged.merging(next) }
+        return merged
+    }
+
+    // MARK: - Provider chip stat (WP-4 chip strip)
+
+    /// The ONE live number a provider chip shows. The chip strip replaced the
+    /// sidebar's provider rows, and a chip has room for exactly one figure, so
+    /// this picks the most informative one the provider actually has.
+    ///
+    /// Deliberately *not* the same metric the Overview `Limits` rows show: those
+    /// carry quota pressure (bar, pace notch, countdown), so a chip leads with
+    /// volume and only falls back to utilization when there is no token signal.
+    /// Two surfaces at two altitudes instead of the same list printed twice.
+    public enum ChipStat: Sendable, Equatable {
+        /// Today's total tokens. `0` is a real reading, not a placeholder.
+        case tokens(Int)
+        /// Tightest live window, 0…100 — used when the provider reports no tokens.
+        case utilization(Double)
+        /// Plan label (e.g. "Pro") for a plan-only provider with neither number.
+        case plan(String)
+        /// No snapshot yet and a sync is in flight — the chip's loading state.
+        case syncing
+        /// Detected, but nothing honest to show yet.
+        case none
+    }
+
+    /// Resolve a provider's chip stat.
+    ///
+    /// Precedence: syncing → today's tokens (when the provider reports any) →
+    /// tightest live window → plan label → nothing. `planLabel` is passed in
+    /// rather than parsed here so this file keeps its Foundation + Core-only
+    /// dependency contract.
+    public static func chipStat(
+        providerID: ProviderID,
+        snapshot: ProviderSnapshot?,
+        utilizations: [Utilization],
+        planLabel: String?,
+        isLoading: Bool
+    ) -> ChipStat {
+        guard let snapshot else { return isLoading ? .syncing : .none }
+
+        let todayTokens = snapshot.todayUsage.totalTokens
+        if let todayTokens, todayTokens > 0 { return .tokens(todayTokens) }
+
+        let tightest = tightestWindow(in: utilizations.filter { $0.providerID == providerID })
+        if let tightest { return .utilization(tightest.usedPercent) }
+
+        // A genuine zero only outranks the plan label — it never outranks a live
+        // window, since "0 today" next to a 94%-full week is the less useful read.
+        if todayTokens != nil { return .tokens(0) }
+
+        if let planLabel, !planLabel.isEmpty { return .plan(planLabel) }
+        return .none
+    }
+
     // MARK: - Value-surface formatting (#23)
 
     /// Placeholder for every unknown number on the value surface. An unset plan
