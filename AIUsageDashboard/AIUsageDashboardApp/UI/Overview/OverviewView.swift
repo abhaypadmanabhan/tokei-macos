@@ -19,6 +19,12 @@ struct OverviewView: View {
     var onConnect: () -> Void = {}
     /// Open the `+` add-agent sheet (blank-canvas primary action + header button).
     var onAddAgent: () -> Void = {}
+    /// Jump to the full value surface (#23 / #41).
+    var onOpenValue: () -> Void = {}
+
+    /// Read-only here — Overview only summarises the value surface; the plan-cost
+    /// fields themselves live in Settings.
+    private let planCosts = MaxxerPlanCostStore()
 
     /// The ranges the segmented selector offers (drives `viewModel.range`).
     private static let rangeOptions: [(range: UsageRange, label: String)] = [
@@ -117,6 +123,7 @@ struct OverviewView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         heroCard
+                        valueCard
                         chartsRow
                         patternsCard
                         heatmapCard
@@ -222,6 +229,53 @@ struct OverviewView: View {
 
     private func format(_ value: Int?) -> String {
         value.map { TokenFormatter.format($0) } ?? "—"
+    }
+
+    // MARK: Value
+
+    /// Compact summary of the value surface (#23) plus the all-time total (#41).
+    /// Deliberately shows only the two headline numbers — the per-agent table
+    /// lives on the Value pane, one click away.
+    private var valueCard: some View {
+        let scorecard = MaxxerValueEngine.scorecard(
+            snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
+            planCosts: planCosts,
+            now: Date()
+        )
+        let lifetime = MaxxerMath.lifetimeTotal(
+            in: viewModel.snapshots,
+            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
+        )
+
+        return SectionCard("Value", trailing: {
+            Button(action: onOpenValue) {
+                Text("OPEN →")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.ink)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open the value surface")
+        }) {
+            HStack(alignment: .top, spacing: 24) {
+                StatCard(kicker: "Plan value",
+                         value: MaxxerMath.formatMultiple(scorecard.totalValueMultiple),
+                         boxed: false)
+                StatCard(kicker: "All-time tokens",
+                         value: lifetime.map { TokenFormatter.format($0.tokens) } ?? "—",
+                         boxed: false)
+                if let tier = scorecard.tier {
+                    TierChip(tier: tier)
+                }
+            }
+
+            if scorecard.totalValueMultiple == nil {
+                Text("Add each agent's monthly plan price in Settings to see what your plans are actually worth.")
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: Charts row
