@@ -8,6 +8,18 @@ All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 Audit trail: `tasks/patch-bibles/2026-07-19.md`. Awaiting manual QA (`/dev-approved`).
 
 ### Changed
+- **New brand identity.** Rebranded to the red/black split-square + white swoosh mark:
+  regenerated app icon (all sizes, Big Sur grid, transparent corners), `BrandMark` /
+  `BrandWordmark` assets, in-app logo, and a dynamic menu-bar mark that fills
+  black→accent as the tightest quota window burns (0→100%). Palette unchanged
+  (`#131316` / `#FF3B70` / `#FAFAF8` already matched the app theme).
+- **Overview quota/heatmap/hover fixes (re-QA).** Heatmap now follows the 7/30/90-day
+  range control (was folding all-time). The Quota lens shows used% + %-remaining per
+  agent instead of tokens. Every provider with live quota enabled now appears in the
+  quota view with an honest state (fetching / connect / local-only) — previously a
+  provider whose fetch was transiently down (cooldown/auth) silently vanished. Menu-bar
+  quota bars animate-fill and show a red pace notch vs the previous period. Trend graph
+  and heatmap gained hover callouts (date · total · top agent).
 - **Full dashboard redesign — sidebar removed.** The 10-row sidebar is gone: Overview
   and Value are in-content tab pills (doubling as the KPI row), each provider is a chip
   in a strip with a trailing `+` (Add agent) and drills into a unified detail view,
