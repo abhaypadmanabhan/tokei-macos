@@ -1,21 +1,38 @@
 import SwiftUI
 
-/// Weekday × hour activity heatmap (WP-5, matches the mockup's `renderHeatmap`):
-/// hand-rolled `Canvas` grid, 7 weekday rows × 24 hour columns, filled with a
-/// single neutral hue whose OPACITY tracks intensity continuously
-/// (`0.05 + t·0.85`) — a soft field, not stepped blocks. `nil`/zero cells render
-/// at the faint floor. The honest empty state renders until a real hourly source
-/// exists (Phase 1b gate — WP-1's `hourlyTotals`).
+/// Weekday × hour activity punch-card: 7 weekday rows × 24 hour columns of
+/// **square** cells (the standard GitHub-punchcard shape), so the grid reads as
+/// structure you can scan — which days, which hours — instead of a smear.
+///
+/// WP-5 note: an earlier build filled cells with a *continuous* single-hue
+/// opacity in *wide* rectangles, which read as noise. This version fixes both —
+/// square cells at a fixed size (left-aligned, never stretched), every cell a
+/// visible box (empty = faint grid box), and **4 discrete intensity steps** so a
+/// busy hour is a clear block, not a slightly-different gray. Still one neutral
+/// hue (activity is DATA, never the accent). Honest empty state until a real
+/// hourly source exists.
 struct ActivityHeatmap: View {
     /// 7 rows (Mon…Sun) × 24 columns (hour 0…23); `nil` = no data for that cell.
     let matrix: [[Int?]]
     /// Copy under the empty-state headline (names the missing source).
     var emptyHint: String = "Hourly activity appears once local logs are parsed with per-hour timestamps."
 
+    @State private var width: CGFloat = 0
+
     private static let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    private static let hourLabels: [(column: Int, label: String)] = [
+    private static let hourMarks: [(column: Int, label: String)] = [
         (0, "12a"), (6, "6a"), (12, "12p"), (18, "6p"),
     ]
+
+    // Layout constants. Cells are square and fixed-size (capped) so the grid keeps
+    // a legible punch-card scale on both a 640pt and an 1100pt window.
+    private static let labelWidth: CGFloat = 28
+    private static let labelGap: CGFloat = 8
+    private static let gap: CGFloat = 2
+    private static let minCell: CGFloat = 9
+    private static let maxCell: CGFloat = 18
+    private static let columns = 24
+    private static let rows = 7
 
     private var hasData: Bool {
         matrix.contains { row in row.contains { ($0 ?? 0) > 0 } }
@@ -25,99 +42,123 @@ struct ActivityHeatmap: View {
         matrix.flatMap { $0 }.compactMap { $0 }.max() ?? 0
     }
 
+    /// Square cell side derived from the available width, clamped so it never
+    /// stretches into wide rectangles on a large window nor shrinks illegibly.
+    private var cell: CGFloat {
+        let gridWidth = width - Self.labelWidth - Self.labelGap
+        let raw = (gridWidth - Self.gap * CGFloat(Self.columns - 1)) / CGFloat(Self.columns)
+        return min(Self.maxCell, max(Self.minCell, raw))
+    }
+
+    private var gridWidth: CGFloat { cell * CGFloat(Self.columns) + Self.gap * CGFloat(Self.columns - 1) }
+    private var gridHeight: CGFloat { cell * CGFloat(Self.rows) + Self.gap * CGFloat(Self.rows - 1) }
+
     var body: some View {
-        if matrix.count == 7, hasData {
-            grid
-        } else {
-            emptyState
+        Group {
+            if matrix.count == Self.rows, hasData {
+                grid
+            } else {
+                emptyState
+            }
         }
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: HeatmapWidthKey.self, value: geo.size.width)
+            }
+        )
+        .onPreferenceChange(HeatmapWidthKey.self) { width = $0 }
     }
 
     private var grid: some View {
-        let labelWidth: CGFloat = 30
-        let rowGap: CGFloat = 2
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: Self.labelGap) {
+                VStack(spacing: Self.gap) {
                     ForEach(Self.weekdays, id: \.self) { day in
                         Text(day)
                             .font(.mono(size: 9))
                             .foregroundColor(PadzyTheme.ink5)
-                            .frame(maxHeight: .infinity, alignment: .leading)
+                            .frame(width: Self.labelWidth, height: cell, alignment: .leading)
                     }
                 }
-                .frame(width: labelWidth)
 
-                Canvas { context, size in
-                    let columns = 24
-                    let rows = 7
-                    let gap: CGFloat = rowGap
-                    let cellWidth = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
-                    let cellHeight = (size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
+                Canvas { context, _ in
                     let peak = Double(max(maxValue, 1))
-
-                    for row in 0..<rows {
-                        for column in 0..<columns {
+                    for row in 0..<Self.rows {
+                        for column in 0..<Self.columns {
                             let rect = CGRect(
-                                x: CGFloat(column) * (cellWidth + gap),
-                                y: CGFloat(row) * (cellHeight + gap),
-                                width: cellWidth,
-                                height: cellHeight
+                                x: CGFloat(column) * (cell + Self.gap),
+                                y: CGFloat(row) * (cell + Self.gap),
+                                width: cell,
+                                height: cell
                             )
-                            let path = Path(roundedRect: rect, cornerRadius: 2)
                             let value = matrix.indices.contains(row) && matrix[row].indices.contains(column)
                                 ? matrix[row][column]
                                 : nil
-                            // Single neutral hue, opacity tracks intensity continuously
-                            // (mockup: 0.05 + t·0.85); nil/zero rest at the faint floor.
-                            let intensity: Double
-                            if let value, value > 0 {
-                                intensity = min(1, Double(value) / peak)
-                            } else {
-                                intensity = 0
-                            }
-                            context.fill(path, with: .color(PadzyChartPalette.heatCell(intensity)))
+                            context.fill(
+                                Path(roundedRect: rect, cornerRadius: 2),
+                                with: .color(cellColor(value, peak: peak))
+                            )
                         }
                     }
                 }
+                .frame(width: gridWidth, height: gridHeight)
             }
 
-            // Hour axis, aligned to the 24-column grid.
-            GeometryReader { geo in
-                let gridWidth = geo.size.width - labelWidth - 8
-                let columnWidth = gridWidth / 24
-                ZStack(alignment: .topLeading) {
-                    ForEach(Self.hourLabels, id: \.column) { mark in
-                        Text(mark.label)
-                            .font(.mono(size: 9))
-                            .foregroundColor(PadzyTheme.ink5)
-                            .offset(x: labelWidth + 8 + CGFloat(mark.column) * columnWidth)
-                    }
-                }
-            }
-            .frame(height: 12)
-
-            // "less → more" continuous gradient legend (mockup): a single-hue ramp
-            // bar bracketed by muted labels, matching the neutral cell fill.
-            HStack(spacing: 6) {
-                Text("less")
-                    .font(.mono(size: 9))
-                    .foregroundColor(PadzyTheme.ink5)
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [PadzyChartPalette.heatCell(0.0), PadzyChartPalette.heatCell(1.0)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    ))
-                    .frame(width: 96, height: 6)
-                Text("more")
-                    .font(.mono(size: 9))
-                    .foregroundColor(PadzyTheme.ink5)
-            }
-            .padding(.top, 2)
+            hourAxis
+            legend
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Activity heatmap by weekday and hour")
+    }
+
+    /// Empty cells are a faint but visible box so the grid itself reads; active
+    /// cells step through 4 discrete neutral levels (busy → bright), never a
+    /// continuous gradient.
+    private func cellColor(_ value: Int?, peak: Double) -> Color {
+        guard let value, value > 0 else { return PadzyTheme.hairline }
+        let intensity = min(1.0, Double(value) / peak)
+        let step = Double(min(4, max(1, Int(ceil(intensity * 4))))) / 4.0
+        return PadzyChartPalette.heatCell(step)
+    }
+
+    private var hourAxis: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Self.hourMarks, id: \.column) { mark in
+                Text(mark.label)
+                    .font(.mono(size: 9))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .offset(x: Self.labelWidth + Self.labelGap + CGFloat(mark.column) * (cell + Self.gap))
+            }
+        }
+        .frame(height: 12, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Discrete swatch legend, matching the 4-step cell fills.
+    private var legend: some View {
+        HStack(spacing: 5) {
+            Text("less")
+                .font(.mono(size: 9))
+                .foregroundColor(PadzyTheme.ink5)
+            ForEach(Array(legendSwatches.enumerated()), id: \.offset) { _, color in
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(color)
+                    .frame(width: 11, height: 11)
+            }
+            Text("more")
+                .font(.mono(size: 9))
+                .foregroundColor(PadzyTheme.ink5)
+        }
+        .padding(.top, 2)
+    }
+
+    private var legendSwatches: [Color] {
+        [PadzyTheme.hairline,
+         PadzyChartPalette.heatCell(0.25),
+         PadzyChartPalette.heatCell(0.5),
+         PadzyChartPalette.heatCell(0.75),
+         PadzyChartPalette.heatCell(1.0)]
     }
 
     private var emptyState: some View {
@@ -140,6 +181,13 @@ struct ActivityHeatmap: View {
     }
 }
 
+private struct HeatmapWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 // MARK: - Previews
 
 private func sampleMatrix() -> [[Int?]] {
@@ -156,7 +204,14 @@ private func sampleMatrix() -> [[Int?]] {
 
 #Preview("Full week") {
     ActivityHeatmap(matrix: sampleMatrix())
-        .frame(width: 560, height: 190)
+        .frame(width: 560)
+        .padding(24)
+        .background(PadzyTheme.ground)
+}
+
+#Preview("Narrow 640") {
+    ActivityHeatmap(matrix: sampleMatrix())
+        .frame(width: 420)
         .padding(24)
         .background(PadzyTheme.ground)
 }
