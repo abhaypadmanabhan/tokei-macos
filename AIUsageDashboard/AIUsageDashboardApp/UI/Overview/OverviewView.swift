@@ -206,6 +206,24 @@ struct OverviewView: View {
         }
     }
 
+    /// Per-day top agent for the trend hover callout — the provider that contributed
+    /// the most tokens that day, keyed by start-of-day to match the trend points.
+    /// Built from the visible providers' daily totals in the UI (no Core change).
+    private var trendPointDetails: [Date: TrendPointDetail] {
+        let calendar = Calendar.current
+        var perDay: [Date: [ProviderID: Int]] = [:]
+        for id in visibleProviders {
+            guard let daily = viewModel.snapshot(for: id)?.dailyTotals else { continue }
+            for (date, tokens) in daily where tokens > 0 {
+                perDay[calendar.startOfDay(for: date), default: [:]][id, default: 0] += tokens
+            }
+        }
+        return perDay.reduce(into: [:]) { result, entry in
+            guard let top = entry.value.max(by: { $0.value < $1.value }) else { return }
+            result[entry.key] = TrendPointDetail(topAgent: displayName(top.key), tint: AgentTint.color(top.key))
+        }
+    }
+
     /// Per-cell activity for the agent-coloured punch-card: for each weekday×hour
     /// cell, the visible providers' §4 heatmaps are combined into a total plus the
     /// single agent that contributed most that hour (its `AgentTint` colours the
@@ -232,9 +250,13 @@ struct OverviewView: View {
                 let leader = contributions[0]
                 let name = viewModel.snapshot(for: leader.id)?.displayName
                     ?? leader.id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
-                let tooltip = "\(Self.weekdayNames[row]) \(AnalyticsFormat.hourLabel(column)) · "
-                    + "\(name) \(TokenFormatter.format(leader.tokens)) of \(TokenFormatter.format(total)) total"
-                return HeatCell(total: total, tint: AgentTint.color(leader.id), tooltip: tooltip)
+                let slotLabel = "\(Self.weekdayNames[row]) · \(AnalyticsFormat.hourLabel(column))"
+                return HeatCell(
+                    total: total,
+                    tint: AgentTint.color(leader.id),
+                    slotLabel: slotLabel,
+                    agentName: name
+                )
             }
         }
     }
@@ -349,7 +371,7 @@ struct OverviewView: View {
     @ViewBuilder
     private var mainChart: some View {
         if metric == .usage {
-            LineTrendChart(points: viewModel.overviewTrend)
+            LineTrendChart(points: viewModel.overviewTrend, pointDetails: trendPointDetails)
                 .frame(height: 200)
                 .transition(.opacity)
         } else {
