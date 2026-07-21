@@ -26,7 +26,7 @@ Branch: patch/2026-07-21/overview-quota-hover · base dev @ abb627e
 - [ ] ActivityHeatmap: replace `.help()` with immediate styled hover tooltip (weekday+hour · top agent · tokens). Cells are weekday×hour category — never say "that day".
 - [ ] Respect reduce-motion (no flicker).
 
-## Verify
-- [ ] xcodegen generate; Core test scheme; App build scheme.
-- [ ] Visual verify in running app: FIXES 1,2,4,5 + FIX 3 trace.
-- [ ] Append completion note to Patch Bible §8. Commit per fix. No merge/push/PR.
+## Verify — ALL DONE
+- [x] xcodegen generate; Core test scheme (304 tests, 0 fail); App build scheme (BUILD SUCCEEDED).
+- [x] Visual verify in running app (this worktree's DerivedData build): FIX 1 (7D sparse vs 90D dense heatmap), FIX 2 (grid % + N% left), FIX 3 (all 5 providers, Antigravity FETCHING…, Cline LOCAL LOGS), FIX 4 (menu-bar Quota fill bars + reset countdowns + red pace notch), FIX 5 (heatmap tooltip + trend callout).
+- [x] All 5 fixes marked done. Completion note appended to Patch Bible §8. Commit per fix. No merge/push/PR.
