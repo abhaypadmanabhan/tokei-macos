@@ -7,6 +7,18 @@ All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 
 Audit trail: `tasks/patch-bibles/2026-07-19.md`. Awaiting manual QA (`/dev-approved`).
 
+### Changed
+- **Full dashboard redesign — sidebar removed.** The 10-row sidebar is gone: Overview
+  and Value are in-content tab pills (doubling as the KPI row), each provider is a chip
+  in a strip with a trailing `+` (Add agent) and drills into a unified detail view,
+  Settings and Add-agent are right-hand drawers (gear icon / `+`). Overview condensed
+  6 cards → 4 with an hour-tinted activity heatmap; Value rebuilt around an 84pt hero
+  multiple + tier chip + hairline rows; Agents tab is per-agent management cards; the
+  menu-bar popover was rebuilt (tokens hero + plan value + tightest quota + top agents).
+  ~900 lines of dead code removed. Real Cline/opencode brand marks. Fixes 3 aggregate
+  bugs (hidden agents feeding the hero, merged-confidence reading UNAVAILABLE over a real
+  total, StatCard dropping date captions).
+
 ### Added
 - **Value pane (#23).** "Am I using the tokens I pay for" — headline plan-value multiple
   (API-equivalent USD ÷ configured monthly plan cost) with Maxxer tier (idle / warming /
