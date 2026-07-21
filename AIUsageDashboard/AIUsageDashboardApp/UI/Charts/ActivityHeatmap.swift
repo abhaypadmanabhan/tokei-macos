@@ -2,14 +2,18 @@ import SwiftUI
 
 /// One weekday × hour cell of the activity punch-card. `tint` is the colour of the
 /// agent the user leaned on most that hour (DATA identity colour) — `nil` when the
-/// hour is empty. `tooltip` is the hover detail. Built by the Overview from the
-/// per-provider heatmaps.
+/// hour is empty. `slotLabel` (weekday · hour) and `agentName` feed the styled hover
+/// tooltip. Built by the Overview from the per-provider heatmaps.
 struct HeatCell: Equatable {
     var total: Int
     var tint: Color?
-    var tooltip: String
+    /// "Mon · 9a" — the weekday×hour category this cell represents (never a calendar
+    /// day: cells aggregate that weekday+hour across the range).
+    var slotLabel: String
+    /// The agent worked most in this weekday×hour slot (`nil` when the slot is empty).
+    var agentName: String?
 
-    static let empty = HeatCell(total: 0, tint: nil, tooltip: "")
+    static let empty = HeatCell(total: 0, tint: nil, slotLabel: "", agentName: nil)
 }
 
 /// Weekday × hour activity punch-card, coloured by agent: each of the 7×24 square
@@ -29,6 +33,14 @@ struct ActivityHeatmap: View {
     var emptyHint: String = "Hourly activity appears once local logs are parsed with per-hour timestamps."
 
     @State private var width: CGFloat = 0
+    /// The weekday×hour cell under the pointer (nil when not hovering a busy cell).
+    @State private var hovered: HeatIndex?
+
+    /// A weekday×hour cell address, for hover tracking.
+    private struct HeatIndex: Equatable {
+        let row: Int
+        let column: Int
+    }
 
     private static let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     private static let hourMarks: [(column: Int, label: String)] = [
@@ -101,8 +113,81 @@ struct ActivityHeatmap: View {
             caption
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topLeading) { tooltipOverlay }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Activity heatmap by weekday and hour, coloured by the agent used most each hour")
+    }
+
+    /// Immediate styled hover tooltip (replaces the slow system `.help`): the
+    /// weekday×hour slot, the agent worked most in it, and the slot's total tokens.
+    /// Positioned next to the hovered cell; placed above for the lower rows so it
+    /// never falls off the component. Non-interactive so it can't eat hover events.
+    @ViewBuilder
+    private var tooltipOverlay: some View {
+        if let hovered,
+           cells.indices.contains(hovered.row),
+           cells[hovered.row].indices.contains(hovered.column),
+           case let model = cells[hovered.row][hovered.column],
+           model.total > 0 {
+            heatTooltip(model)
+                .frame(width: Self.tooltipWidth, alignment: .leading)
+                .offset(tooltipOffset(hovered))
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func heatTooltip(_ model: HeatCell) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(model.slotLabel)
+                .font(.mono(size: 9))
+                .tracking(0.3)
+                .foregroundColor(PadzyTheme.ink5)
+            Text(TokenFormatter.format(model.total))
+                .font(.mono(size: 12, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+            if let agent = model.agentName {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(model.tint ?? PadzyTheme.ink4)
+                        .frame(width: 6, height: 6)
+                    Text(agent)
+                        .font(.sans(size: 10))
+                        .foregroundColor(PadzyTheme.ink3)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                .fill(PadzyTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                .stroke(PadzyTheme.border2, lineWidth: 1)
+        )
+    }
+
+    private static let tooltipWidth: CGFloat = 150
+    private static let tooltipEstHeight: CGFloat = 46
+
+    /// Offset from the grid's top-leading to sit the tooltip beside the hovered cell.
+    /// Horizontally centred on the cell then clamped inside the width; placed below
+    /// the cell for the top rows and above it for the lower rows.
+    private func tooltipOffset(_ index: HeatIndex) -> CGSize {
+        let cellSize = cell
+        let cellX = Self.labelWidth + Self.labelGap + CGFloat(index.column) * (cellSize + Self.gap)
+        let rawX = cellX + cellSize / 2 - Self.tooltipWidth / 2
+        let maxX = max(0, width - Self.tooltipWidth)
+        let x = min(max(0, rawX), maxX)
+
+        let rowY = CGFloat(index.row) * (cellSize + Self.gap)
+        let y = index.row >= 4
+            ? max(0, rowY - Self.tooltipEstHeight - 4)
+            : rowY + cellSize + 6
+        return CGSize(width: x, height: y)
     }
 
     @ViewBuilder
@@ -113,7 +198,14 @@ struct ActivityHeatmap: View {
         RoundedRectangle(cornerRadius: 2, style: .continuous)
             .fill(cellColor(model, peak: peak))
             .frame(width: cell, height: cell)
-            .help(model.tooltip)
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    hovered = model.total > 0 ? HeatIndex(row: row, column: column) : nil
+                case .ended:
+                    if hovered == HeatIndex(row: row, column: column) { hovered = nil }
+                }
+            }
     }
 
     /// Empty cells are a faint but visible box so the grid reads. Active cells take
@@ -188,7 +280,8 @@ private func sampleCells() -> [[HeatCell]] {
             guard total > 0 else { return .empty }
             let idx = (row + hour) % tints.count
             return HeatCell(total: total, tint: tints[idx],
-                            tooltip: "\(ActivityHeatmap.previewDay(row)) \(hour):00 · \(names[idx])")
+                            slotLabel: "\(ActivityHeatmap.previewDay(row)) · \(hour):00",
+                            agentName: names[idx])
         }
     }
 }

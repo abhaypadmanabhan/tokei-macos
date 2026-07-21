@@ -1,15 +1,20 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// One resolved agent cell for the Overview grid: identity + the single stat the
-/// mockup shows (today tokens, else max quota %, else "—"), its ink level, whether
-/// the number is an estimate (dotted underline), and whether this agent carries the
-/// single "most headroom" dot.
+/// One resolved agent cell for the Overview grid: identity + the stat the mockup
+/// shows for the active lens (Usage → today tokens; Quota → used% + a `% left`
+/// substat / an honest connect state), its ink level, whether the number is an
+/// estimate (dotted underline), and whether this agent carries the single "most
+/// headroom" dot.
 struct AgentCellModel: Identifiable {
     let providerID: ProviderID
     let name: String
     let stat: String
     let statColor: Color
+    /// Secondary line under the stat — the Quota lens's "54% left" / "FETCHING…" /
+    /// "ENABLE →" / "LOCAL LOGS" caption. `nil` in the Usage lens.
+    var substat: String? = nil
+    var substatColor: Color = PadzyTheme.ink5
     /// Estimated today tokens → subtle dotted underline + a `.help` tooltip.
     let isEstimated: Bool
     /// The single emptiest quota-bearing agent → a green "route here" dot.
@@ -118,21 +123,30 @@ struct AgentGridCell: View {
 
     @ViewBuilder
     private var stat: some View {
-        if model.isEstimated {
-            VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3) {
+            if model.isEstimated {
                 Text(model.stat)
                     .font(.mono(size: 18, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(model.statColor)
                 DottedUnderline()
+                    .fixedSize()
+                    .help("Estimated — not directly reported")
+            } else {
+                Text(model.stat)
+                    .font(.mono(size: 18, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(model.statColor)
             }
-            .fixedSize()
-            .help("Estimated — not directly reported")
-        } else {
-            Text(model.stat)
-                .font(.mono(size: 18, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(model.statColor)
+
+            if let substat = model.substat {
+                Text(substat)
+                    .font(.mono(size: 10))
+                    .tracking(0.2)
+                    .monospacedDigit()
+                    .foregroundColor(model.substatColor)
+                    .lineLimit(1)
+            }
         }
     }
 }

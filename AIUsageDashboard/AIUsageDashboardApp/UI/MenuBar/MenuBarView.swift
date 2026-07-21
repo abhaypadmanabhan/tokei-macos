@@ -147,6 +147,10 @@ struct MenuBarView: View {
                 await viewModel.refresh()
             }
         }
+        // Reload the previous-period pace baselines after each sync (and on open).
+        .task(id: viewModel.lastSyncedAt) {
+            await loadPaceBaselines()
+        }
     }
 
     // MARK: Hero
@@ -317,14 +321,21 @@ struct MenuBarView: View {
     /// Quota mode: glyph + a threshold-coloured fill bar + reset countdown — no
     /// name or number, the bar itself is the reading (user request). The fill is
     /// the agent's identity colour until it gets tight: bright orange at ≥80%,
-    /// red at ≥90%.
+    /// red at ≥90%. The fill animates 0→value on switch, and a red pace notch marks
+    /// where this window stood one period ago (from the quota series) so the user
+    /// reads ahead/behind vs last time — no notch when there is no prior baseline.
     private func quotaRow(_ snapshot: ProviderSnapshot) -> some View {
         let util = tightestUtil(snapshot.providerID)
         let pct = util?.usedPercent ?? 0
         return HStack(spacing: 10) {
             ProviderBrandMark.tinted(snapshot.providerID, size: 18)
-            quotaBar(pct: pct, tint: AgentTint.color(snapshot.providerID))
-                .frame(maxWidth: .infinity)
+            MenuQuotaBar(
+                pct: pct,
+                fillColor: quotaBarColor(pct, tint: AgentTint.color(snapshot.providerID)),
+                baseline: baseline(for: util),
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity)
             Text(resetText(util?.resetAt))
                 .font(.mono(size: 10.5))
                 .monospacedDigit()
@@ -332,29 +343,55 @@ struct MenuBarView: View {
                 .frame(width: 66, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent, resets in \(resetText(util?.resetAt))")
+        .accessibilityLabel(quotaRowAccessibilityLabel(snapshot, util: util, pct: pct))
     }
 
-    private func quotaBar(pct: Double, tint: Color) -> some View {
-        let clamped = max(0, min(100, pct))
-        return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(PadzyTheme.muted.opacity(0.25))
-                    .frame(height: 6)
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(quotaBarColor(pct, tint: tint))
-                    .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
-            }
-            .frame(maxHeight: .infinity, alignment: .center)
-        }
-        .frame(height: 6)
+    private func quotaRowAccessibilityLabel(_ snapshot: ProviderSnapshot, util: Utilization?, pct: Double) -> String {
+        let base = "\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent, resets in \(resetText(util?.resetAt))"
+        guard let prior = baseline(for: util) else { return base }
+        let delta = pct - prior
+        let direction = abs(delta) < 1 ? "about the same as" : (delta > 0 ? "ahead of" : "behind")
+        return base + ", \(direction) last period at \(Int(prior.rounded())) percent"
     }
 
     private func quotaBarColor(_ pct: Double, tint: Color) -> Color {
         if pct >= 90 { return PadzyTheme.danger }
         if pct >= 80 { return Color(hex: "F5872E") }
         return tint
+    }
+
+    /// The previous-period used% for a window (nil = no baseline → no notch). Keyed
+    /// by provider+window from the async series load in `loadPaceBaselines`.
+    private func baseline(for util: Utilization?) -> Double? {
+        guard let util else { return nil }
+        return paceBaselines["\(util.providerID.rawValue)_\(util.window.rawValue)"]
+    }
+
+    /// Previous-period used% per provider+window, loaded from the persisted quota
+    /// series. Empty until the first load; a provider stays absent (→ no notch) when
+    /// the series does not reach back ~one window ago, so a fresh install never shows
+    /// a fabricated baseline.
+    @State private var paceBaselines: [String: Double] = [:]
+
+    /// For each displayed provider's tightest window, find the sample nearest to one
+    /// window-duration ago (the "same point last period"). Requires the sample land
+    /// within ±half a window of that instant, else there is no honest baseline.
+    private func loadPaceBaselines() async {
+        var result: [String: Double] = [:]
+        let referenceNow = Date()
+        for snapshot in activeSnapshots {
+            guard let util = tightestUtil(snapshot.providerID),
+                  let duration = MaxxerMath.canonicalWindowDuration(for: util.window) else { continue }
+            let target = referenceNow.addingTimeInterval(-duration)
+            let samples = await QuotaSeriesStore.shared.samples(for: util.providerID, windowType: util.window)
+            let nearest = samples.min {
+                abs($0.sampledAt.timeIntervalSince(target)) < abs($1.sampledAt.timeIntervalSince(target))
+            }
+            if let nearest, abs(nearest.sampledAt.timeIntervalSince(target)) <= duration / 2 {
+                result["\(util.providerID.rawValue)_\(util.window.rawValue)"] = nearest.usedPercent
+            }
+        }
+        paceBaselines = result
     }
 
     private func tightestUtil(_ id: ProviderID) -> Utilization? {
@@ -422,6 +459,50 @@ struct MenuBarView: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
+    }
+}
+
+/// The menu-bar quota fill bar: a muted track with a threshold-coloured fill that
+/// animates 0→value on appear (final state only under Reduce Motion), plus an
+/// optional red pace notch marking where this window stood one period ago. The notch
+/// is 10pt tall over the 6pt track so its nubs stay visible even when they sit over
+/// the fill, and it never renders when there is no prior baseline.
+private struct MenuQuotaBar: View {
+    let pct: Double
+    let fillColor: Color
+    /// Previous-period used% (0…100); `nil` = no baseline → no notch.
+    let baseline: Double?
+    let reduceMotion: Bool
+
+    @State private var filled = false
+
+    var body: some View {
+        let clamped = max(0, min(100, pct))
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(PadzyTheme.muted.opacity(0.25))
+                    .frame(height: 6)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(fillColor)
+                    .frame(width: geo.size.width * CGFloat(clamped / 100.0) * (filled ? 1 : 0), height: 6)
+                if let baseline {
+                    let x = geo.size.width * CGFloat(max(0, min(100, baseline)) / 100.0)
+                    Rectangle()
+                        .fill(PadzyTheme.danger)
+                        .frame(width: 2, height: 10)
+                        .offset(x: min(max(0, x - 1), geo.size.width - 2))
+                        .help("Last period: \(Int(baseline.rounded()))%")
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 10)
+        .onAppear {
+            if reduceMotion { filled = true }
+            else { withAnimation(PadzyMotion.settle) { filled = true } }
+        }
     }
 }
 

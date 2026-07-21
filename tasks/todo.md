@@ -1,18 +1,32 @@
-# WP-5 — finish the visual redesign (P4–P8)
+# WP-6 — 5 behavioural gaps (re-QA 2026-07-21)
 
-Worktree `2026-07-19-ui-ia-consolidation` · branch `patch/2026-07-19/ui-ia-consolidation`.
-Baseline @ 203eed4 verified GREEN: 302 Core tests pass · app BUILD SUCCEEDED.
+Branch: patch/2026-07-21/overview-quota-hover · base dev @ abb627e
 
-Process per surface: read target → build to mockup with REAL bindings → build-green → commit small.
-Scope lock: `UI/` + `Assets.xcassets/ProviderMarks/` + `UI/MenuBar/`. Never `Core/`, `App/`, `project.yml`, `UI/MenuBar/MaxxerMath.swift` API.
+## FIX 1 — Heatmap responds to range control  [Core+VM+tests]
+- [ ] `UsageAnalytics.heatmapMatrix` gains `range:`/`now:`, filters hourly slots by day-window before folding (mirror filteredDailyTotals). Default `.lifetime` → non-breaking.
+- [ ] `DashboardViewModel.heatmap(for:)` passes `viewModel.range` + `now()`.
+- [ ] Tests: same hourlyTotals under .sevenDay/.thirtyDay/.ninetyDay → different matrices; out-of-range excluded. VM range-swap test.
 
-- [x] **P4 Value** — DONE @ 94d3ef8. 84px hero · inline tier chip · "$api from $plan" · ◆ insight · hairline rows · TOTAL · excluded footnote w/ lifetime fold · row-tap drill / unpriced→set-plan-cost.
-- [x] **P5 Agents** — DONE @ 2d2c933. Per-agent cards: tinted glyph · tier chip · path · Show (ProviderVisibility) · Watching+Rescan · LIVE QUOTA off/connecting/live (`.padzy`, connectable-only) · Cursor disclosure + footer note.
-- [x] **P6 Drill-in** — DONE @ 7253d9c. Unified `ProviderDetailView` (full + plan-only PLAN&CREDITS), plan-only rerouted in `DashboardView`, `LineTrendChart` tint added. Reviewed subagent diff + independent build.
-- [x] **P7 Menu bar** — DONE @ 79ec8e4. Popover rebuilt: hero+Δ · Plan value+tier · Tightest quota+dot+who · top-3 · Open Tokei/Quit. dismissPopover preserved. MenuBarLabel left (already correct).
-- [x] **P8 cleanup** — DONE @ f9418b6 (dead files + ramps + params) · 94181cf (capabilityPane + 16 helpers) · 09fcfaa (/simplify safe wins). SurfaceStateView left as-is (already honest/themed from P0). Reflow code in place (ViewThatFits/FlowLayout/width prefs).
-- [x] WP-5 note appended to `tasks/patch-bibles/2026-07-19.md` §8. No test UserDefaults to restore (Core untouched, previews use throwaway suites).
+## FIX 2 — Quota lens shows % not tokens  [Overview]
+- [ ] `agentModels` metric-aware: quota mode → "46%" + "54% left" caption, threshold-coloured; usage mode unchanged.
+- [ ] Extend AgentCellModel (substat/substatColor); AgentGridCell renders it. Switch animates (reduce-motion safe — already gated).
 
-Full gate GREEN: 302 Core tests · app BUILD SUCCEEDED.
-DEFERRED /simplify follow-ups + out-of-scope items documented in Patch Bible §8.
-**VISUAL VERIFY still owed by user** (no Screen Recording perm → screencapture black). Launch this worktree's Tokei.app, eyeball P4–P8 + 640×480 reflow before merge.
+## FIX 3 — Every enabled provider appears in quota  [Overview]
+- Root cause (traced): quota surfaces render only `viewModel.utilization`; a live-quota provider (claude/cursor/antigravity, all enabled in real prefs) drops to `.unavailable` windows whenever `fetchQuotaWindows()` throws (cooldown/429/unauthorized/empty) → nil-mapped → silently omitted. Banner shows Claude now because cache is fresh; QA hit a transient cooldown.
+- [ ] Shared `quotaState(for:)` → live / fetching(enabled,no window) / connect(!enabled) / localOnly.
+- [ ] `AgentQuotaBars` + agent grid enumerate ALL visible providers; explicit honest state, never omit an enabled provider.
+
+## FIX 4 — Menu-bar quota: animated fill + pace marker  [MenuBar]
+- [ ] Animate each quota bar 0→value on switch (reduce-motion: final state only).
+- [ ] Red pace notch at previous period's used% (baseline = QuotaSeriesStore.shared sample ~one window-duration ago); no baseline → no marker.
+- [ ] Label render path (MenuBarLabel/MaxxerMath) untouched.
+
+## FIX 5 — Hover details: trend + heatmap  [Charts]
+- [ ] LineTrendChart: hover → nearest-point RuleMark + styled callout (date · total · top agent). Per-day top-agent computed in UI from per-provider dailyTotals.
+- [ ] ActivityHeatmap: replace `.help()` with immediate styled hover tooltip (weekday+hour · top agent · tokens). Cells are weekday×hour category — never say "that day".
+- [ ] Respect reduce-motion (no flicker).
+
+## Verify — ALL DONE
+- [x] xcodegen generate; Core test scheme (304 tests, 0 fail); App build scheme (BUILD SUCCEEDED).
+- [x] Visual verify in running app (this worktree's DerivedData build): FIX 1 (7D sparse vs 90D dense heatmap), FIX 2 (grid % + N% left), FIX 3 (all 5 providers, Antigravity FETCHING…, Cline LOCAL LOGS), FIX 4 (menu-bar Quota fill bars + reset countdowns + red pace notch), FIX 5 (heatmap tooltip + trend callout).
+- [x] All 5 fixes marked done. Completion note appended to Patch Bible §8. Commit per fix. No merge/push/PR.

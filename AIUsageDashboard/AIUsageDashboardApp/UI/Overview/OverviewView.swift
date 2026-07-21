@@ -88,48 +88,102 @@ struct OverviewView: View {
         return quotaBearing.min(by: { $0.pct < $1.pct })?.id
     }
 
-    /// One resolved cell per visible provider for the agent grid.
+    // MARK: Quota state (FIX 2 + FIX 3)
+
+    /// Whether the provider's live-quota flag is on (same UserDefaults key the
+    /// Connections/Agents toggle writes). `false` for local-only providers.
+    private func liveQuotaEnabled(_ id: ProviderID) -> Bool {
+        guard let key = ProviderOverviewRow.liveEnabledKey(for: id) else { return false }
+        return UserDefaults.standard.bool(forKey: key)
+    }
+
+    func quotaState(for id: ProviderID) -> ProviderQuotaState {
+        if let util = tightestByProvider[id] { return .live(util) }
+        if ProviderOverviewRow.connectableProviders.contains(id) {
+            return liveQuotaEnabled(id) ? .fetching : .connect
+        }
+        return .localOnly
+    }
+
+    /// One resolved cell per visible provider for the agent grid, resolved for the
+    /// active lens: Usage shows today's tokens; Quota shows used% + a `% left` substat
+    /// (FIX 2), with an honest connect/fetching state for providers with no live window.
     private var agentModels: [AgentCellModel] {
         let headroom = headroomProviderID
         return visibleProviders.map { id in
-            let today = viewModel.snapshot(for: id)?.todayUsage
-            let tightest = tightestByProvider[id]
-
-            let stat: String
-            let color: Color
-            var estimated = false
-            if let today, let total = today.totalTokens {
-                stat = TokenFormatter.format(total)
-                color = PadzyTheme.ink
-                estimated = today.confidence == .estimated
-            } else if let tightest {
-                stat = "\(Int(round(tightest.usedPercent)))%"
-                color = PadzyTheme.ink2
-            } else {
-                stat = "—"
-                color = PadzyTheme.ink5
+            switch metric {
+            case .usage: return usageCell(id, headroom: headroom)
+            case .quota: return quotaCell(id, headroom: headroom)
             }
-
-            return AgentCellModel(
-                providerID: id,
-                name: displayName(id),
-                stat: stat,
-                statColor: color,
-                isEstimated: estimated,
-                hasHeadroom: id == headroom
-            )
         }
     }
 
-    /// Per-agent quota bars for the Quota metric — tightest window per provider,
-    /// sorted fullest-first.
-    private var quotaBars: [(id: ProviderID, name: String, pct: Double)] {
+    private func usageCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
+        let today = viewModel.snapshot(for: id)?.todayUsage
+        let tightest = tightestByProvider[id]
+
+        let stat: String
+        let color: Color
+        var estimated = false
+        if let today, let total = today.totalTokens {
+            stat = TokenFormatter.format(total)
+            color = PadzyTheme.ink
+            estimated = today.confidence == .estimated
+        } else if let tightest {
+            stat = "\(Int(round(tightest.usedPercent)))%"
+            color = PadzyTheme.ink2
+        } else {
+            stat = "—"
+            color = PadzyTheme.ink5
+        }
+
+        return AgentCellModel(
+            providerID: id, name: displayName(id),
+            stat: stat, statColor: color,
+            isEstimated: estimated, hasHeadroom: id == headroom
+        )
+    }
+
+    private func quotaCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
+        let stat: String
+        let statColor: Color
+        let substat: String
+        let substatColor: Color
+        switch quotaState(for: id) {
+        case .live(let util):
+            let used = Int(round(max(0, min(100, util.usedPercent))))
+            stat = "\(used)%"
+            statColor = ProviderOverviewRow.thresholdColor(util.usedPercent)
+            substat = "\(100 - used)% left"
+            substatColor = PadzyTheme.ink5
+        case .fetching:
+            stat = "—"; statColor = PadzyTheme.ink3
+            substat = "FETCHING…"; substatColor = PadzyTheme.ink5
+        case .connect:
+            stat = "OFF"; statColor = PadzyTheme.ink4
+            substat = "ENABLE →"; substatColor = PadzyTheme.accent
+        case .localOnly:
+            stat = "—"; statColor = PadzyTheme.ink4
+            substat = "LOCAL LOGS"; substatColor = PadzyTheme.ink5
+        }
+        return AgentCellModel(
+            providerID: id, name: displayName(id),
+            stat: stat, statColor: statColor,
+            substat: substat, substatColor: substatColor,
+            isEstimated: false, hasHeadroom: id == headroom && quotaState(for: id).isLive
+        )
+    }
+
+    /// Every visible provider as a quota bar row for the Quota-metric main view —
+    /// live windows first (fullest-first), then the honest non-live states so nothing
+    /// the user enabled is dropped (FIX 3). Sorted so the pressure that bites is on top.
+    private var quotaRows: [AgentQuotaRow] {
         visibleProviders
-            .compactMap { id -> (id: ProviderID, name: String, pct: Double)? in
-                guard let util = tightestByProvider[id] else { return nil }
-                return (id, displayName(id), util.usedPercent)
+            .map { AgentQuotaRow(id: $0, name: displayName($0), state: quotaState(for: $0)) }
+            .sorted { lhs, rhs in
+                if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
+                return lhs.usedPercent > rhs.usedPercent
             }
-            .sorted { $0.pct > $1.pct }
     }
 
     /// Average tokens per weekday (Mon→Sun), bucketing the ranged trend by
@@ -149,6 +203,24 @@ struct OverviewView: View {
             let count = counts[weekday] ?? 0
             let avg = count > 0 ? (sums[weekday] ?? 0) / count : 0
             return (label, avg)
+        }
+    }
+
+    /// Per-day top agent for the trend hover callout — the provider that contributed
+    /// the most tokens that day, keyed by start-of-day to match the trend points.
+    /// Built from the visible providers' daily totals in the UI (no Core change).
+    private var trendPointDetails: [Date: TrendPointDetail] {
+        let calendar = Calendar.current
+        var perDay: [Date: [ProviderID: Int]] = [:]
+        for id in visibleProviders {
+            guard let daily = viewModel.snapshot(for: id)?.dailyTotals else { continue }
+            for (date, tokens) in daily where tokens > 0 {
+                perDay[calendar.startOfDay(for: date), default: [:]][id, default: 0] += tokens
+            }
+        }
+        return perDay.reduce(into: [:]) { result, entry in
+            guard let top = entry.value.max(by: { $0.value < $1.value }) else { return }
+            result[entry.key] = TrendPointDetail(topAgent: displayName(top.key), tint: AgentTint.color(top.key))
         }
     }
 
@@ -178,9 +250,13 @@ struct OverviewView: View {
                 let leader = contributions[0]
                 let name = viewModel.snapshot(for: leader.id)?.displayName
                     ?? leader.id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
-                let tooltip = "\(Self.weekdayNames[row]) \(AnalyticsFormat.hourLabel(column)) · "
-                    + "\(name) \(TokenFormatter.format(leader.tokens)) of \(TokenFormatter.format(total)) total"
-                return HeatCell(total: total, tint: AgentTint.color(leader.id), tooltip: tooltip)
+                let slotLabel = "\(Self.weekdayNames[row]) · \(AnalyticsFormat.hourLabel(column))"
+                return HeatCell(
+                    total: total,
+                    tint: AgentTint.color(leader.id),
+                    slotLabel: slotLabel,
+                    agentName: name
+                )
             }
         }
     }
@@ -295,11 +371,11 @@ struct OverviewView: View {
     @ViewBuilder
     private var mainChart: some View {
         if metric == .usage {
-            LineTrendChart(points: viewModel.overviewTrend)
+            LineTrendChart(points: viewModel.overviewTrend, pointDetails: trendPointDetails)
                 .frame(height: 200)
                 .transition(.opacity)
         } else {
-            AgentQuotaBars(bars: quotaBars)
+            AgentQuotaBars(rows: quotaRows, onConnect: onSelectProvider)
                 .transition(.opacity)
         }
     }

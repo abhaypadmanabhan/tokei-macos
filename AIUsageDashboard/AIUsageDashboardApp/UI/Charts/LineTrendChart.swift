@@ -6,12 +6,26 @@ import Charts
 /// accent end dot + value label on the most recent point, muted mono axes with
 /// relative day labels. Plain value inputs — no view-model coupling. Honest empty
 /// state when history < 2 points.
+/// Per-day hover detail for the trend callout: the agent that led that day and its
+/// identity tint. Both optional — a call site with no per-agent split still gets a
+/// date + total callout.
+struct TrendPointDetail: Equatable {
+    var topAgent: String?
+    var tint: Color?
+}
+
 struct LineTrendChart: View {
     let points: [(date: Date, tokens: Int)]
     /// Per-agent identity tint (WP-5 daily history). `nil` keeps the neutral
     /// `ink2` line + sanctioned neutral area gradient — every existing call site
     /// is pixel-identical. When set, the line + area take the agent's DATA colour.
     var tint: Color? = nil
+    /// Hover detail keyed by the point's start-of-day date. Empty → the hover callout
+    /// shows date + total only (no top-agent line).
+    var pointDetails: [Date: TrendPointDetail] = [:]
+
+    /// The series index under the pointer (nil when not hovering).
+    @State private var hoveredID: Int?
 
     /// Line stroke: the agent tint when tinted, else the neutral `ink2` default.
     private var lineStyle: Color { tint ?? PadzyTheme.ink2 }
@@ -37,6 +51,12 @@ struct LineTrendChart: View {
 
     private var series: [Point] {
         points.enumerated().map { Point(id: $0.offset, date: $0.element.date, tokens: $0.element.tokens) }
+    }
+
+    /// The point currently under the pointer.
+    private var hoveredPoint: Point? {
+        guard let hoveredID else { return nil }
+        return series.first { $0.id == hoveredID }
     }
 
     var body: some View {
@@ -89,6 +109,26 @@ struct LineTrendChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .foregroundStyle(PadzyTheme.hairline)
             }
+
+            if let hoveredPoint {
+                RuleMark(x: .value("Date", hoveredPoint.date))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .foregroundStyle(PadzyTheme.ink5.opacity(0.7))
+                    .annotation(
+                        position: .top,
+                        spacing: 6,
+                        overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                    ) {
+                        hoverCallout(for: hoveredPoint)
+                    }
+
+                PointMark(
+                    x: .value("Date", hoveredPoint.date),
+                    y: .value("Tokens", hoveredPoint.tokens)
+                )
+                .symbolSize(60)
+                .foregroundStyle(lineStyle)
+            }
         }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { value in
@@ -115,7 +155,87 @@ struct LineTrendChart: View {
             }
         }
         .chartLegend(.hidden)
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            // `plotAreaFrame` is a non-optional anchor (works on the
+                            // macOS 14 deployment target); the optional `plotFrame`
+                            // resolves to nil here and would suppress every hover.
+                            let origin = geo[proxy.plotAreaFrame].origin
+                            let relativeX = location.x - origin.x
+                            guard let date: Date = proxy.value(atX: relativeX) else {
+                                hoveredID = nil
+                                return
+                            }
+                            hoveredID = nearestPoint(to: date)?.id
+                        case .ended:
+                            hoveredID = nil
+                        }
+                    }
+            }
+        }
     }
+
+    /// The series point whose date is closest to a hovered x-position.
+    private func nearestPoint(to date: Date) -> Point? {
+        series.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
+    }
+
+    /// Padzy hairline callout: that day's date, its total tokens, and (when the
+    /// per-agent split is supplied) the agent that led the day with its identity dot.
+    private func hoverCallout(for point: Point) -> some View {
+        let detail = pointDetails[Calendar.current.startOfDay(for: point.date)]
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(Self.calloutDate(point.date))
+                .font(.mono(size: 9))
+                .tracking(0.3)
+                .foregroundColor(PadzyTheme.ink5)
+            Text(TokenFormatter.format(point.tokens))
+                .font(.mono(size: 12, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+            if let agent = detail?.topAgent {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(detail?.tint ?? PadzyTheme.ink4)
+                        .frame(width: 6, height: 6)
+                    Text(agent)
+                        .font(.sans(size: 10))
+                        .foregroundColor(PadzyTheme.ink3)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                .fill(PadzyTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                .stroke(PadzyTheme.border2, lineWidth: 1)
+        )
+        .fixedSize()
+    }
+
+    private static func calloutDate(_ date: Date) -> String {
+        Self.calloutFormatter.string(from: date)
+    }
+
+    private static let calloutFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE MMM d"
+        return formatter
+    }()
 
     /// Relative day label for the x-axis: `TODAY` for the current day, else the
     /// whole-day distance back (`7D`). Mono ink5, matching the mockup's minimal
