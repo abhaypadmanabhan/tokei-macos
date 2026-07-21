@@ -38,11 +38,12 @@ Branch `patch/2026-07-19/ui-ia-consolidation`. Scope lock: `AIUsageDashboardApp/
 - [x] Add-agent drawer (detected-first + all agents; AddAgentModel; add→refresh).
 - Follow-ups: remove unused ProviderChipStrip.swift (cleanup); range-set + accent-override = post-WP-5.
 
-## Phase 3 — Overview  (1–2 commits)
-- [ ] Metric selector Usage / Quota. Hero 62px mono + delta + sub.
-- [ ] Main line/area chart (neutral ink, cap line, accent end dot, hover). Restyle `LineTrendChart`.
-- [ ] Agent grid (headroom dot · tinted glyph · name · stat + confidence underline). Replaces chip-strip-as-KPI.
-- [ ] Usage-split donut (per-agent tint) + legend. Weekday bars (tk-grow, busiest=accent). Daily-avg + active-streak. Heatmap (7×24 single neutral hue) + when-you-work.
+## Phase 3 — Overview  (DONE — cb8deae, build green; VISUAL CHECKPOINT with user)
+- [x] Metric selector Usage / Quota. Hero 62px mono (merged-today / tightest%) + delta + sub.
+- [x] Main line chart restyled neutral (ink2 line, dashed cap rule, accent end dot); Quota → per-agent bars.
+- [x] Agent grid (OverviewAgentGrid): headroom dot · tinted glyph · name · stat + dotted-underline confidence. Replaces chip strip.
+- [x] Donut per-agent tint + legend. Weekday bars (busiest=accent). Daily-avg + streak. Heatmap neutral hue + less→more legend.
+- BLOCKER: automated screenshots impossible this session — process lacks macOS Screen Recording + Accessibility permission (screencapture returns black, System Events can't drive the window). Visual verify handed to user.
 
 ## Phase 4 — Value  (1 commit)
 - [ ] PLAN VALUE hero 84px + tier chip + insight (◆). Per-agent rows (plan→api w/ confidence underline, mult). TOTAL row. Excluded note.
