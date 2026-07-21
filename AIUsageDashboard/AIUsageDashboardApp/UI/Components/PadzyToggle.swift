@@ -1,17 +1,17 @@
 import SwiftUI
 
-/// Custom Padzy switch (aitracker): hairline-stroked track on `surface`,
-/// accent fill when on, crisp square-ish knob — deliberately NOT the native
-/// macOS switch. Label leads, control trails (same layout contract as
-/// `.switch`, so it drops into every Settings `Toggle` unchanged). Knob slide
-/// animates unless Reduce Motion is on; state is never color-alone (knob
-/// position carries it, and VoiceOver reads on/off).
+/// Custom Padzy switch (aitracker): a pill track (neutral off / accent on) with a
+/// white circular knob — the Tokei Dashboard mockup toggle. Label leads, control
+/// trails (same layout contract as `.switch`, so it drops into every `Toggle`
+/// unchanged). Knob slide animates unless Reduce Motion is on; state is never
+/// colour-alone (knob position carries it, and VoiceOver reads on/off).
 struct PadzyToggleStyle: ToggleStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
 
-    private static let trackSize = CGSize(width: 34, height: 18)
-    private static let knobSize: CGFloat = 12
+    private static let trackSize = CGSize(width: 36, height: 21)
+    private static let knobSize: CGFloat = 16
+    private static let offTrack = Color(hex: "2A2A31")
 
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 10) {
@@ -28,17 +28,15 @@ struct PadzyToggleStyle: ToggleStyle {
 
     private func track(isOn: Bool) -> some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .fill(isOn ? PadzyTheme.accent : PadzyTheme.surface)
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .stroke(isOn ? PadzyTheme.accent : PadzyTheme.muted.opacity(0.5), lineWidth: 1)
-            RoundedRectangle(cornerRadius: PadzyRadius.control - 3, style: .continuous)
-                .fill(isOn ? PadzyTheme.ground : PadzyTheme.muted)
+            Capsule(style: .continuous)
+                .fill(isOn ? PadzyTheme.accent : Self.offTrack)
+            Circle()
+                .fill(Color.white)
                 .frame(width: Self.knobSize, height: Self.knobSize)
-                .padding(3)
+                .padding(2.5)
         }
         .frame(width: Self.trackSize.width, height: Self.trackSize.height)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isOn)
+        .animation(reduceMotion ? nil : PadzyMotion.toggle, value: isOn)
         .contentShape(Rectangle())
     }
 }

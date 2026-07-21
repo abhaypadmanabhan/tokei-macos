@@ -74,6 +74,14 @@ struct StatCard: View {
 
             if let delta {
                 DeltaLabel(delta: delta, caption: deltaCaption)
+            } else if let deltaCaption {
+                // A caption with no delta is a qualifier on the value itself
+                // ("MON 14 JUL", "AT LEAST") — it still has to render, otherwise
+                // the tile silently drops the context it was given.
+                Text(deltaCaption.uppercased())
+                    .font(.mono(size: 10))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
             }
 
             if let sparklineValues {

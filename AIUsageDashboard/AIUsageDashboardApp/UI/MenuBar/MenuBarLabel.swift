@@ -43,7 +43,7 @@ struct MenuBarLabel: View {
     }
 
     /// All-time tokens across visible providers (#41). Hidden agents are skipped
-    /// here exactly as they are in the sidebar and the rest of the menu bar.
+    /// here exactly as they are in the chip strip and the rest of the menu bar.
     private var lifetimeTotal: MaxxerMath.LifetimeTotal? {
         MaxxerMath.lifetimeTotal(
             in: viewModel.snapshots,

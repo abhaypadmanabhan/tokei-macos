@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="6d5541ff-7551-4d6e-8592-a2595dbadd59"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#0B0B0D;font-family:ui-sans-serif,-apple-system,"SF Pro Display","SF Pro Text",system-ui,sans-serif;color:#ECECF1;-webkit-font-smoothing:antialiased}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#26262C;border:2px solid #131316;border-radius:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  @keyframes tk-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes tk-pop{from{opacity:0;transform:translateY(-8px) scale(.98)}to{opacity:1;transform:none}}
+  @keyframes tk-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+  @keyframes tk-fade{from{opacity:0}to{opacity:1}}
+  @keyframes tk-dot{from{opacity:0;transform:scale(0)}to{opacity:1;transform:scale(1)}}
+  @keyframes tk-pulse{0%,100%{opacity:.25}50%{opacity:.55}}
+  @keyframes tk-grow{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+  a{color:#FF3B70;text-decoration:none}a:hover{color:#ff5a86}
+  button{font-family:inherit}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px 16px;gap:12px;background:#0B0B0D">
+
+  <sc-if value="{{ showApp }}" hint-placeholder-val="{{ true }}">
+  <div style="{{ frameStyle }}">
+
+    <div style="height:40px;flex:none;display:flex;align-items:center;padding:0 16px;position:relative">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="width:11px;height:11px;border-radius:50%;background:#2E2E34"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#2E2E34"></span>
+        <span style="width:11px;height:11px;border-radius:50%;background:#2E2E34"></span>
+      </div>
+      <div style="position:absolute;left:0;right:0;text-align:center;pointer-events:none;font-size:12px;font-weight:600;letter-spacing:.02em;color:#54545C">Tokei</div>
+    </div>
+
+    <div style="flex:none;display:flex;align-items:center;gap:16px;padding:6px 28px 20px;flex-wrap:wrap">
+      <div style="display:flex;gap:24px;margin-right:auto">
+        <button sc-camel-on-click="{{ setOverview }}" style="{{ tabOvStyle }}">Overview</button>
+        <button sc-camel-on-click="{{ setValue }}" style="{{ tabValStyle }}">Value</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:16px">
+        <div style="display:flex;gap:2px">
+          <sc-for list="{{ rangeBtns }}" as="r" hint-placeholder-count="4">
+            <button sc-camel-on-click="{{ r.onClick }}" style="{{ r.style }}">{{ r.label }}</button>
+          </sc-for>
+        </div>
+        <button sc-camel-on-click="{{ toggleSettings }}" title="Settings" style="{{ gearStyle }}">
+          <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- AMBIENT QUOTA STRIP -->
+    <sc-if value="{{ showPressure }}" hint-placeholder-val="{{ false }}">
+      <button sc-camel-on-click="{{ pressure.onClick }}" style="flex:none;display:flex;align-items:center;gap:11px;padding:10px 28px;border-top:1px solid #1C1C21;background:{{ pressure.bg }};cursor:pointer;text-align:left;width:100%">
+        <span style="width:6px;height:6px;border-radius:50%;background:{{ pressure.dot }};flex:none"></span>
+        <span style="font-size:12.5px;color:#C4C4CC">{{ pressure.text }}</span>
+        <span style="margin-left:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#6E6E78">{{ pressure.meta }} ›</span>
+      </button>
+    </sc-if>
+
+    <div ref="{{ contentRef }}" style="flex:1;min-height:0;overflow:auto;position:relative;border-top:1px solid #1C1C21">
+
+      <!-- EMPTY -->
+      <sc-if value="{{ showEmpty }}" hint-placeholder-val="{{ false }}">
+        <div style="min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 24px;text-align:center;animation:tk-up .5s ease both">
+          <button sc-camel-on-click="{{ toggleAdd }}" style="width:80px;height:80px;border:1.5px dashed #34343B;background:transparent;color:{{ accent }};font-size:38px;font-weight:200;line-height:1;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+          <div style="font-size:19px;font-weight:600;color:#ECECF1;margin-top:24px">Connect your first agent</div>
+          <p style="font-size:13px;line-height:1.6;color:#6E6E78;max-width:340px;margin:11px 0 0;text-wrap:pretty">Tokei reads local usage from the agents you already pay for. Nothing leaves your machine.</p>
+          <button sc-camel-on-click="{{ toggleAdd }}" style="margin-top:26px;padding:10px 22px;background:{{ accent }};border:none;border-radius:4px;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add an agent</button>
+        </div>
+      </sc-if>
+
+      <!-- LOADING -->
+      <sc-if value="{{ showLoading }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:44px 28px">
+          <div style="width:120px;height:11px;background:#1C1C21;border-radius:3px;animation:tk-pulse 1.4s infinite"></div>
+          <div style="width:280px;height:64px;background:#1C1C21;border-radius:4px;margin-top:20px;animation:tk-pulse 1.4s infinite"></div>
+          <div style="height:220px;background:#161619;border-radius:4px;margin-top:36px;animation:tk-pulse 1.4s infinite"></div>
+          <div style="display:flex;gap:10px;margin-top:32px">
+            <sc-for list="{{ skel4 }}" as="s" hint-placeholder-count="5">
+              <div style="width:132px;height:56px;background:#161619;border-radius:4px;animation:tk-pulse 1.4s infinite"></div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ERROR -->
+      <sc-if value="{{ showError }}" hint-placeholder-val="{{ false }}">
+        <div style="min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 24px;text-align:center;animation:tk-up .5s ease both">
+          <div style="width:52px;height:52px;border:1.5px solid #34343B;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:24px;color:#6E6E78">!</div>
+          <div style="font-size:17px;font-weight:600;color:#ECECF1;margin-top:20px">Couldn't read local usage</div>
+          <p style="font-size:13px;line-height:1.6;color:#6E6E78;max-width:340px;margin:10px 0 0">The database at <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;color:#9A9AA4">~/.tokei/usage.db</span> is locked. Your data is safe.</p>
+          <button sc-camel-on-click="{{ retry }}" style="margin-top:24px;padding:10px 22px;background:{{ accent }};border:none;border-radius:4px;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Retry now</button>
+        </div>
+      </sc-if>
+
+      <!-- OVERVIEW -->
+      <sc-if value="{{ showOverview }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:34px 28px 40px">
+          <div style="display:flex;gap:20px;flex-wrap:wrap;animation:tk-up .5s ease both">
+            <sc-for list="{{ selector }}" as="m" hint-placeholder-count="4">
+              <button sc-camel-on-click="{{ m.onClick }}" style="{{ m.style }}">{{ m.label }}</button>
+            </sc-for>
+          </div>
+
+          <div style="margin-top:24px;animation:tk-up .55s ease both">
+            <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:66px;font-weight:600;color:#ECECF1;line-height:.95;letter-spacing:-.02em">{{ heroValue }}</div>
+            <sc-if value="{{ heroDelta.show }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;align-items:center;gap:9px;margin-top:15px">
+                <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;font-weight:600;color:#9A9AA4">{{ heroDelta.arrow }} {{ heroDelta.val }}</span>
+                <span style="font-size:12.5px;color:#54545C">{{ heroDelta.label }}</span>
+              </div>
+            </sc-if>
+            <div style="font-size:15px;color:#6E6E78;margin-top:13px;max-width:520px;text-wrap:pretty">{{ heroSub }}</div>
+          </div>
+
+          <div style="margin-top:30px;animation:tk-fade .6s ease both">{{ chartEl }}</div>
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:38px;margin-bottom:16px;animation:tk-up .6s ease both">
+            <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#54545C">AGENTS · {{ agentCount }}</div>
+            <button sc-camel-on-click="{{ toggleAdd }}" style="background:transparent;border:none;cursor:pointer;font-size:12px;color:#6E6E78;display:flex;align-items:center;gap:6px">+ Add agent</button>
+          </div>
+          <div style="display:grid;grid-template-columns:{{ agentGrid }};gap:1px;background:#1C1C21;border:1px solid #1C1C21;border-radius:4px;overflow:hidden;animation:tk-up .65s ease both">
+            <sc-for list="{{ agents }}" as="a" hint-placeholder-count="7">
+              <button sc-camel-on-click="{{ a.onClick }}" style="background:#0F0F12;border:none;padding:16px 16px;cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:12px" style-hover="background:#141418">
+                <span style="display:flex;align-items:center;gap:9px">
+                  <span style="{{ a.glyphStyle }}">{{ a.glyph }}</span>
+                  <span style="font-size:12.5px;font-weight:500;color:#C4C4CC;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.name }}</span>
+                </span>
+                <span title="{{ a.confTitle }}" style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:19px;font-weight:600;color:{{ a.statColor }};line-height:1;{{ a.statMark }}">{{ a.stat }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- VALUE -->
+      <sc-if value="{{ showValue }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:34px 28px 40px">
+          <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#54545C;animation:tk-up .5s ease both">PLAN VALUE · THIS MONTH</div>
+          <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-top:16px;animation:tk-up .55s ease both">
+            <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:84px;font-weight:600;color:#ECECF1;line-height:.85;letter-spacing:-.03em">{{ heroValue }}</span>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <span style="{{ tierStyle }}">{{ tierLabel }}</span>
+              <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;color:#9A9AA4">{{ valueDelta }}</span>
+            </div>
+          </div>
+          <div style="font-size:15px;color:#6E6E78;margin-top:18px;max-width:560px;text-wrap:pretty">You're getting <span style="color:#ECECF1;font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ valueApiTotal }}</span> of API-equivalent usage from <span style="color:#ECECF1;font-family:ui-monospace,'SF Mono',Menlo,monospace">{{ valuePlanTotal }}</span> in plans across 4 agents.</div>
+          <div style="display:flex;align-items:flex-start;gap:10px;margin-top:16px;padding:12px 14px;border:1px solid #1C1C21;border-radius:6px;max-width:560px;animation:tk-up .58s ease both">
+            <span style="color:{{ accent }};font-size:13px;line-height:1.4;flex:none">◆</span>
+            <span style="font-size:13px;line-height:1.5;color:#C4C4CC;text-wrap:pretty">{{ valueInsight }}</span>
+          </div>
+
+          <div style="margin-top:28px;border-top:1px solid #1C1C21;animation:tk-up .6s ease both">
+            <sc-for list="{{ valueRows }}" as="row" hint-placeholder-count="7">
+              <button sc-camel-on-click="{{ row.onClick }}" style="width:100%;background:transparent;border:none;border-bottom:1px solid #17171B;cursor:pointer;text-align:left;display:grid;grid-template-columns:{{ valueGrid }};gap:16px;align-items:center;padding:17px 4px;opacity:{{ row.op }}">
+                <span style="display:flex;align-items:center;gap:11px">
+                  <span style="{{ row.glyphStyle }}">{{ row.glyph }}</span>
+                  <span style="font-size:14px;font-weight:500;color:#ECECF1">{{ row.name }}</span>
+                </span>
+                <span style="{{ row.hideNarrow }}text-align:right">
+                  <sc-if value="{{ row.action }}" hint-placeholder-val="{{ false }}">
+                    <span sc-camel-on-click="{{ row.actionClick }}" style="font-size:12px;font-weight:600;color:{{ accent }}">{{ row.actionText }}</span>
+                  </sc-if>
+                  <sc-if value="{{ row.plainMid }}" hint-placeholder-val="{{ true }}">
+                    <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;color:#6E6E78">{{ row.plan }} → <span title="{{ row.apiTitle }}" style="{{ row.apiMark }}">{{ row.api }}</span></span>
+                  </sc-if>
+                </span>
+                <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:20px;font-weight:600;color:{{ row.multColor }};text-align:right">{{ row.mult }}</span>
+              </button>
+            </sc-for>
+            <div style="display:grid;grid-template-columns:{{ valueGrid }};gap:16px;align-items:center;padding:18px 4px">
+              <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.12em;color:#54545C">TOTAL</span>
+              <span style="{{ hideNarrow }}font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;color:#9A9AA4;text-align:right">{{ valuePlanTotal }} → {{ valueApiTotal }}</span>
+              <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:20px;font-weight:600;color:#ECECF1;text-align:right">{{ valueMultipleStatic }}</span>
+            </div>
+          </div>
+          <p style="font-size:12px;line-height:1.6;color:#54545C;margin:18px 0 0;text-wrap:pretty">{{ valueExcluded }}</p>
+        </div>
+      </sc-if>
+
+      <!-- DRILL -->
+      <sc-if value="{{ showDrill }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:32px 28px 40px;animation:tk-up .5s ease both">
+          <button sc-camel-on-click="{{ closeDrill }}" style="display:inline-flex;align-items:center;gap:7px;background:transparent;border:none;cursor:pointer;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;letter-spacing:.06em;color:#6E6E78;padding:0;margin-bottom:26px">← OVERVIEW</button>
+
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <span style="{{ d.glyphStyle }}">{{ d.glyph }}</span>
+            <div>
+              <div style="font-size:20px;font-weight:600;color:#ECECF1">{{ d.name }}</div>
+              <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#6E6E78;margin-top:3px">{{ d.planLabel }}</div>
+            </div>
+            <span style="margin-left:auto;{{ d.confStyle }}">{{ d.conf }}</span>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;gap:36px;margin-top:30px;padding-bottom:28px;border-bottom:1px solid #1C1C21">
+            <sc-for list="{{ dStats }}" as="s" hint-placeholder-count="4">
+              <div>
+                <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:.1em;color:#54545C">{{ s.label }}</div>
+                <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:28px;font-weight:600;color:{{ s.color }};margin-top:10px;line-height:1">{{ s.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ d.hasQuota }}" hint-placeholder-val="{{ true }}">
+            <div style="margin-top:28px">
+              <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#54545C;margin-bottom:16px">QUOTA WINDOWS</div>
+              <sc-for list="{{ dQuotas }}" as="q" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 0">
+                  <span style="font-size:13px;color:#C4C4CC;min-width:120px">{{ q.label }}</span>
+                  <span style="flex:1;min-width:140px;height:5px;background:#1C1C21;border-radius:3px;overflow:hidden"><span style="display:block;height:100%;background:{{ q.fill }};width:{{ q.pct }};transform-origin:left;animation:tk-grow .7s ease both"></span></span>
+                  <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:15px;font-weight:600;color:#ECECF1;width:52px;text-align:right">{{ q.pct }}</span>
+                  <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#6E6E78;min-width:120px;text-align:right">{{ q.reset }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ d.noQuota }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:28px;font-size:13px;color:#6E6E78">{{ d.quotaNote }}</div>
+          </sc-if>
+
+          <sc-if value="{{ d.hasSplit }}" hint-placeholder-val="{{ true }}">
+            <div style="margin-top:32px">
+              <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#54545C;margin-bottom:16px">TOKEN SPLIT · TODAY</div>
+              <div style="display:flex;height:10px;border-radius:3px;overflow:hidden">
+                <sc-for list="{{ dSplit }}" as="p" hint-placeholder-count="4">
+                  <span style="height:100%;background:{{ p.shade }};width:{{ p.pct }}"></span>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:24px;margin-top:16px">
+                <sc-for list="{{ dSplit }}" as="p" hint-placeholder-count="4">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="width:8px;height:8px;border-radius:2px;background:{{ p.shade }}"></span>
+                    <span style="font-size:12.5px;color:#9A9AA4">{{ p.k }}</span>
+                    <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;color:#ECECF1">{{ p.val }}</span>
+                    <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#54545C">{{ p.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ d.noSplit }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:32px;display:flex;align-items:center;gap:12px">
+              <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:16px;color:#54545C">—</span>
+              <span style="font-size:13px;color:#6E6E78">{{ d.splitNote }}</span>
+              <span style="{{ d.splitBadge }}">{{ d.splitBadgeText }}</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ d.hasHistory }}" hint-placeholder-val="{{ true }}">
+            <div style="margin-top:32px">
+              <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;letter-spacing:.16em;color:#54545C;margin-bottom:16px">DAILY HISTORY · 14D</div>
+              {{ dHistoryEl }}
+            </div>
+          </sc-if>
+          <sc-if value="{{ d.noHistory }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:32px;font-size:13px;color:#6E6E78">{{ d.historyNote }}</div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+    </div>
+
+    <!-- SETTINGS -->
+    <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+      <div sc-camel-on-click="{{ toggleSettings }}" style="position:absolute;inset:0;background:rgba(11,11,13,.6);z-index:20;animation:tk-fade .2s ease both"></div>
+      <div style="position:absolute;top:0;right:0;bottom:0;width:340px;max-width:88%;background:#131316;border-left:1px solid #26262C;z-index:21;display:flex;flex-direction:column;animation:tk-up .3s ease both">
+        <div style="display:flex;align-items:center;padding:18px 20px;border-bottom:1px solid #1C1C21">
+          <span style="font-size:15px;font-weight:600;color:#ECECF1">Settings</span>
+          <button sc-camel-on-click="{{ toggleSettings }}" style="margin-left:auto;background:transparent;border:none;color:#6E6E78;font-size:20px;cursor:pointer;line-height:1">×</button>
+        </div>
+        <div style="padding:20px;overflow:auto;display:flex;flex-direction:column;gap:26px">
+          <sc-for list="{{ settingsGroups }}" as="g" hint-placeholder-count="3">
+            <div>
+              <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:#54545C;margin-bottom:14px">{{ g.title }}</div>
+              <div style="display:flex;flex-direction:column;gap:14px">
+                <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <span style="font-size:13px;color:#C4C4CC">{{ r.label }}</span>
+                    <span style="margin-left:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12px;color:{{ r.valColor }}">{{ r.val }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- ADD -->
+    <sc-if value="{{ addOpen }}" hint-placeholder-val="{{ false }}">
+      <div sc-camel-on-click="{{ toggleAdd }}" style="position:absolute;inset:0;background:rgba(11,11,13,.6);z-index:20;animation:tk-fade .2s ease both"></div>
+      <div style="position:absolute;top:0;right:0;bottom:0;width:360px;max-width:90%;background:#131316;border-left:1px solid #26262C;z-index:21;display:flex;flex-direction:column;animation:tk-up .3s ease both">
+        <div style="display:flex;align-items:center;padding:18px 20px;border-bottom:1px solid #1C1C21">
+          <span style="font-size:15px;font-weight:600;color:#ECECF1">Add agent</span>
+          <button sc-camel-on-click="{{ toggleAdd }}" style="margin-left:auto;background:transparent;border:none;color:#6E6E78;font-size:20px;cursor:pointer;line-height:1">×</button>
+        </div>
+        <div style="padding:20px;overflow:auto;display:flex;flex-direction:column;gap:10px">
+          <sc-for list="{{ addList }}" as="a" hint-placeholder-count="7">
+            <div style="display:flex;align-items:center;gap:12px;padding:13px 14px;background:#0F0F12;border:1px solid #1C1C21;border-radius:4px">
+              <span style="{{ a.glyphStyle }}">{{ a.glyph }}</span>
+              <div>
+                <div style="font-size:13px;font-weight:500;color:#ECECF1">{{ a.name }}</div>
+                <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;color:#54545C;margin-top:2px">{{ a.source }}</div>
+              </div>
+              <button sc-camel-on-click="{{ toggleAdd }}" style="margin-left:auto;{{ a.btnStyle }}">{{ a.btnText }}</button>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+  </sc-if>
+
+  <!-- MENU-BAR POPOVER MODE -->
+  <sc-if value="{{ showMenubar }}" hint-placeholder-val="{{ false }}">
+    <div style="width:min(1100px,96vw);height:min(780px,90vh);position:relative;background:#0A0A0C;border:1px solid #1C1C21;border-radius:10px;overflow:hidden">
+      <div style="height:28px;display:flex;align-items:center;gap:18px;padding:0 14px;background:#0E0E11;border-bottom:1px solid #17171B">
+        <span style="font-size:12px;color:#54545C">🯄</span>
+        <span style="font-size:12px;font-weight:600;color:#9A9AA4">Xcode</span>
+        <span style="font-size:12px;color:#54545C">File</span>
+        <span style="font-size:12px;color:#54545C">Edit</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:16px">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;background:{{ mbReadoutBg }};border-radius:5px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;font-weight:600;color:#ECECF1">◷ {{ mbTokens }}</span>
+          <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#6E6E78">100%</span>
+          <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#9A9AA4">Mon 9:41</span>
+        </span>
+      </div>
+
+      <div style="position:absolute;top:32px;right:88px;width:12px;height:12px;background:#141418;border-left:1px solid #26262C;border-top:1px solid #26262C;transform:rotate(45deg)"></div>
+      <div style="position:absolute;top:38px;right:14px;width:308px;background:#141418;border:1px solid #26262C;border-radius:10px;overflow:hidden;animation:tk-pop .25s ease both">
+        <div style="padding:16px 16px 14px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9.5px;letter-spacing:.14em;color:#54545C">TOKENS · TODAY</span>
+            <span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#9A9AA4">{{ mbDelta }}</span>
+          </div>
+          <div style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:34px;font-weight:600;color:#ECECF1;line-height:1;margin-top:10px">{{ mbTokens }}</div>
+        </div>
+        <div style="border-top:1px solid #1F1F24;padding:12px 16px;display:flex;flex-direction:column;gap:11px">
+          <div style="display:flex;align-items:center">
+            <span style="font-size:12.5px;color:#9A9AA4">Plan value</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:8px"><span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13px;font-weight:600;color:#ECECF1">{{ mbValue }}</span><span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:9px;letter-spacing:.06em;color:#9A9AA4;border:1px solid #34343B;border-radius:3px;padding:1px 5px">{{ mbTier }}</span></span>
+          </div>
+          <div style="display:flex;align-items:center">
+            <span style="font-size:12.5px;color:#9A9AA4">Tightest quota</span>
+            <span style="margin-left:auto;display:flex;align-items:center;gap:8px"><span style="width:6px;height:6px;border-radius:50%;background:{{ mbQuotaDot }}"></span><span style="font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:13px;font-weight:600;color:#ECECF1">{{ mbQuota }}</span><span style="font-size:11px;color:#6E6E78">{{ mbQuotaWho }}</span></span>
+          </div>
+        </div>
+        <div style="border-top:1px solid #1F1F24;padding:8px 8px">
+          <sc-for list="{{ mbAgents }}" as="a" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:6px" style-hover="background:#1B1B20">
+              <span style="{{ a.glyphStyle }}">{{ a.glyph }}</span>
+              <span style="font-size:12.5px;color:#C4C4CC">{{ a.name }}</span>
+              <span style="margin-left:auto;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:12.5px;color:#ECECF1">{{ a.stat }}</span>
+            </div>
+          </sc-for>
+        </div>
+        <div style="border-top:1px solid #1F1F24;padding:10px 12px;display:flex;align-items:center;gap:10px">
+          <button sc-camel-on-click="{{ openFromMenubar }}" style="flex:1;background:{{ accent }};border:none;border-radius:6px;padding:8px 0;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Open Tokei</button>
+          <button style="background:transparent;border:none;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;color:#6E6E78;cursor:pointer;padding:8px 6px">Quit ⌘Q</button>
+        </div>
+      </div>
+
+      <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;font-size:12px;color:#3E3E45">Tokei lives in your menu bar — one glance answers “am I using what I pay for?”</div>
+    </div>
+  </sc-if>
+
+  <div style="display:flex;align-items:center;gap:12px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10px;color:#3E3E45;flex-wrap:wrap;justify-content:center">
+    <span style="letter-spacing:.14em">DEV</span>
+    <div style="display:flex;gap:2px">
+      <sc-for list="{{ devBtns }}" as="b" hint-placeholder-count="5">
+        <button sc-camel-on-click="{{ b.onClick }}" style="{{ b.style }}">{{ b.label }}</button>
+      </sc-for>
+    </div>
+    <button sc-camel-on-click="{{ toggleNarrow }}" style="{{ narrowBtnStyle }}">{{ narrowLabel }}</button>
+  </div>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script="" data-props="{&quot;$preview&quot;:{&quot;width&quot;:1160,&quot;height&quot;:860},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FF3B70&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;playfulTiers&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Copy&quot;}}">
+class Component extends DCLogic {
+  constructor(props){
+    super(props);
+    this.state = { tab:'overview', range:'today', kpiMetric:'tokens', drillId:null, settingsOpen:false, addOpen:false, screen:'live', narrowForce:false, narrow:false, t:0 };
+    this.shade = { claude:'#6E6E78', codex:'#9A9AA4', cursor:'#C4C4CC', cline:'#4A4A52', opencode:'#37373E' };
+    this.providers = [
+      { id:'claude', name:'Claude Code', glyph:'CC', today:533e6, conf:'reported', quotas:[{label:'Weekly',pct:46,reset:'resets in 3d 14h'},{label:'5-hour session',pct:22,reset:'resets in 2h 41m'}], api:722, multStr:'3.6×', plan:200, planLabel:'$200/mo · 2× Max accounts', lifetime:2.31e9, hasTokens:true, source:'~/.claude · OAuth' },
+      { id:'codex', name:'Codex', glyph:'CX', today:8.9e6, conf:'estimated', quotas:[{label:'Session',pct:62,reset:'resets in 46m'},{label:'Weekly',pct:38,reset:'resets in 4d 02h'}], api:58, multStr:'2.9×', plan:20, planLabel:'$20/mo', lifetime:165e6, hasTokens:true, source:'codex CLI · session log' },
+      { id:'cursor', name:'Cursor', glyph:'CU', today:1.38e6, conf:'local', quotas:[{label:'Monthly',pct:7,reset:'resets in 21d'}], api:41, multStr:'2.1×', plan:20, planLabel:'$20/mo · Pro (active)', lifetime:78e6, hasTokens:true, source:'Cursor app · local db' },
+      { id:'cline', name:'Cline', glyph:'CL', today:4.2e6, conf:'local', quotas:[], quotaNote:'No quota — pay-as-you-go (Cline Pass). Spend is metered locally.', api:12.4, multStr:'2.5×', plan:5, planLabel:'$5/mo · Cline Pass', lifetime:210e6, hasTokens:true, source:'VS Code ext · local' },
+      { id:'antigravity', name:'Antigravity', glyph:'AG', today:null, conf:'unavailable', quotas:[{label:'Quota',pct:71,reset:'—'}], api:null, multStr:'—', plan:5, planLabel:'$5/mo · Google student', lifetime:null, hasTokens:false, source:'quota API only' },
+      { id:'gemini', name:'Gemini', glyph:'GM', today:null, conf:'unavailable', quotas:[], api:null, multStr:'—', plan:null, planLabel:'Not signed in', lifetime:null, hasTokens:false, signedOut:true, source:'not connected' },
+      { id:'opencode', name:'opencode', glyph:'OC', today:0.62e6, conf:'local', quotas:[], quotaNote:'No quota window reported by opencode.', api:9.2, multStr:'—', plan:null, planLabel:'No plan cost set', lifetime:21e6, hasTokens:true, noPlan:true, source:'opencode CLI · local' },
+    ];
+    this.split = { claude:[{k:'Input',v:41.2e6},{k:'Cache read',v:402.8e6},{k:'Cache write',v:63.5e6},{k:'Output',v:25.5e6}] };
+    this.tint = { claude:'#C77D5A', codex:'#5FA88C', cursor:'#9AA0AA', cline:'#8A93E6', antigravity:'#D2A15C', gemini:'#6D93DB', opencode:'#B98BD0' };
+    this.daily = {};
+    ['claude','codex','cursor','cline','opencode'].forEach((id,i)=>{
+      const p=this.providers.find(x=>x.id===id);
+      const base={claude:92e6,codex:9e6,cursor:1.3e6,cline:4e6,opencode:0.6e6}[id];
+      const vol={claude:42e6,codex:5e6,cursor:0.8e6,cline:2.4e6,opencode:0.35e6}[id];
+      let s=(i+3)*99173>>>0; const rnd=()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};
+      const arr=[]; for(let d=0;d<30;d++){arr.push(Math.max(0.02e6, base+(rnd()-0.5)*2*vol));}
+      arr[29]=p.today; this.daily[id]=arr;
+    });
+    this.tokAgents=['claude','codex','cursor','cline','opencode'];
+    this.contentRef=(el)=>{ if(el&&!this._ro){ this._ro=new ResizeObserver(es=>{ const w=es[0].contentRect.width; const n=w<720; if(n!==this.state.narrow) this.setState({narrow:n}); }); this._ro.observe(el);} };
+  }
+  componentDidMount(){ this.runAnim(); }
+  componentDidUpdate(){ const k=this.state.kpiMetric+this.state.range+this.state.tab+this.state.drillId+this.state.screen; if(k!==this._animKey) this.runAnim(); }
+  componentWillUnmount(){ if(this._ro) this._ro.disconnect(); cancelAnimationFrame(this._raf); }
+  runAnim(){ this._animKey=this.state.kpiMetric+this.state.range+this.state.tab+this.state.drillId+this.state.screen; const start=performance.now(),dur=650; cancelAnimationFrame(this._raf);
+    const tick=(now)=>{ let t=Math.min(1,(now-start)/dur); t=1-Math.pow(1-t,3); this.setState({t}); if(t<1) this._raf=requestAnimationFrame(tick); }; this._raf=requestAnimationFrame(tick); }
+
+  accent(){ return this.props.accent || '#FF3B70'; }
+  fmtTok(n){ if(n==null) return '—'; if(n>=1e9) return (n/1e9).toFixed(2)+'B'; if(n>=1e6){const v=n/1e6; return (v>=100?v.toFixed(0):v.toFixed(2))+'M';} if(n>=1e3) return Math.round(n/1e3)+'K'; return String(Math.round(n)); }
+  fmtDol(n){ if(n==null) return '—'; return '$'+n.toFixed(2); }
+  confStyle(conf){ const map={reported:'#B9B9C2',local:'#8E8E99',estimated:'#7A7A84',unavailable:'#54545C'}; const c=map[conf]||'#6E6E78'; const border=conf==='unavailable'?'dashed':'solid'; return `display:inline-block;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:${c};border:1px ${border} #26262C;border-radius:3px;padding:2px 6px;white-space:nowrap`; }
+  glyphCss(tint,size,fs){ return `width:${size}px;height:${size}px;border:1px solid ${tint}55;background:${tint}14;border-radius:${size>=32?4:3}px;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:${fs}px;font-weight:700;color:${tint};flex:none`; }
+  qColor(pct){ const A=this.accent(); return pct>=90?A:pct>=60?'#D2A15C':'#6E6E78'; }
+  rangeK(){ return {today:'TODAY',week:'WEEK',month:'MONTH',all:'ALL-TIME'}[this.state.range]; }
+  rangeTok(id){ const p=this.providers.find(x=>x.id===id); if(!p.hasTokens) return null; if(this.state.range==='all') return p.lifetime; const k={today:1,week:7,month:30}[this.state.range]; const a=this.daily[id]; return a.slice(a.length-k).reduce((s,v)=>s+v,0); }
+  dayTotals(){ const out=[]; for(let i=0;i<30;i++){ let s=0; this.tokAgents.forEach(id=>s+=this.daily[id][i]); out.push(s);} return out; }
+
+  renderChart(){
+    const h=React.createElement, m=this.state.kpiMetric, A=this.accent(), t=this.state.t;
+    if(m==='quota'||m==='value'){
+      let rows;
+      if(m==='quota') rows=this.providers.filter(p=>p.quotas.length).map(p=>({name:p.name,val:Math.max(...p.quotas.map(q=>q.pct)),disp:Math.max(...p.quotas.map(q=>q.pct))+'%',max:100})).sort((a,b)=>b.val-a.val);
+      else rows=this.providers.filter(p=>p.api!=null&&p.plan!=null).map(p=>({name:p.name,val:p.api/p.plan,disp:(p.api/p.plan).toFixed(1)+'×',max:4})).sort((a,b)=>b.val-a.val);
+      return h('div',{style:{display:'flex',flexDirection:'column',gap:'2px'}},rows.map((r,i)=>
+        h('div',{key:i,style:{display:'flex',alignItems:'center',gap:'16px',padding:'11px 0'}},
+          h('span',{style:{fontSize:'13px',color:'#C4C4CC',minWidth:'118px'}},r.name),
+          h('span',{style:{flex:1,height:'6px',background:'#161619',borderRadius:'3px',overflow:'hidden'}},h('span',{style:{display:'block',height:'100%',width:Math.min(100,r.val/r.max*100*t)+'%',background:(m==='quota'?this.qColor(r.val):'#6E6E78')}})),
+          h('span',{style:{fontFamily:"ui-monospace,'SF Mono',Menlo,monospace",fontSize:'15px',fontWeight:600,color:'#ECECF1',width:'50px',textAlign:'right'}},r.disp)
+        )));
+    }
+    const days=(this.state.range==='month'||this.state.range==='all')?30:14;
+    const totals=this.dayTotals().slice(30-days);
+    const W=900,H=190,pT=14,pB=4,pL=2,pR=2;
+    let vals=totals; if(m==='cumulative'){ let run=0; vals=totals.map(x=>run+=x); }
+    const sorted=[...vals].sort((a,b)=>a-b); const cap=(m==='cumulative')?Math.max(...vals):sorted[Math.floor(sorted.length*0.82)]*1.08||Math.max(...vals)||1;
+    const sx=(W-pL-pR)/(days-1);
+    const co=vals.map((v,i)=>[pL+i*sx, pT+(H-pT-pB)*(1-Math.min(1,v/cap))]);
+    const line=co.map((c,i)=>(i?'L':'M')+c[0].toFixed(1)+' '+c[1].toFixed(1)).join(' ');
+    const area=line+' L'+co[co.length-1][0].toFixed(1)+' '+(H-pB)+' L'+pL+' '+(H-pB)+' Z';
+    const last=co[co.length-1];
+    return h('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',height:200,preserveAspectRatio:'none',style:{display:'block',overflow:'visible'}},
+      h('line',{x1:pL,y1:H-pB,x2:W-pR,y2:H-pB,stroke:'#1C1C21',strokeWidth:1}),
+      h('path',{d:area,fill:'rgba(236,236,241,0.035)',style:{animation:'tk-fade 1s ease both'}}),
+      h('path',{d:line,fill:'none',stroke:'#C4C4CC',strokeWidth:1.5,vectorEffect:'non-scaling-stroke',pathLength:1,strokeDasharray:1,style:{animation:'tk-draw 1s ease both'}}),
+      h('circle',{cx:last[0],cy:last[1],r:3.5,fill:A,style:{transformOrigin:`${last[0]}px ${last[1]}px`,animation:'tk-dot .4s ease .7s both'}})
+    );
+  }
+  renderHistory(id){
+    const h=React.createElement, arr=this.daily[id].slice(16), W=900,H=120,pB=4,pT=6, max=Math.max(...arr)||1, sx=(W-6)/arr.length, bw=sx*0.55;
+    const bars=arr.map((v,i)=>{ const hh=(H-pT-pB)*(v/max); return h('rect',{key:i,x:3+i*sx+(sx-bw)/2,y:H-pB-hh,width:bw,height:Math.max(0,hh),fill:this.shade[id]||'#8E8E99',style:{animation:`tk-fade .5s ease ${i*0.02}s both`}}); });
+    return h('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',height:130,preserveAspectRatio:'none',style:{display:'block'}},bars);
+  }
+
+  renderVals(){
+    const A=this.accent(), st=this.state, narrow=st.narrow||st.narrowForce, t=st.t;
+    const playful=this.props.playfulTiers!==false;
+    const frameW = st.narrowForce ? '720px' : 'min(1100px,96vw)';
+    const frameStyle=`width:${frameW};height:min(780px,90vh);background:#0F0F12;border:1px solid #1C1C21;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;position:relative`;
+    const tab=(active)=>`background:transparent;border:none;padding:0 0 3px;cursor:pointer;font-size:14px;font-weight:500;letter-spacing:0;color:${active?'#ECECF1':'#54545C'};position:relative;border-bottom:2px solid ${active?A:'transparent'}`;
+    const isOv=st.tab==='overview';
+    const rangeBtns=[['today','Today'],['week','Week'],['month','Month'],['all','All']].map(([k,l])=>({label:l,onClick:()=>this.setState({range:k}),
+      style:`background:transparent;border:none;padding:5px 11px;border-radius:4px;cursor:pointer;font-size:11.5px;font-weight:500;color:${st.range===k?'#ECECF1':'#54545C'};letter-spacing:.01em`}));
+
+    const dt=this.dayTotals();
+    const todayTotal=this.tokAgents.reduce((s,id)=>s+this.providers.find(p=>p.id===id).today,0);
+    const rangeTotal=this.tokAgents.reduce((s,id)=>s+(this.rangeTok(id)||0),0);
+    const planTotVal=245, apiTotVal=833.40;
+
+    const metricDefs={
+      tokens:{label:'Tokens', target:todayTotal, fmt:(n)=>this.fmtTok(n), sub:`tokens used today across ${this.tokAgents.length} active agents. Antigravity and Gemini report no token data.`},
+      cumulative:{label:'Cumulative', target:rangeTotal, fmt:(n)=>this.fmtTok(n), sub:`tokens this ${st.range==='all'?'lifetime':st.range} — a running total across all connected agents.`},
+      quota:{label:'Quota', target:71, fmt:(n)=>Math.round(n)+'%', sub:`is your tightest quota — Antigravity. Nothing is close to a hard limit right now.`},
+      value:{label:'Value', target:3.4, fmt:(n)=>n.toFixed(1)+'×', sub:playful?`plan value — you're in MAXXING mode, getting far more than you pay for.`:`plan value — well above break-even on what you pay.`},
+    };
+    const selector=Object.keys(metricDefs).map(k=>{ const on=st.kpiMetric===k; return {label:metricDefs[k].label,onClick:()=>this.setState({kpiMetric:k}),
+      style:`background:transparent;border:none;cursor:pointer;font-size:12.5px;font-weight:500;padding:0 0 5px;color:${on?'#ECECF1':'#54545C'};border-bottom:2px solid ${on?A:'transparent'}`};});
+    const md=metricDefs[st.kpiMetric];
+    const heroValueOv=md.fmt(md.target*t);
+
+    // hero delta
+    let heroDelta={show:false};
+    if(st.kpiMetric==='tokens'){ const avg=dt.slice(22,29).reduce((s,v)=>s+v,0)/7; const ratio=todayTotal/avg;
+      heroDelta={show:true, arrow: ratio>=1?'▲':'▼', val: ratio>=1.8? ratio.toFixed(1)+'×' : Math.round((ratio-1)*100)+'%', label: ratio>=1.8?'your daily average':'vs your daily average'}; }
+    else if(st.kpiMetric==='cumulative'){ let prev=null;
+      if(st.range==='today') prev=dt[28];
+      else if(st.range==='week') prev=dt.slice(16,23).reduce((s,v)=>s+v,0);
+      if(prev){ const pct=(rangeTotal-prev)/prev*100; heroDelta={show:true, arrow:pct>=0?'▲':'▼', val:Math.abs(Math.round(pct))+'%', label:'vs last '+st.range}; } }
+    else if(st.kpiMetric==='value'){ heroDelta={show:true, arrow:'▲', val:'0.3×', label:'vs last month'}; }
+
+    const agentGrid = narrow ? 'repeat(2,1fr)' : 'repeat(4,1fr)';
+    const agents=this.providers.map(p=>{ const maxq=p.quotas.length?Math.max(...p.quotas.map(q=>q.pct)):0;
+      const stat=p.hasTokens?this.fmtTok(p.today):(p.quotas.length?maxq+'%':'—');
+      return { glyph:p.glyph,glyphStyle:this.glyphCss(this.tint[p.id],20,8.5),name:p.name,stat,statColor:p.signedOut?'#54545C':(p.hasTokens?'#ECECF1':'#C4C4CC'),
+        statMark:p.conf==='estimated'?'border-bottom:1px dotted #4A4A52;padding-bottom:1px;':'', confTitle:p.conf==='estimated'?'Estimated — not directly reported':'',
+        onClick:()=>this.setState({drillId:p.id}) }; });
+
+    // value
+    const inc=this.providers.filter(p=>p.api!=null&&p.plan!=null);
+    const lowest=[...inc].sort((a,b)=>a.api/a.plan-b.api/b.plan)[0];
+    const under=inc.filter(p=>p.api/p.plan<1);
+    const valueInsight = under.length
+      ? `${under[0].name} is only returning ${under[0].multStr} — you're overpaying. Consider downgrading.`
+      : `Every plan is earning out. Your thinnest is ${lowest.name} at ${lowest.multStr} — still well worth it.`;
+    const valueGrid = narrow ? '1fr auto' : '2.6fr 1.4fr 1fr';
+    const hideNarrow = narrow ? 'display:none;' : '';
+    const valueRows=this.providers.map(p=>{ const has=p.api!=null&&p.plan!=null;
+      const action = (!p.signedOut&&p.plan==null);
+      return { glyph:p.glyph,glyphStyle:this.glyphCss(this.tint[p.id],22,9),name:p.name, plan:this.fmtDol(p.plan), api:this.fmtDol(p.api), mult:p.multStr,
+        multColor:p.multStr==='—'?'#54545C':'#ECECF1', op:has?'1':'0.5', hideNarrow,
+        action, plainMid:!action, actionText:'Set plan cost →', actionClick:()=>this.setState({settingsOpen:true}),
+        apiMark:p.conf==='estimated'?'border-bottom:1px dotted #4A4A52;':'', apiTitle:p.conf==='estimated'?'Estimated':'',
+        onClick:()=>this.setState({drillId:p.id,tab:'overview'}) }; });
+    const tc = playful?'#6BBF8A':'#9AA0AA';
+    const tierStyle=`display:inline-block;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:11px;font-weight:600;letter-spacing:.1em;color:${tc};border:1px solid ${tc}66;border-radius:3px;padding:6px 12px`;
+
+    // ambient pressure
+    const wins=[]; this.providers.forEach(p=>p.quotas.forEach(q=>wins.push({who:p.name,id:p.id,label:q.label,pct:q.pct,reset:q.reset})));
+    wins.sort((a,b)=>b.pct-a.pct); const top=wins[0];
+    const pressure = top ? { text:`${top.who} — ${top.label.toLowerCase()} at ${top.pct}%`, meta: top.reset!=='—'?top.reset:'your tightest window',
+      dot: this.qColor(top.pct), bg: top.pct>=90?'rgba(255,59,112,0.06)':top.pct>=60?'rgba(210,161,92,0.06)':'transparent', onClick:()=>this.setState({drillId:top.id,tab:'overview'}) } : {};
+
+    let drill={};
+    if(st.drillId){
+      const p=this.providers.find(x=>x.id===st.drillId);
+      const maxq=p.quotas.length?Math.max(...p.quotas.map(q=>q.pct)):null;
+      const dStats=[
+        {label:'TOKENS · TODAY',value:this.fmtTok(p.today),color:p.today==null?'#54545C':'#ECECF1'},
+        {label:'TIGHTEST QUOTA',value:maxq==null?'—':maxq+'%',color:maxq==null?'#54545C':'#ECECF1'},
+        {label:'PLAN VALUE',value:p.multStr,color:p.multStr==='—'?'#54545C':'#ECECF1'},
+        {label:'API-EQUIV / MO',value:this.fmtDol(p.api),color:p.api==null?'#54545C':'#ECECF1'},
+      ];
+      const dQuotas=p.quotas.map(q=>({label:q.label,pct:q.pct+'%',reset:q.reset,fill:this.qColor(q.pct)}));
+      const splitArr=this.split[p.id]; let dSplit=[],hasSplit=false;
+      if(splitArr){ hasSplit=true; const tot=splitArr.reduce((s,x)=>s+x.v,0); const ramp=['#C4C4CC','#8E8E99','#54545C','#37373E'];
+        dSplit=splitArr.map((x,i)=>({k:x.k,val:this.fmtTok(x.v),pct:(x.v/tot*100).toFixed(1)+'%',shade:ramp[i]})); }
+      drill={ d:{ glyph:p.glyph,glyphStyle:this.glyphCss(this.tint[p.id],40,13),name:p.name,planLabel:p.planLabel,conf:p.conf.toUpperCase(),confStyle:this.confStyle(p.conf),
+          hasQuota:p.quotas.length>0, noQuota:p.quotas.length===0, quotaNote:p.quotaNote||'No quota window.',
+          hasSplit, noSplit:!hasSplit, splitNote:p.signedOut?'Sign in to Gemini to see token data.':'Only aggregate '+p.conf+' totals available — no per-type split.', splitBadge:this.confStyle(p.conf), splitBadgeText:p.conf.toUpperCase(),
+          hasHistory:p.hasTokens, noHistory:!p.hasTokens, historyNote:p.signedOut?'Not signed in — no history.':'Antigravity exposes quota only; no token history exists.' },
+        dStats, dQuotas, dSplit, dHistoryEl: p.hasTokens?this.renderHistory(p.id):null };
+    }
+
+    const addList=this.providers.map(p=>({glyph:p.glyph,glyphStyle:this.glyphCss(this.tint[p.id],24,9),name:p.name,source:p.source,
+      btnText:p.signedOut?'Sign in':'Connected', btnStyle:`font-size:11px;font-weight:600;padding:5px 11px;border-radius:4px;cursor:pointer;border:1px solid ${p.signedOut?'transparent':'#1C1C21'};background:${p.signedOut?A:'transparent'};color:${p.signedOut?'#fff':'#54545C'}`}));
+    const settingsGroups=[
+      {title:'GENERAL',rows:[{label:'Launch at login',val:'On',valColor:'#ECECF1'},{label:'Menu-bar readout',val:'Tokens today',valColor:'#ECECF1'},{label:'Refresh interval',val:'30s',valColor:'#ECECF1'}]},
+      {title:'DATA & PRIVACY',rows:[{label:'Storage',val:'Local only',valColor:'#ECECF1'},{label:'Usage DB',val:'~/.tokei/usage.db',valColor:'#9A9AA4'},{label:'Telemetry',val:'Off',valColor:'#ECECF1'}]},
+      {title:'ABOUT',rows:[{label:'Version',val:'2.1.0',valColor:'#9A9AA4'},{label:'Agents connected',val:'6 / 7',valColor:'#ECECF1'}]},
+    ];
+    const dev=[['live','LIVE'],['menubar','MENU BAR'],['loading','LOADING'],['error','ERROR'],['empty','EMPTY']].map(([k,l])=>({label:l,onClick:()=>this.setState({screen:k,drillId:null}),
+      style:`background:${st.screen===k?'#1C1C21':'transparent'};border:none;padding:4px 9px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.05em;color:${st.screen===k?A:'#3E3E45'}`}));
+    const gate=st.screen;
+
+    // menu-bar
+    const mbSorted=[...this.tokAgents].map(id=>this.providers.find(p=>p.id===id)).sort((a,b)=>b.today-a.today).slice(0,3);
+    const mbAgents=mbSorted.map(p=>({glyph:p.glyph,glyphStyle:this.glyphCss(this.tint[p.id],18,8),name:p.name,stat:this.fmtTok(p.today)}));
+
+    return {
+      frameStyle, accent:A, showApp: gate!=='menubar', showMenubar: gate==='menubar',
+      setOverview:()=>this.setState({tab:'overview',drillId:null,kpiMetric:'tokens'}), setValue:()=>this.setState({tab:'value',drillId:null}),
+      tabOvStyle:tab(isOv), tabValStyle:tab(!isOv), rangeBtns,
+      gearStyle:`background:transparent;border:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:${st.settingsOpen?A:'#54545C'}`,
+      toggleSettings:()=>this.setState({settingsOpen:!st.settingsOpen,addOpen:false}),
+      toggleAdd:()=>this.setState({addOpen:!st.addOpen,settingsOpen:false}), contentRef:this.contentRef,
+      showEmpty:gate==='empty', showLoading:gate==='loading', showError:gate==='error',
+      showDrill:gate==='live'&&!!st.drillId, showOverview:gate==='live'&&!st.drillId&&isOv, showValue:gate==='live'&&!st.drillId&&!isOv,
+      showPressure: gate==='live'&&!st.drillId,
+      pressure,
+      narrow, skel4:[0,1,2,3,4], retry:()=>this.setState({screen:'live'}),
+      selector, heroValue: isOv? heroValueOv : (3.4*t).toFixed(1)+'×', heroSub: md.sub, heroDelta,
+      chartEl:this.renderChart(), agentCount:this.providers.length, agentGrid, agents,
+      tierLabel:playful?'MAXXING':'STRONG', tierStyle, valueDelta:'▲ 0.3× vs last month', valueInsight,
+      valueGrid, hideNarrow, valueRows,
+      valuePlanTotal:this.fmtDol(planTotVal), valueApiTotal:this.fmtDol(apiTotVal), valueMultipleStatic:'3.4×',
+      valueExcluded:'Excluded from total: opencode (usage, no plan cost) · Antigravity (plan set, no token data) · Gemini (not signed in). ~2.8B tokens tracked lifetime.',
+      ...drill, closeDrill:()=>this.setState({drillId:null}),
+      settingsOpen:st.settingsOpen, settingsGroups, addOpen:st.addOpen, addList,
+      mbTokens:this.fmtTok(todayTotal), mbReadoutBg:'rgba(255,59,112,0.12)', mbDelta:'▲ '+(todayTotal/(dt.slice(22,29).reduce((s,v)=>s+v,0)/7)).toFixed(1)+'× avg', mbValue:'3.4×', mbTier:playful?'MAXXING':'STRONG',
+      mbQuota:'71%', mbQuotaWho:'Antigravity', mbQuotaDot:'#D2A15C', mbAgents, openFromMenubar:()=>this.setState({screen:'live'}),
+      devBtns:dev, toggleNarrow:()=>this.setState({narrowForce:!st.narrowForce}),
+      narrowBtnStyle:`background:${st.narrowForce?'#1C1C21':'transparent'};border:none;border-radius:3px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:10px;letter-spacing:.05em;color:${st.narrowForce?A:'#3E3E45'}`,
+      narrowLabel:st.narrowForce?'◧ 720':'◧ NARROW',
+    };
+  }
+}
+</script>
+
+
+</body></html>
