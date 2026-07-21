@@ -119,6 +119,7 @@ struct SettingsDrawer: View {
             agentsDataSection
             appearanceSection
             notificationsSection
+            feedbackSection
             versionSection
         }
     }
@@ -257,7 +258,44 @@ struct SettingsDrawer: View {
         }
     }
 
-    // MARK: 5 · Version
+    // MARK: 5 · Feedback
+
+    /// Feedback + diagnostics entry point. Not wired to a backend yet, so it reads
+    /// as an honest "coming soon" rather than a dead button.
+    private var feedbackSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HairlineDivider()
+            VStack(alignment: .leading, spacing: PadzySpace.m) {
+                SectionLabel("Feedback")
+                Text("Tell us what's working and what isn't, or send a diagnostic if something looks off.")
+                    .font(.sans(size: 11))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Text("Send feedback & diagnostics")
+                        .font(.sans(size: 12, weight: .medium))
+                        .foregroundColor(PadzyTheme.ink4)
+                    Text("COMING SOON")
+                        .font(.mono(size: 8.5))
+                        .tracking(8.5 * 0.1)
+                        .foregroundColor(PadzyTheme.ink5)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                                .stroke(PadzyTheme.border2, lineWidth: 1)
+                        )
+                    Spacer(minLength: 8)
+                }
+            }
+            .padding(.top, PadzySpace.l)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Feedback and diagnostics, coming soon")
+    }
+
+    // MARK: 6 · Version
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: 0) {
