@@ -152,24 +152,40 @@ struct OverviewView: View {
         }
     }
 
-    /// Element-wise union of the visible providers' §4 heatmaps: a cell is `nil`
-    /// only when NO provider reports it; otherwise the sum of those that do.
-    /// (Preserved verbatim from the prior pane.)
-    private var combinedHeatmap: [[Int?]]? {
-        let matrices = visibleProviders
-            .compactMap { viewModel.heatmap(for: $0) }
-            .filter { $0.count == 7 }
-        guard !matrices.isEmpty else { return nil }
+    /// Per-cell activity for the agent-coloured punch-card: for each weekday×hour
+    /// cell, the visible providers' §4 heatmaps are combined into a total plus the
+    /// single agent that contributed most that hour (its `AgentTint` colours the
+    /// cell) and a hover tooltip. An hour with no activity from any provider is
+    /// `.empty`. The same identity colours the donut and agent grid use.
+    private var heatCells: [[HeatCell]] {
+        let entries: [(id: ProviderID, matrix: [[Int?]])] = visibleProviders
+            .compactMap { id in viewModel.heatmap(for: id).map { (id, $0) } }
+            .filter { $0.matrix.count == 7 }
+        guard !entries.isEmpty else { return [] }
+
         return (0..<7).map { row in
-            (0..<24).map { column -> Int? in
-                let cells = matrices.compactMap { matrix -> Int? in
-                    guard matrix[row].indices.contains(column) else { return nil }
-                    return matrix[row][column]
+            (0..<24).map { column -> HeatCell in
+                var contributions: [(id: ProviderID, tokens: Int)] = []
+                for entry in entries {
+                    guard entry.matrix[row].indices.contains(column),
+                          let value = entry.matrix[row][column], value > 0 else { continue }
+                    contributions.append((entry.id, value))
                 }
-                return cells.isEmpty ? nil : cells.reduce(0, +)
+                guard !contributions.isEmpty else { return .empty }
+
+                contributions.sort { $0.tokens > $1.tokens }
+                let total = contributions.reduce(0) { $0 + $1.tokens }
+                let leader = contributions[0]
+                let name = viewModel.snapshot(for: leader.id)?.displayName
+                    ?? leader.id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+                let tooltip = "\(Self.weekdayNames[row]) \(AnalyticsFormat.hourLabel(column)) · "
+                    + "\(name) \(TokenFormatter.format(leader.tokens)) of \(TokenFormatter.format(total)) total"
+                return HeatCell(total: total, tint: AgentTint.color(leader.id), tooltip: tooltip)
             }
         }
     }
+
+    private static let weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
     // MARK: Body
 
@@ -362,7 +378,7 @@ struct OverviewView: View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
             HairlineDivider()
             kicker("When you work")
-            ActivityHeatmap(matrix: combinedHeatmap ?? [])
+            ActivityHeatmap(cells: heatCells)
                 .frame(minHeight: 96)
         }
     }
