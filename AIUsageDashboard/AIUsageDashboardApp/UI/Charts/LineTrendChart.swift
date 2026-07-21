@@ -163,11 +163,11 @@ struct LineTrendChart: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            guard let frame = proxy.plotFrame.map({ geo[$0] }) else {
-                                hoveredID = nil
-                                return
-                            }
-                            let relativeX = location.x - frame.minX
+                            // `plotAreaFrame` is a non-optional anchor (works on the
+                            // macOS 14 deployment target); the optional `plotFrame`
+                            // resolves to nil here and would suppress every hover.
+                            let origin = geo[proxy.plotAreaFrame].origin
+                            let relativeX = location.x - origin.x
                             guard let date: Date = proxy.value(atX: relativeX) else {
                                 hoveredID = nil
                                 return
