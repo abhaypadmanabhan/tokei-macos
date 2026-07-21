@@ -80,3 +80,23 @@
 - **Root cause:** the battery-fix commit drove the sync spinner with `TimelineView(.periodic…)` placed INSIDE the `MenuBarExtra { } label:` view. SwiftUI snapshots a MenuBarExtra label into the status-item image; a `TimelineView`'s self-driving clock breaks that render and the item never appears (and doesn't recover after the initial `isLoading` sync).
   - **Rule:** never put `TimelineView` (or other self-scheduling/animating views) in a `MenuBarExtra` label. Drive periodic label updates with a `@State` frame + plain `Image`, ticked by a `.task(id:)` async loop (created on demand, cancelled at idle → also no battery drain). The `@State`+`Image` path is what shipped 0.4.0 and renders reliably.
 - **Process rule:** a UI change that BUILDS is not verified. `xcodebuild build` PASSED and `/agents-done`'s build gate PASSED, yet the item was broken — build success ≠ visual render. Always LAUNCH a menu-bar/GUI change and screenshot the actual item. A/B against the last shipped build is the fastest way to separate a regression from an environment quirk (notch overflow, hider utilities).
+
+## 2026-07-21 — Data viz: "standard/boxy" beats "smooth" for a heatmap
+- **Correction:** the WP-5 activity heatmap used a *continuous* single-hue opacity
+  field in *wide rectangular* cells (the earlier `4033551` "continuous" tweak).
+  User: "boxy and standard, not this rectangular — it looks like noise, doesn't
+  tell me anything." A prior explicit request for "continuous" did NOT survive
+  contact with real data.
+- **Rule:** for a heatmap/punch-card, default to the recognizable GitHub shape —
+  **square** cells at a fixed capped size (never stretch to fill width),
+  **discrete** intensity steps (not a continuous ramp), and every cell a
+  **visible box** (empty = a faint grid box) so the grid reads as structure. A
+  smooth gradient over a busy grid destroys the very pattern the chart exists to
+  show. Keep it one neutral data hue.
+- **Process:** this only became obvious once LOOKED AT in the running app. With
+  Screen Recording + Accessibility granted, close the loop: `open` the worktree
+  build, then `screencapture -R <window-bounds>` (re-read bounds each time — the
+  window moves; capture the exact window rect, never the whole screen, to avoid
+  grabbing the user's other content). Drive tabs via System Events
+  `click button N of group 1 of window 1`; open the drill-in with Down-arrow;
+  open the menu-bar popover via `click menu bar item 1 of menu bar 2`.
