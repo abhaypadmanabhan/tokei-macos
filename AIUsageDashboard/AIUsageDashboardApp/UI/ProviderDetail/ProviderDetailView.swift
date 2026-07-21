@@ -16,12 +16,8 @@ import AIUsageDashboardCore
 /// (progress, the single ◆ marker, the one primary button).
 struct ProviderDetailView: View {
     let snapshot: ProviderSnapshot
-    /// §4 `trend(for:)` — ranged daily totals, oldest→newest.
+    /// §4 `trend(for:)` — ranged daily totals, oldest→newest (the 30d history).
     var trend: [(date: Date, tokens: Int)] = []
-    /// §4 `thisWeek(for:)`.
-    var thisWeek: (peakDayWeekday: Int, peakDayTokens: Int, dailyAverage: Int, delta: Double?)? = nil
-    /// §4 `heatmap(for:)` — 7×24, `nil` when the provider has no hourly source.
-    var heatmap: [[Int?]]? = nil
     /// §4 `peakHour(for:)`.
     var peakHour: (hour: Int, tokens: Int)? = nil
     var lastSyncedAt: Date? = nil

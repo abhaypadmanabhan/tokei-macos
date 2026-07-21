@@ -122,40 +122,11 @@ public enum PadzyChartPalette {
     public static let deltaUp = Color(hex: "3DBE8B")
     public static let deltaDown = Color(hex: "FF4D4D")
 
-    /// Sequential heatmap ramp, LOW → HIGH. WP-5: a single neutral hue (mockup uses
-    /// `rgba(202,202,214,α)`); the prior pink-accent ramp overloaded the accent.
-    public static let heatmapRamp: [Color] = [
-        Color(hex: "17171B"),
-        Color(hex: "3A3A42"),
-        Color(hex: "5E5E68"),
-        Color(hex: "8E8E99"),
-        Color(hex: "C4C4CC"),
-    ]
-
     /// Neutral heatmap cell colour for a 0…1 intensity (mockup formula:
     /// `rgba(196,196,204, 0.05 + intensity*0.85)`).
     public static func heatCell(_ intensity: Double) -> Color {
         Color(.sRGB, red: 196.0 / 255, green: 196.0 / 255, blue: 204.0 / 255,
               opacity: 0.05 + max(0, min(1, intensity)) * 0.85)
-    }
-
-    /// Donut slice ramp: `count` pink shades from accent `#FF3B70` → `#7A1D35`.
-    /// (Legacy — the WP-5 donut colours slices by `AgentTint` instead.)
-    public static func donutRamp(_ count: Int) -> [Color] {
-        guard count > 0 else { return [] }
-        guard count > 1 else { return [Color(hex: "FF3B70")] }
-        let from: (Double, Double, Double) = (0xFF, 0x3B, 0x70)
-        let to: (Double, Double, Double) = (0x7A, 0x1D, 0x35)
-        return (0..<count).map { i in
-            let t = Double(i) / Double(count - 1)
-            return Color(
-                .sRGB,
-                red: (from.0 + (to.0 - from.0) * t) / 255,
-                green: (from.1 + (to.1 - from.1) * t) / 255,
-                blue: (from.2 + (to.2 - from.2) * t) / 255,
-                opacity: 1
-            )
-        }
     }
 
     /// The one sanctioned gradient: a neutral ink→transparent fill under line/area

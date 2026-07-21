@@ -409,8 +409,6 @@ struct DashboardView: View {
             ProviderDetailView(
                 snapshot: snapshot,
                 trend: viewModel.trend(for: snapshot.providerID),
-                thisWeek: viewModel.thisWeek(for: snapshot.providerID),
-                heatmap: viewModel.heatmap(for: snapshot.providerID),
                 peakHour: viewModel.peakHour(for: snapshot.providerID),
                 lastSyncedAt: viewModel.lastSyncedAt,
                 value: MaxxerValueEngine.scorecard(
