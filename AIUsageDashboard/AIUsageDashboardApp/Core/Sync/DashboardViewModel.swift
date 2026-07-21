@@ -223,7 +223,12 @@ public final class DashboardViewModel: ObservableObject {
 
     public func heatmap(for id: ProviderID) -> [[Int?]]? {
         guard let hourlyTotals = snapshot(for: id)?.hourlyTotals else { return nil }
-        return UsageAnalytics.heatmapMatrix(hourlyTotals: hourlyTotals, calendar: calendar)
+        return UsageAnalytics.heatmapMatrix(
+            hourlyTotals: hourlyTotals,
+            range: range,
+            calendar: calendar,
+            now: now()
+        )
     }
 
     public func peakHour(for id: ProviderID) -> (hour: Int, tokens: Int)? {

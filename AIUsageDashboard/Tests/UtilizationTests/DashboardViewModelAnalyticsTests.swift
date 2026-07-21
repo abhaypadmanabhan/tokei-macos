@@ -85,6 +85,35 @@ final class DashboardViewModelAnalyticsTests: XCTestCase {
         XCTAssertNil(vm.peakHour(for: .antigravity))
     }
 
+    func testHeatmapFollowsViewModelRange() {
+        let todayHour = date("2026-07-10", hour: 9)      // in every range
+        let oldHour = date("2026-06-20", hour: 9)         // 20 days back: out of 7, in 30/90
+        let vm = makeViewModel()
+        vm.snapshots = [
+            snapshot(.claudeCode, dailyTotals: [
+                day("2026-06-20"): 20,
+                day("2026-07-10"): 10
+            ], hourlyTotals: [
+                todayHour: 10,
+                oldHour: 20
+            ])
+        ]
+        let todayWeekday = calendar.component(.weekday, from: todayHour) - 1
+        let oldWeekday = calendar.component(.weekday, from: oldHour) - 1
+
+        vm.range = .sevenDay
+        let seven = vm.heatmap(for: .claudeCode)
+        XCTAssertEqual(seven?[todayWeekday][9], 10)
+        XCTAssertNil(seven?[oldWeekday][9])
+
+        vm.range = .thirtyDay
+        let thirty = vm.heatmap(for: .claudeCode)
+        XCTAssertEqual(thirty?[todayWeekday][9], 10)
+        XCTAssertEqual(thirty?[oldWeekday][9], 20)
+
+        XCTAssertNotEqual(seven, thirty)
+    }
+
     private func snapshot(
         _ providerID: ProviderID,
         dailyTotals: [Date: Int],

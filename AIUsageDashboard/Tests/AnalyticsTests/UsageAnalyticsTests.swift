@@ -192,6 +192,43 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertNil(matrix[weekdayIndex][8])
     }
 
+    func testHeatmapMatrixRestrictsFoldToRangeWindow() {
+        // now = 2026-07-10 12:00 (a Friday). Slots span 90 days back at hour 9.
+        let today = date("2026-07-10", hour: 9)          // 0 days back — in every range
+        let eightDaysAgo = date("2026-07-02", hour: 9)    // out of 7-day, in 30/90
+        let fortyDaysAgo = date("2026-05-31", hour: 9)    // out of 7/30-day, in 90
+        let hourly = [today: 10, eightDaysAgo: 20, fortyDaysAgo: 40]
+
+        let weekdayToday = calendar.component(.weekday, from: today) - 1
+        let weekday8 = calendar.component(.weekday, from: eightDaysAgo) - 1
+        let weekday40 = calendar.component(.weekday, from: fortyDaysAgo) - 1
+
+        let seven = UsageAnalytics.heatmapMatrix(hourlyTotals: hourly, range: .sevenDay, calendar: calendar, now: now)
+        let thirty = UsageAnalytics.heatmapMatrix(hourlyTotals: hourly, range: .thirtyDay, calendar: calendar, now: now)
+        let ninety = UsageAnalytics.heatmapMatrix(hourlyTotals: hourly, range: .ninetyDay, calendar: calendar, now: now)
+
+        // 7-day: only today's slot survives; the older slots are excluded (nil).
+        XCTAssertEqual(seven[weekdayToday][9], 10)
+        XCTAssertNil(seven[weekday8][9])
+        XCTAssertNil(seven[weekday40][9])
+
+        // 30-day: today + 8-days-ago; 40-days-ago still excluded.
+        XCTAssertEqual(thirty[weekdayToday][9], 10)
+        XCTAssertEqual(thirty[weekday8][9], 20)
+        XCTAssertNil(thirty[weekday40][9])
+
+        // 90-day: all three fold in.
+        XCTAssertEqual(ninety[weekday40][9], 40)
+
+        // The three ranges produce genuinely different grids.
+        XCTAssertNotEqual(seven, thirty)
+        XCTAssertNotEqual(thirty, ninety)
+
+        // Default range keeps the all-time fold (existing callers unchanged).
+        let all = UsageAnalytics.heatmapMatrix(hourlyTotals: hourly, calendar: calendar, now: now)
+        XCTAssertEqual(all[weekday40][9], 40)
+    }
+
     func testPeakHourAggregatesAndUsesEarliestTie() {
         let peak = UsageAnalytics.peakHour(
             hourlyTotals: [
