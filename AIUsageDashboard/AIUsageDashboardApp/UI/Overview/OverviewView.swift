@@ -281,7 +281,7 @@ struct OverviewView: View {
             Text("\(delta >= 0 ? "▲" : "▼") \(String(format: "%.1f", abs(delta)))%")
                 .font(.mono(size: 12.5, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink3)
+                .foregroundColor(delta >= 0 ? PadzyChartPalette.deltaUp : PadzyChartPalette.deltaDown)
             Text(AnalyticsFormat.deltaCaption(viewModel.range))
                 .font(.sans(size: 12.5))
                 .foregroundColor(PadzyTheme.ink5)
