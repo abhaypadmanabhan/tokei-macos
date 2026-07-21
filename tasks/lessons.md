@@ -100,3 +100,24 @@
   grabbing the user's other content). Drive tabs via System Events
   `click button N of group 1 of window 1`; open the drill-in with Down-arrow;
   open the menu-bar popover via `click menu bar item 1 of menu bar 2`.
+
+## 2026-07-21 — Driving the macOS app for visual verify (refined)
+- **Scroll a SwiftUI ScrollView reliably:** Page Down / arrow keys do NOT scroll it
+  (arrows are also intercepted by the app's onMoveCommand → drill-in). What works:
+  `set value of scroll bar 1 of scroll area 1 of group 1 of window 1 to 1.0`
+  (0.0 = top). Found the scroll area by dumping `UI elements of window 1`.
+- **The window moves between calls** (Stage Manager / focus). Re-read
+  `{position, size} of window 1` before EVERY capture and pass that exact rect to
+  `screencapture -R` — never a hardcoded region.
+- **Capture the target window's rect only, never the whole screen or a guessed
+  region** — a menu-bar popover sits over the user's other windows, so a loose
+  region grabs their private content (incl. this very terminal). For the
+  MenuBarExtra popover, enumerate `windows of process "Tokei"`: the unnamed small
+  (~320-wide) window IS the popover — capture its exact bounds.
+- **Tabs:** `click button N of group 1 of window 1` (1=Overview…). Drill-in: Down
+  arrow from a tab. Popover: `click menu bar item 1 of menu bar 2`.
+- **Fetching a brand mark as a tintable asset:** lobe-icons
+  (`raw.githubusercontent.com/lobehub/lobe-icons/master/packages/static-svg/icons/<name>.svg`)
+  gives clean monochrome single-shape SVGs that drop straight into a
+  template-rendering-intent imageset and tint per-agent. Keep the path's
+  `fill-rule` (opencode's frame needs evenodd).
