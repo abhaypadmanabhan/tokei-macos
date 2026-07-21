@@ -258,7 +258,10 @@ struct DashboardView: View {
                 onAddAgent: { showingAddAgent = true }
             )
         case .value:
-            ValueView(onOpenPlanCosts: { openSettings() })
+            ValueView(
+                onOpenPlanCosts: { openSettings() },
+                onSelectProvider: { openProvider($0) }
+            )
         case .agents:
             ConnectionsView(onAddAgent: { showingAddAgent = true })
         }

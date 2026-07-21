@@ -4,22 +4,29 @@ import AIUsageDashboardCore
 /// The value surface (#23 UI half + #41): what your paid plans are actually
 /// worth against what the same month of tokens would cost at public API rates.
 ///
+/// WP-5 rebuild to the "Tokei Dashboard" mockup (outline L167-219): an 84pt mono
+/// hero multiple with the tier chip inline, a plain-language "$api from $plan"
+/// sentence, one ◆ insight line, then a clean hairline-row grid — no card stack,
+/// no fixed-width table. Every row drills into the provider (or, when a plan cost
+/// is missing, jumps to Settings to fix it).
+///
 /// Reads the frozen Maxxer contract (Bible §4) through
 /// `MaxxerValueEngine.scorecard(snapshots:planCosts:now:)` and the existing
-/// `ProviderSnapshot.lifetimeUsage` API — no Core edits. Until WP-1 merges, that
-/// entry point resolves to `MaxxerContractShim.swift`; the call site here is
-/// written against the frozen signature and does not change at integration.
+/// `MaxxerMath.lifetimeTotal` API — no Core edits.
 ///
-/// Editorial contract: dollar figures are `ink` (they are data, not state), the
-/// single accent is spent only on the tier chip's active tick and the empty
-/// state's primary action, and every unknown renders `—` rather than a
-/// confident zero. No animation on this surface, so Reduce Motion has nothing
-/// to suppress.
+/// Editorial contract: dollar figures and multiples are `ink` (data, not state);
+/// the single pink accent is spent only on the ◆ insight marker and the empty
+/// state's primary action; the tier chip uses semantic good/warn status colour,
+/// never the accent; every unknown renders `—`, never a confident zero. There is
+/// no animation on this surface, so Reduce Motion has nothing to suppress.
 struct ValueView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
 
-    /// Routes to the Settings pane, where the plan-cost fields live.
+    /// Routes to the Settings drawer, where the plan-cost fields live.
     var onOpenPlanCosts: () -> Void = {}
+
+    /// Drills into a provider's detail. Wired to `DashboardView.openProvider`.
+    var onSelectProvider: (ProviderID) -> Void = { _ in }
 
     /// Injectable so previews can exercise the loaded state without writing into
     /// the developer's real `UserDefaults`. Ships reading `.standard`.
@@ -60,39 +67,11 @@ struct ValueView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
-            storeRevision &+= 1
-        }
-    }
-
-    // MARK: Header
-
-    /// Pane header. The `02 / VALUE` tab pill above already prints the total
-    /// multiple and names the surface, so this header no longer repeats either —
-    /// it carries what the pill cannot: the tier and what the tier means.
-    /// Suppressed entirely when there is no tier to state, so the states below
-    /// start at the top of the pane instead of under an empty bar.
-    @ViewBuilder
-    private var header: some View {
-        if hasAnyPlanCost, let tier = scorecard.tier {
-            HStack(alignment: .center, spacing: 12) {
-                TierChip(tier: tier)
-                Text(tier.blurb)
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+                storeRevision &+= 1
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            HairlineDivider()
-        }
     }
 
     // MARK: State routing
@@ -122,9 +101,11 @@ struct ValueView: View {
         }
     }
 
-    /// The surface's real empty state: agents are connected, but Tokei has no
-    /// idea what the user pays, so every multiple would be `—`. Leads with the
-    /// action that fixes it.
+    // MARK: No plan cost
+
+    /// The surface's real empty state: agents are connected, but Tokei has no idea
+    /// what the user pays, so every multiple would be `—`. Leads with the action
+    /// that fixes it, then still shows the lifetime total so the pane isn't bare.
     private var noPlanCostState: some View {
         VStack(alignment: .leading, spacing: 14) {
             SurfaceStateView(
@@ -160,79 +141,160 @@ struct ValueView: View {
         .accessibilityLabel("Set plan costs in Settings")
     }
 
+    // MARK: Loaded
+
     private var loadedState: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                valueTableCard
-                lifetimeCard
-            }
-            .padding(20)
-        }
-    }
+            VStack(alignment: .leading, spacing: 0) {
+                SectionLabel("Plan value · this month")
 
-    // MARK: Value table (Dense tier)
+                hero
+                    .padding(.top, 16)
 
-    private var valueTableCard: some View {
-        SectionCard("Value by agent", trailing: {
-            Text("MONTH TO DATE")
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-        }) {
-            VStack(spacing: 0) {
-                ValueTableHeader()
-                HairlineDivider()
+                summarySentence
+                    .padding(.top, 18)
 
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    ValueProviderRow(value: row.value, displayName: row.displayName, providerID: row.providerID)
-                    if index < rows.count - 1 {
-                        HairlineDivider()
-                    }
+                if let insight = insightText {
+                    insightBox(insight)
+                        .padding(.top, 16)
                 }
 
+                valueRows
+                    .padding(.top, 28)
+
+                excludedFootnote
+                    .padding(.top, 18)
+            }
+            .padding(.horizontal, PadzySpace.xxl)
+            .padding(.top, 34)
+            .padding(.bottom, PadzySpace.xxxl)
+        }
+    }
+
+    /// The 84pt headline multiple with the tier chip sitting inline to its right —
+    /// the mockup's hero. The multiple is the surface's one big number; the chip is
+    /// the only colour on the pane (semantic good/warn, never the accent).
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 18) {
+            Text(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))
+                .font(.mono(size: 84, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(scorecard.totalValueMultiple == nil ? PadzyTheme.muted : PadzyTheme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityLabel("Plan value \(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))")
+
+            if let tier = scorecard.tier {
+                TierChip(tier: tier)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// "You're getting $833.40 of API-equivalent usage from $245.00 in plans across
+    /// N agents." Dollar figures are ink mono (data); the prose is muted sans.
+    /// The mockup's "▲ 0.3× vs last month" delta is intentionally dropped — Core
+    /// keeps no month-over-month history, and a fabricated delta would break the
+    /// "never a confident number we don't have" rule.
+    private var summarySentence: some View {
+        let api = MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD)
+        let plan = MaxxerMath.formatUSD(scorecard.totalPlanUSD)
+        let n = pricedCount
+        return (
+            Text("You're getting ").foregroundColor(PadzyTheme.muted)
+            + Text(api).font(.mono(size: 15)).foregroundColor(PadzyTheme.ink)
+            + Text(" of API-equivalent usage from ").foregroundColor(PadzyTheme.muted)
+            + Text(plan).font(.mono(size: 15)).foregroundColor(PadzyTheme.ink)
+            + Text(" in plans across \(n) agent\(n == 1 ? "" : "s").").foregroundColor(PadzyTheme.muted)
+        )
+        .font(.sans(size: 15))
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: 560, alignment: .leading)
+    }
+
+    /// One plain-language read on the numbers, in a hairline-bounded box with the
+    /// single accent spent on the ◆ marker.
+    private func insightBox(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("◆")
+                .font(.mono(size: 13))
+                .foregroundColor(PadzyTheme.accent)
+            Text(text)
+                .font(.sans(size: 13))
+                .foregroundColor(PadzyTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 560, alignment: .leading)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(PadzyTheme.hairline, lineWidth: 1)
+        )
+    }
+
+    // MARK: Rows
+
+    private var valueRows: some View {
+        VStack(spacing: 0) {
+            HairlineDivider()
+            ForEach(rows) { row in
+                ValueRow(
+                    value: row.value,
+                    displayName: row.displayName,
+                    providerID: row.providerID,
+                    onDrill: { if let id = row.providerID { onSelectProvider(id) } },
+                    onSetPlanCost: onOpenPlanCosts
+                )
                 HairlineDivider()
-                ValueTotalRow(scorecard: scorecard)
             }
-
-            // The total multiple divides EVERY priced agent's API-equivalent spend by
-            // only the plans the user has actually costed (Bible §4 / WP-1 AC: an
-            // unconfigured plan is excluded from `totalPlanUSD` but its usage still
-            // counts toward `totalAPIEquivalentUSD`). That inflates the headline, so
-            // say so rather than letting a big number speak for itself.
-            if hasUnpricedPlans {
-                Text("\(unpricedNames) \(unpricedCount == 1 ? "has" : "have") usage but no plan cost set, so \(unpricedCount == 1 ? "it's" : "they're") left out of the total multiple. Add the missing prices for the full picture.")
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if scorecard.providers.contains(where: { $0.confidence == .unavailable }) {
-                Text("Agents with no month-to-date token data are listed but excluded from the totals — they are unmeasured, not zero.")
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            ValueTotalRow(scorecard: scorecard)
         }
     }
 
-    /// Agents with priced usage but no user-entered plan cost — excluded from
-    /// the totals (paired-only), so the headline understates their spend.
-    private var unpricedRows: [Row] {
-        rows.filter { $0.value.apiEquivalentUSD != nil && $0.value.planMonthlyUSD == nil }
-    }
+    // MARK: Footnote
 
-    private var hasUnpricedPlans: Bool { !unpricedRows.isEmpty }
-
-    private var unpricedCount: Int { unpricedRows.count }
-
-    private var unpricedNames: String {
-        let names = unpricedRows.map(\.displayName)
-        switch names.count {
-        case 0: return ""
-        case 1: return names[0]
-        case 2: return "\(names[0]) and \(names[1])"
-        default: return names.dropLast().joined(separator: ", ") + ", and \(names[names.count - 1])"
+    /// One line naming what the total leaves out and why, with the lifetime total
+    /// folded onto the tail (mockup). Preserves the #41 lifetime binding without a
+    /// separate card. `nil` categories simply drop out of the sentence.
+    @ViewBuilder
+    private var excludedFootnote: some View {
+        let text = footnoteText
+        if !text.isEmpty {
+            Text(text)
+                .font(.mono(size: 10))
+                .foregroundColor(PadzyTheme.ink5)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 620, alignment: .leading)
         }
     }
+
+    private var footnoteText: String {
+        var clauses: [String] = []
+        if !unpricedRows.isEmpty {
+            clauses.append("\(unpricedNames) (usage, no plan cost)")
+        }
+        let noData = rows.filter { $0.value.planMonthlyUSD != nil && $0.value.apiEquivalentUSD == nil }
+        if !noData.isEmpty {
+            let names = joinNames(noData.map(\.displayName))
+            clauses.append("\(names) (plan set, no token data)")
+        }
+
+        var sentence = ""
+        if !clauses.isEmpty {
+            sentence = "Excluded from the total: \(clauses.joined(separator: " · "))."
+        }
+        if let lifetime {
+            let prefix = lifetime.usedDailyFallback ? "≈" : ""
+            let tail = "\(prefix)\(TokenFormatter.format(lifetime.tokens)) tokens tracked lifetime."
+            sentence = sentence.isEmpty ? tail : "\(sentence) \(tail)"
+        }
+        return sentence
+    }
+
+    // MARK: Rows model
 
     private struct Row: Identifiable {
         let value: MaxxerProviderValue
@@ -253,7 +315,48 @@ struct ValueView: View {
             .sorted { ($0.value.valueMultiple ?? -1) > ($1.value.valueMultiple ?? -1) }
     }
 
-    // MARK: Lifetime (#41)
+    /// Agents with priced usage but no user-entered plan cost — excluded from the
+    /// totals (paired-only), so the headline understates their spend.
+    private var unpricedRows: [Row] {
+        rows.filter { $0.value.apiEquivalentUSD != nil && $0.value.planMonthlyUSD == nil }
+    }
+
+    private var unpricedNames: String { joinNames(unpricedRows.map(\.displayName)) }
+
+    private var pricedCount: Int {
+        scorecard.providers.filter { $0.planMonthlyUSD != nil }.count
+    }
+
+    /// The single insight line: names the one plan that is underwater, or — if all
+    /// earn out — the thinnest one, so the reader always leaves with one takeaway.
+    private var insightText: String? {
+        let priced = rows.filter { $0.value.valueMultiple != nil }
+        guard !priced.isEmpty else { return nil }
+
+        let under = priced
+            .filter { ($0.value.valueMultiple ?? 0) < 1 }
+            .sorted { ($0.value.valueMultiple ?? 0) < ($1.value.valueMultiple ?? 0) }
+        if let worst = under.first {
+            return "\(worst.displayName) is only returning \(MaxxerMath.formatMultiple(worst.value.valueMultiple)) — you're paying more than you're getting back. Worth a downgrade look."
+        }
+
+        let thinnest = priced.min { ($0.value.valueMultiple ?? .infinity) < ($1.value.valueMultiple ?? .infinity) }
+        if let thinnest {
+            return "Every plan is earning out. Your thinnest is \(thinnest.displayName) at \(MaxxerMath.formatMultiple(thinnest.value.valueMultiple)) — still well worth it."
+        }
+        return nil
+    }
+
+    private func joinNames(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        case 2: return "\(names[0]) and \(names[1])"
+        default: return names.dropLast().joined(separator: ", ") + ", and \(names[names.count - 1])"
+        }
+    }
+
+    // MARK: Lifetime (#41 · no-plan-cost state only)
 
     private var lifetimeCard: some View {
         SectionCard("Lifetime", trailing: {
@@ -310,8 +413,7 @@ struct ValueView: View {
 
 extension MaxxerTier {
     /// Caps display label for the chip. Kept in the UI layer on purpose — the
-    /// frozen §4 contract carries no presentation strings, and this extension
-    /// survives WP-1 integration unchanged.
+    /// frozen §4 contract carries no presentation strings.
     var displayName: String {
         switch self {
         case .idle: return "IDLE"
@@ -332,134 +434,109 @@ extension MaxxerTier {
         case .goblinMode: return "5× your plan cost or better."
         }
     }
+
+    /// Semantic status colour for the chip: amber below break-even (a nudge to
+    /// review), green once the plan has paid for itself. Never the pink accent.
+    var statusColor: Color {
+        switch self {
+        case .idle, .warming: return PadzyTheme.warn
+        case .breakEven, .maxxing, .goblinMode: return PadzyTheme.good
+        }
+    }
 }
 
-/// Tier chip: leading 2px accent tick (the Padzy active-state mark — tier IS the
-/// surface's live state) with an ink label on a hairline-bounded surface. The
-/// tier is never signalled by colour alone; the word carries the meaning.
+/// Tier chip (mockup): a colour-bordered, colour-labelled mono pill in the tier's
+/// semantic status hue. The word carries the meaning; colour only reinforces it,
+/// so the tier is never signalled by colour alone.
 struct TierChip: View {
     let tier: MaxxerTier
 
     var body: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(PadzyTheme.accent)
-                .frame(width: 2)
-            Text(tier.displayName)
-                .font(.display(size: 12, weight: .bold))
-                .foregroundColor(PadzyTheme.ink)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .fill(PadzyTheme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                .stroke(PadzyTheme.muted.opacity(0.3), lineWidth: 1)
-        )
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Tier: \(tier.displayName). \(tier.blurb)")
+        Text(tier.displayName)
+            .font(.mono(size: 11, weight: .semibold))
+            .tracking(11 * 0.1)
+            .foregroundColor(tier.statusColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .overlay(
+                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                    .stroke(tier.statusColor.opacity(0.4), lineWidth: 1)
+            )
+            .fixedSize()
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Tier: \(tier.displayName). \(tier.blurb)")
     }
 }
 
-// MARK: - Dense table rows
+// MARK: - Rows
 
-/// Shared column widths so the header, every provider row, and the total row
-/// line up on one grid.
+/// Shared trailing-column widths so every row and the total line up on one grid.
 private enum ValueColumn {
-    static let plan: CGFloat = 68
-    static let apiEquivalent: CGFloat = 82
-    static let multiple: CGFloat = 52
-    static let spacing: CGFloat = 10
+    static let multiple: CGFloat = 60
+    static let spacing: CGFloat = 12
 }
 
-private struct ValueTableHeader: View {
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: ValueColumn.spacing) {
-                label("Agent", width: nil, alignment: .leading)
-                label("Plan", width: ValueColumn.plan, alignment: .trailing)
-                label("API equiv", width: ValueColumn.apiEquivalent, alignment: .trailing)
-                label("Value", width: ValueColumn.multiple, alignment: .trailing)
-            }
-            HStack(spacing: ValueColumn.spacing) {
-                label("Agent", width: nil, alignment: .leading)
-                label("Value", width: ValueColumn.multiple, alignment: .trailing)
-            }
-        }
-        .padding(.vertical, 6)
-        .accessibilityHidden(true)
-    }
-
-    private func label(_ text: String, width: CGFloat?, alignment: Alignment) -> some View {
-        Text(text.uppercased())
-            .font(.mono(size: 9))
-            .tracking(9 * 0.08)
-            .foregroundColor(PadzyTheme.muted)
-            .lineLimit(1)
-            .frame(width: width, alignment: alignment)
-            .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
-    }
-}
-
-/// One agent's value row. Wide layout is the full five-column grid; below that
-/// the dollar detail wraps to a second line rather than truncating, so the
-/// 640pt minimum window still shows real numbers.
-private struct ValueProviderRow: View {
+/// One agent's value row — a button that drills into the provider, or (when the
+/// agent has usage but no plan cost) jumps to Settings to set it. Wide layout is
+/// the three-column grid; below the 640pt minimum the dollar detail wraps to a
+/// second line rather than truncating, so real numbers stay visible.
+private struct ValueRow: View {
     let value: MaxxerProviderValue
     let displayName: String
     let providerID: ProviderID?
+    let onDrill: () -> Void
+    let onSetPlanCost: () -> Void
+
+    /// Usage is priced but the user never entered a plan cost — the one row whose
+    /// primary action is "fix the missing price", not "drill in".
+    private var isUnpriced: Bool {
+        value.apiEquivalentUSD != nil && value.planMonthlyUSD == nil
+    }
+
+    private var isEstimated: Bool { value.confidence == .estimated }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            wide
-            narrow
+        Button(action: isUnpriced ? onSetPlanCost : onDrill) {
+            ViewThatFits(in: .horizontal) {
+                wide
+                narrow
+            }
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 9)
+        .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(accessibilityText)
+        .accessibilityHint(isUnpriced ? "Opens Settings to set a plan cost" : "Opens \(displayName) detail")
     }
 
     private var wide: some View {
         HStack(spacing: ValueColumn.spacing) {
             agentCell
-            amount(MaxxerMath.formatUSD(value.planMonthlyUSD), width: ValueColumn.plan)
-            amount(MaxxerMath.formatUSD(value.apiEquivalentUSD), width: ValueColumn.apiEquivalent)
+            middle
             multipleCell
-            ConfidenceBadge(confidence: value.confidence, compact: true)
         }
     }
 
     private var narrow: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: ValueColumn.spacing) {
                 agentCell
                 multipleCell
             }
-            HStack(spacing: 8) {
-                Text("PLAN \(MaxxerMath.formatUSD(value.planMonthlyUSD))  ·  API \(MaxxerMath.formatUSD(value.apiEquivalentUSD))")
-                    .font(.mono(size: 10))
-                    .monospacedDigit()
-                    .foregroundColor(PadzyTheme.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Spacer(minLength: 0)
-                ConfidenceBadge(confidence: value.confidence, compact: true)
-            }
+            middle
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var agentCell: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 11) {
             if let providerID {
-                ProviderMark(providerID, size: 14)
-                    .frame(width: 18, height: 18)
+                ProviderBrandMark.tinted(providerID, size: 22)
             }
-            Text(displayName.uppercased())
-                .font(.display(size: 11, weight: .bold))
+            Text(displayName)
+                .font(.sans(size: 14, weight: .medium))
                 .foregroundColor(PadzyTheme.ink)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -468,25 +545,54 @@ private struct ValueProviderRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The multiple is the row's headline number, so it keeps ink weight even
-    /// when unknown-dashed; the dollar columns stay ink too (data, not state).
-    private var multipleCell: some View {
-        Text(MaxxerMath.formatMultiple(value.valueMultiple))
-            .font(.mono(size: 13))
-            .monospacedDigit()
-            .foregroundColor(value.valueMultiple == nil ? PadzyTheme.muted : PadzyTheme.ink)
-            .lineLimit(1)
-            .frame(width: ValueColumn.multiple, alignment: .trailing)
+    /// The `$plan → $api` middle column, or the accent "Set plan cost →" cue when
+    /// the plan price is missing. The API figure carries the dotted confidence
+    /// underline when it is an estimate, matching the Overview grid.
+    @ViewBuilder
+    private var middle: some View {
+        if isUnpriced {
+            Text("Set plan cost →")
+                .font(.sans(size: 12, weight: .semibold))
+                .foregroundColor(PadzyTheme.accent)
+        } else {
+            HStack(spacing: 6) {
+                Text("\(MaxxerMath.formatUSD(value.planMonthlyUSD)) →")
+                    .font(.mono(size: 12))
+                    .monospacedDigit()
+                    .foregroundColor(PadzyTheme.muted)
+                apiFigure
+            }
+        }
     }
 
-    private func amount(_ text: String, width: CGFloat) -> some View {
-        Text(text)
-            .font(.mono(size: 11))
+    @ViewBuilder
+    private var apiFigure: some View {
+        let text = MaxxerMath.formatUSD(value.apiEquivalentUSD)
+        if isEstimated {
+            VStack(spacing: 2) {
+                Text(text)
+                    .font(.mono(size: 12))
+                    .monospacedDigit()
+                    .foregroundColor(PadzyTheme.muted)
+                DottedUnderline()
+            }
+            .fixedSize()
+            .help("Estimated — not directly reported")
+        } else {
+            Text(text)
+                .font(.mono(size: 12))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.muted)
+        }
+    }
+
+    private var multipleCell: some View {
+        Text(MaxxerMath.formatMultiple(value.valueMultiple))
+            .font(.mono(size: 20, weight: .semibold))
             .monospacedDigit()
-            .foregroundColor(text == MaxxerMath.unknownPlaceholder ? PadzyTheme.muted : PadzyTheme.ink)
+            .foregroundColor(value.valueMultiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
             .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(width: width, alignment: .trailing)
+            .frame(width: ValueColumn.multiple, alignment: .trailing)
     }
 
     private var accessibilityText: String {
@@ -497,6 +603,8 @@ private struct ValueProviderRow: View {
     }
 }
 
+/// The total row — same grid, but a non-tappable summary. The multiple keeps ink
+/// weight; the dollar totals stay ink (data, not state).
 private struct ValueTotalRow: View {
     let scorecard: MaxxerScorecard
 
@@ -505,7 +613,7 @@ private struct ValueTotalRow: View {
             wide
             narrow
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 11)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "Total: plan \(MaxxerMath.formatUSD(scorecard.totalPlanUSD)), "
@@ -517,55 +625,46 @@ private struct ValueTotalRow: View {
     private var wide: some View {
         HStack(spacing: ValueColumn.spacing) {
             totalLabel
-            amount(MaxxerMath.formatUSD(scorecard.totalPlanUSD), width: ValueColumn.plan)
-            amount(MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD), width: ValueColumn.apiEquivalent)
+            totals
             multipleCell
-            // Keeps the total row's trailing edge on the same grid as the rows
-            // above it, which each end in a confidence badge.
-            ConfidenceBadge(confidence: .estimated, compact: true).hidden()
         }
     }
 
     private var narrow: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: ValueColumn.spacing) {
                 totalLabel
                 multipleCell
             }
-            Text("PLAN \(MaxxerMath.formatUSD(scorecard.totalPlanUSD))  ·  API \(MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD))")
-                .font(.mono(size: 10))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            totals
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var totalLabel: some View {
         Text("TOTAL")
             .font(.mono(size: 10))
-            .tracking(10 * 0.08)
-            .foregroundColor(PadzyTheme.muted)
+            .tracking(10 * 0.12)
+            .foregroundColor(PadzyTheme.ink5)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var totals: some View {
+        Text("\(MaxxerMath.formatUSD(scorecard.totalPlanUSD)) → \(MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD))")
+            .font(.mono(size: 12))
+            .monospacedDigit()
+            .foregroundColor(PadzyTheme.ink3)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
     }
 
     private var multipleCell: some View {
         Text(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))
-            .font(.mono(size: 14))
+            .font(.mono(size: 20, weight: .semibold))
             .monospacedDigit()
-            .foregroundColor(scorecard.totalValueMultiple == nil ? PadzyTheme.muted : PadzyTheme.ink)
+            .foregroundColor(scorecard.totalValueMultiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
             .lineLimit(1)
             .frame(width: ValueColumn.multiple, alignment: .trailing)
-    }
-
-    private func amount(_ text: String, width: CGFloat) -> some View {
-        Text(text)
-            .font(.mono(size: 11))
-            .monospacedDigit()
-            .foregroundColor(text == MaxxerMath.unknownPlaceholder ? PadzyTheme.muted : PadzyTheme.ink)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .frame(width: width, alignment: .trailing)
     }
 }
 
