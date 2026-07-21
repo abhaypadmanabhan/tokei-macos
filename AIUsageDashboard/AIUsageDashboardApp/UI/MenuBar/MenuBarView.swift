@@ -11,6 +11,7 @@ struct MenuBarView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Closes the `MenuBarExtra(.window)` popover before any action that moves
     /// focus elsewhere (open dashboard, quit). `@Environment(\.dismiss)` alone is
@@ -42,14 +43,6 @@ struct MenuBarView: View {
         }
     }
 
-    /// The three busiest agents today — the mockup's mini-list.
-    private var topAgents: [ProviderSnapshot] {
-        activeSnapshots
-            .sorted { ($0.todayUsage.totalTokens ?? 0) > ($1.todayUsage.totalTokens ?? 0) }
-            .prefix(3)
-            .map { $0 }
-    }
-
     /// Plan-value scorecard over the visible providers (same engine as the Value
     /// tab). Reads plan costs from `.standard` like every other surface.
     private var scorecard: MaxxerScorecard {
@@ -68,6 +61,31 @@ struct MenuBarView: View {
     private func providerName(_ id: ProviderID) -> String {
         viewModel.snapshot(for: id)?.displayName
             ?? id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    /// What the per-agent mini-list shows — flipped by the segmented control so the
+    /// user can glance at either today's tokens or each agent's tightest quota.
+    private enum AgentMetric: String, CaseIterable { case tokens = "Tokens", quota = "Quota" }
+    @State private var agentMetric: AgentMetric = .tokens
+
+    /// The agent's tightest live-quota window %, or `nil` when it exposes none.
+    private func tightestPercent(_ id: ProviderID) -> Double? {
+        viewModel.utilization.filter { $0.providerID == id }.map(\.usedPercent).max()
+    }
+
+    /// Three agents for the mini-list, ranked by whichever metric is showing:
+    /// today's tokens, or how full their tightest quota is.
+    private var displayedAgents: [ProviderSnapshot] {
+        switch agentMetric {
+        case .tokens:
+            return Array(activeSnapshots
+                .sorted { ($0.todayUsage.totalTokens ?? 0) > ($1.todayUsage.totalTokens ?? 0) }
+                .prefix(3))
+        case .quota:
+            return Array(activeSnapshots
+                .sorted { (tightestPercent($0.providerID) ?? -1) > (tightestPercent($1.providerID) ?? -1) }
+                .prefix(3))
+        }
     }
 
     // MARK: Body
@@ -104,6 +122,7 @@ struct MenuBarView: View {
                 HairlineDivider()
                 summary
                 HairlineDivider()
+                metricToggle
                 agents
                 HairlineDivider()
                 footer
@@ -222,11 +241,47 @@ struct MenuBarView: View {
         .padding(.vertical, 12)
     }
 
-    // MARK: Top agents
+    // MARK: Metric toggle + top agents
+
+    /// Segmented Tokens / Quota control — swaps what the mini-list ranks and shows,
+    /// so agent quotas are one glance away without opening the app.
+    private var metricToggle: some View {
+        HStack(spacing: 2) {
+            ForEach(AgentMetric.allCases, id: \.self) { metric in
+                Button {
+                    withAnimation(reduceMotion ? nil : PadzyMotion.quick) { agentMetric = metric }
+                } label: {
+                    Text(metric.rawValue)
+                        .font(.mono(size: 10))
+                        .tracking(0.4)
+                        .foregroundColor(agentMetric == metric ? PadzyTheme.ink : PadzyTheme.ink4)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                                .fill(agentMetric == metric ? PadzyTheme.border2 : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show \(metric.rawValue.lowercased())")
+                .accessibilityAddTraits(agentMetric == metric ? [.isSelected, .isButton] : .isButton)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                .fill(PadzyTheme.surface)
+        )
+        .fixedSize()
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
 
     private var agents: some View {
         VStack(spacing: 0) {
-            ForEach(topAgents, id: \.id) { snapshot in
+            ForEach(displayedAgents, id: \.id) { snapshot in
                 HStack(spacing: 9) {
                     ProviderBrandMark.tinted(snapshot.providerID, size: 18)
                     Text(snapshot.displayName)
@@ -235,18 +290,54 @@ struct MenuBarView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)
-                    Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
-                        .font(.mono(size: 12.5))
-                        .monospacedDigit()
-                        .foregroundColor(PadzyTheme.ink)
+                    agentTrailing(snapshot)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
+                .accessibilityLabel(accessibilityText(snapshot))
             }
         }
         .padding(8)
+    }
+
+    @ViewBuilder
+    private func agentTrailing(_ snapshot: ProviderSnapshot) -> some View {
+        switch agentMetric {
+        case .tokens:
+            Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
+                .font(.mono(size: 12.5))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+        case .quota:
+            if let pct = tightestPercent(snapshot.providerID) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(PadzyTheme.quotaColor(pct))
+                        .frame(width: 5, height: 5)
+                    Text("\(Int(pct.rounded()))%")
+                        .font(.mono(size: 12.5))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.ink)
+                }
+            } else {
+                Text("—")
+                    .font(.mono(size: 12.5))
+                    .foregroundColor(PadzyTheme.ink4)
+            }
+        }
+    }
+
+    private func accessibilityText(_ snapshot: ProviderSnapshot) -> String {
+        switch agentMetric {
+        case .tokens:
+            return "\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today"
+        case .quota:
+            if let pct = tightestPercent(snapshot.providerID) {
+                return "\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent"
+            }
+            return "\(snapshot.displayName), no live quota"
+        }
     }
 
     // MARK: Footer
