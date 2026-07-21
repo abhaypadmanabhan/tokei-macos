@@ -83,7 +83,8 @@ struct MenuBarView: View {
                 .prefix(3))
         case .quota:
             return Array(activeSnapshots
-                .sorted { (tightestPercent($0.providerID) ?? -1) > (tightestPercent($1.providerID) ?? -1) }
+                .filter { tightestPercent($0.providerID) != nil }
+                .sorted { (tightestPercent($0.providerID) ?? 0) > (tightestPercent($1.providerID) ?? 0) }
                 .prefix(3))
         }
     }
@@ -282,62 +283,96 @@ struct MenuBarView: View {
     private var agents: some View {
         VStack(spacing: 0) {
             ForEach(displayedAgents, id: \.id) { snapshot in
-                HStack(spacing: 9) {
-                    ProviderBrandMark.tinted(snapshot.providerID, size: 18)
-                    Text(snapshot.displayName)
-                        .font(.sans(size: 12.5))
-                        .foregroundColor(PadzyTheme.ink2)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 8)
-                    agentTrailing(snapshot)
+                Group {
+                    switch agentMetric {
+                    case .tokens: tokenRow(snapshot)
+                    case .quota: quotaRow(snapshot)
+                    }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(accessibilityText(snapshot))
             }
         }
         .padding(8)
     }
 
-    @ViewBuilder
-    private func agentTrailing(_ snapshot: ProviderSnapshot) -> some View {
-        switch agentMetric {
-        case .tokens:
+    private func tokenRow(_ snapshot: ProviderSnapshot) -> some View {
+        HStack(spacing: 9) {
+            ProviderBrandMark.tinted(snapshot.providerID, size: 18)
+            Text(snapshot.displayName)
+                .font(.sans(size: 12.5))
+                .foregroundColor(PadzyTheme.ink2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
             Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
                 .font(.mono(size: 12.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
-        case .quota:
-            if let pct = tightestPercent(snapshot.providerID) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(PadzyTheme.quotaColor(pct))
-                        .frame(width: 5, height: 5)
-                    Text("\(Int(pct.rounded()))%")
-                        .font(.mono(size: 12.5))
-                        .monospacedDigit()
-                        .foregroundColor(PadzyTheme.ink)
-                }
-            } else {
-                Text("—")
-                    .font(.mono(size: 12.5))
-                    .foregroundColor(PadzyTheme.ink4)
-            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
     }
 
-    private func accessibilityText(_ snapshot: ProviderSnapshot) -> String {
-        switch agentMetric {
-        case .tokens:
-            return "\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today"
-        case .quota:
-            if let pct = tightestPercent(snapshot.providerID) {
-                return "\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent"
-            }
-            return "\(snapshot.displayName), no live quota"
+    /// Quota mode: glyph + a threshold-coloured fill bar + reset countdown — no
+    /// name or number, the bar itself is the reading (user request). The fill is
+    /// the agent's identity colour until it gets tight: bright orange at ≥80%,
+    /// red at ≥90%.
+    private func quotaRow(_ snapshot: ProviderSnapshot) -> some View {
+        let util = tightestUtil(snapshot.providerID)
+        let pct = util?.usedPercent ?? 0
+        return HStack(spacing: 10) {
+            ProviderBrandMark.tinted(snapshot.providerID, size: 18)
+            quotaBar(pct: pct, tint: AgentTint.color(snapshot.providerID))
+                .frame(maxWidth: .infinity)
+            Text(resetText(util?.resetAt))
+                .font(.mono(size: 10.5))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink4)
+                .frame(width: 66, alignment: .trailing)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent, resets in \(resetText(util?.resetAt))")
+    }
+
+    private func quotaBar(pct: Double, tint: Color) -> some View {
+        let clamped = max(0, min(100, pct))
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(PadzyTheme.muted.opacity(0.25))
+                    .frame(height: 6)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(quotaBarColor(pct, tint: tint))
+                    .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
+            }
+            .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(height: 6)
+    }
+
+    private func quotaBarColor(_ pct: Double, tint: Color) -> Color {
+        if pct >= 90 { return PadzyTheme.danger }
+        if pct >= 80 { return Color(hex: "F5872E") }
+        return tint
+    }
+
+    private func tightestUtil(_ id: ProviderID) -> Utilization? {
+        viewModel.utilization.filter { $0.providerID == id }.max { $0.usedPercent < $1.usedPercent }
+    }
+
+    /// Compact reset countdown ("4d 9h" / "2h 41m" / "41m") — no ticking seconds,
+    /// so a static popover render doesn't read as a frozen clock.
+    private func resetText(_ resetAt: Date?) -> String {
+        guard let resetAt else { return "—" }
+        let seconds = Int(resetAt.timeIntervalSince(Date()))
+        guard seconds > 0 else { return "now" }
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(minutes)m" }
+        return "\(minutes)m"
     }
 
     // MARK: Footer
