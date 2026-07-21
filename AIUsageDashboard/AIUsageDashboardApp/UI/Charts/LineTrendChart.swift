@@ -8,6 +8,26 @@ import Charts
 /// state when history < 2 points.
 struct LineTrendChart: View {
     let points: [(date: Date, tokens: Int)]
+    /// Per-agent identity tint (WP-5 daily history). `nil` keeps the neutral
+    /// `ink2` line + sanctioned neutral area gradient — every existing call site
+    /// is pixel-identical. When set, the line + area take the agent's DATA colour.
+    var tint: Color? = nil
+
+    /// Line stroke: the agent tint when tinted, else the neutral `ink2` default.
+    private var lineStyle: Color { tint ?? PadzyTheme.ink2 }
+
+    /// Area fill: a matching low-opacity tint gradient when tinted, else the one
+    /// sanctioned neutral area gradient.
+    private var areaStyle: AnyShapeStyle {
+        if let tint {
+            return AnyShapeStyle(LinearGradient(
+                colors: [tint.opacity(0.14), tint.opacity(0.0)],
+                startPoint: .top,
+                endPoint: .bottom
+            ))
+        }
+        return AnyShapeStyle(PadzyChartPalette.areaGradient)
+    }
 
     private struct Point: Identifiable {
         let id: Int
@@ -38,14 +58,14 @@ struct LineTrendChart: View {
                     y: .value("Tokens", point.tokens)
                 )
                 .interpolationMethod(.monotone)
-                .foregroundStyle(PadzyChartPalette.areaGradient)
+                .foregroundStyle(areaStyle)
 
                 LineMark(
                     x: .value("Date", point.date),
                     y: .value("Tokens", point.tokens)
                 )
                 .interpolationMethod(.monotone)
-                .foregroundStyle(PadzyTheme.ink2)
+                .foregroundStyle(lineStyle)
                 .lineStyle(StrokeStyle(lineWidth: 1.5, lineJoin: .round))
 
                 if let last, point.id == last.id {

@@ -39,6 +39,26 @@ struct DashboardView: View {
         ProviderCapabilityTier.classify(selectedSnapshot)
     }
 
+    /// The visible, quota-bearing provider with the most headroom — the lowest
+    /// tightest-window used% (mirrors `OverviewView.headroomProviderID`). `nil`
+    /// unless at least two providers have a live window, so "route here" always
+    /// implies a real choice. Drives the drill-in's green route chip.
+    private var routeTargetProviderID: ProviderID? {
+        var tightestByProvider: [ProviderID: Double] = [:]
+        for util in viewModel.utilization {
+            if let existing = tightestByProvider[util.providerID] {
+                if util.usedPercent > existing { tightestByProvider[util.providerID] = util.usedPercent }
+            } else {
+                tightestByProvider[util.providerID] = util.usedPercent
+            }
+        }
+        let quotaBearing: [(id: ProviderID, pct: Double)] = ProviderID.allCases
+            .filter { !ProviderVisibility.isHidden($0) }
+            .compactMap { id in tightestByProvider[id].map { (id, $0) } }
+        guard quotaBearing.count >= 2 else { return nil }
+        return quotaBearing.min(by: { $0.pct < $1.pct })?.id
+    }
+
     /// First non-hidden provider in chip-strip order — the chip that down-arrow
     /// from a tab drills into, and the one left-arrow stops at.
     private var firstVisibleProvider: ProviderID? {
@@ -381,18 +401,26 @@ struct DashboardView: View {
                     hint: "No data yet at \(ProviderMetadata.localPaths(for: viewModel.selectedProvider).joined(separator: ", ")). Run it once, then use Sync Now below."
                 )
             )
-        } else if capabilityTier == .planOnly {
-            capabilityPane
         } else if let snapshot = selectedSnapshot {
-            // Full-metrics detail (redesign mockup 1), analytics from the frozen
-            // §4 DashboardViewModel surface.
+            // ONE unified drill-in (WP-5 P6) for BOTH full-metrics and plan-only
+            // providers — the plan-only branch now falls through here too. Analytics
+            // from the frozen §4 DashboardViewModel surface; value/route/plan from
+            // the Maxxer scorecard + provider metadata.
             ProviderDetailView(
                 snapshot: snapshot,
                 trend: viewModel.trend(for: snapshot.providerID),
                 thisWeek: viewModel.thisWeek(for: snapshot.providerID),
                 heatmap: viewModel.heatmap(for: snapshot.providerID),
                 peakHour: viewModel.peakHour(for: snapshot.providerID),
-                lastSyncedAt: viewModel.lastSyncedAt
+                lastSyncedAt: viewModel.lastSyncedAt,
+                value: MaxxerValueEngine.scorecard(
+                    snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
+                    planCosts: MaxxerPlanCostStore(),
+                    now: Date()
+                ).providers.first { $0.providerID == snapshot.providerID.rawValue },
+                isRouteTarget: routeTargetProviderID == snapshot.providerID,
+                planLabel: ProviderMetadata.planText(from: snapshot.warnings),
+                onEnableOnline: { openSettings() }
             )
         } else {
             SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
