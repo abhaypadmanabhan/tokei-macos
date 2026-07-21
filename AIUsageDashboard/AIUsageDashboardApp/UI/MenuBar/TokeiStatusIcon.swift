@@ -1,117 +1,100 @@
 import SwiftUI
 import AppKit
 
-/// Burn ladder for the dynamic menu-bar mark, mapped from the tightest quota
-/// window's used % (`MaxxerMath.tightestWindow`). Bands mirror the in-app
-/// threshold emphasis (70 = accent onset, 90 = critical).
-enum TokeiBurnLevel: Equatable {
-    case idle          // no live quota anywhere, or nothing burned yet
-    case low           // < 40%
-    case medium        // 40–69%
-    case high          // 70–89%
-    case nearLimit     // 90–99% — "on fire"
-    case limitReached  // ≥ 100%
-
-    init(percent: Double?) {
-        guard let percent, percent > 0 else { self = .idle; return }
-        switch percent {
-        case ..<40: self = .low
-        case ..<70: self = .medium
-        case ..<90: self = .high
-        case ..<100: self = .nearLimit
-        default: self = .limitReached
-        }
-    }
-
-    /// Accent (colored) rendering starts where the app's threshold emphasis does.
-    var usesAccent: Bool {
-        switch self {
-        case .idle, .low, .medium: return false
-        case .high, .nearLimit, .limitReached: return true
-        }
-    }
-
-    /// The subtle flame appears only when token-maxxing against a wall.
-    var isOnFire: Bool { self == .nearLimit || self == .limitReached }
-}
-
-/// Dynamically-drawn menu-bar status icon built from the Tokei logo's four
-/// slanted meter bars. The bars FILL left→right with the constraining window's
-/// burn; tint walks ink → `PadzyTheme.accent` as the limit approaches, with a
-/// small flame accent when near/at the limit. Monochrome states render as
-/// template images (adapt to light/dark bars); accent states are colored.
-/// Images are cached per state — same canvas for every state so the status
-/// item never shifts width as burn changes.
+/// Dynamically-drawn menu-bar status icon: the Tokei swoosh-square that FILLS
+/// black → accent as the constraining quota window's burn rises, matching the
+/// brand's usage-states row (0% all-ink · 50% top-half accent · 80% · 100% all
+/// accent). The white swoosh is punched as a transparent cut so the mark reads
+/// on any menu-bar background.
+///
+/// Rendering: the idle frame (no burn) is a template image, so an all-ink square
+/// adapts to the bar (dark on light menus, light on dark). Once any accent is
+/// present the image is colored — the accent IS the state. Images are cached per
+/// fill step on a fixed square canvas, so the status item never shifts width as
+/// burn changes.
+///
+/// Deliberately NOT a `TimelineView`: this feeds a `MenuBarExtra` label that
+/// SwiftUI snapshots into the status item; a self-driving clock breaks that
+/// render (see `MenuBarLabel`). Every state is a plain cached `NSImage`.
 enum TokeiStatusIcon {
-    /// Full canvas: bars sit flush-bottom in a 15×11 box (the classic
-    /// `TokeiMark.menuBarImage` geometry); the head-room row hosts the flame.
-    private static let canvasSize = NSSize(width: 17, height: 14)
-    private static let barsRect = CGRect(x: 0, y: 3, width: 15, height: 11)
-    /// A small lick rising just past the tallest bar's tip — subtle, not a spike.
-    private static let flameRect = CGRect(x: 12.9, y: 0.6, width: 3.4, height: 4.0)
+    /// Square menu-bar canvas; the mark insets a hair for breathing room.
+    private static let canvasSize = NSSize(width: 18, height: 18)
+    private static let markRect = CGRect(x: 1, y: 1, width: 16, height: 16)
 
-    // Single-sourced from `PadzyTheme.accent`; sRGB-resolved for bitmap drawing,
-    // with a defensive fallback only if the conversion ever returns nil.
+    // Brand ink (#131316) and the single product accent (#FF3B70), sRGB-resolved
+    // for bitmap drawing with a defensive fallback if conversion ever returns nil.
+    private static let inkColor = NSColor(srgbRed: 0x13 / 255, green: 0x13 / 255, blue: 0x16 / 255, alpha: 1)
     private static let accentColor = NSColor(PadzyTheme.accent).usingColorSpace(.sRGB)
         ?? NSColor(srgbRed: 0xFF / 255, green: 0x3B / 255, blue: 0x70 / 255, alpha: 1)
-    private static let dimAlpha: CGFloat = 0.3
 
     private static var cache: [String: NSImage] = [:]
 
-    /// How many of the 4 bars read as filled for a burn %. Progressive quarters;
-    /// any non-zero burn lights at least the first bar.
+    /// How many of 4 quarters read as filled for a burn % — retained as the
+    /// `MenuBarLabel` contract API (the mark now fills continuously; this stays a
+    /// stable coarse indicator for any caller).
     static func filledBars(for percent: Double?) -> Int {
         guard let percent, percent > 0 else { return 0 }
         return min(4, max(1, Int(ceil(percent / 25))))
     }
 
+    /// Accent fill fraction (0…1) for a burn %. `nil`/≤0 → idle (all ink).
+    private static func fillFraction(for percent: Double?) -> CGFloat {
+        guard let percent, percent > 0 else { return 0 }
+        return CGFloat(min(100, percent) / 100)
+    }
+
     /// The status-icon image for the current burn. `percent` is the tightest
     /// window's used % (nil = no live quota → idle).
     static func image(percent: Double?) -> NSImage {
-        let level = TokeiBurnLevel(percent: percent)
-        let filled = filledBars(for: percent)
-        let key = "\(level)-\(filled)"
+        let fill = fillFraction(for: percent)
+        let idle = fill <= 0
+        // Quantize to whole-percent steps so the cache is bounded but the fill
+        // still reads as continuous.
+        let key = "mark-\(Int((fill * 100).rounded()))"
         if let cached = cache[key] { return cached }
 
-        let usesAccent = level.usesAccent
-        let flame = level.isOnFire
         let image = NSImage(size: canvasSize, flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            // Paths are built in SwiftUI's top-left space; flip into AppKit's bottom-left.
+            // Paths are built in SwiftUI's top-left space; flip into AppKit's.
             ctx.translateBy(x: 0, y: rect.height)
             ctx.scaleBy(x: 1, y: -1)
 
-            let barColor: NSColor = usesAccent ? accentColor : .black
-            for (index, path) in TokeiMark.barPaths(in: barsRect).enumerated() {
-                let isFilled = index < filled
-                ctx.addPath(path.cgPath)
-                ctx.setFillColor(barColor.withAlphaComponent(isFilled ? 1 : dimAlpha).cgColor)
-                ctx.fillPath()
-            }
+            let square = TokeiMark.roundedSquarePath(in: markRect).cgPath
 
-            if flame {
-                ctx.addPath(flamePath(in: flameRect).cgPath)
+            // Fill the square: ink base, then the accent occupying the TOP `fill`
+            // fraction of the height (top-left space → minY is the top edge).
+            ctx.saveGState()
+            ctx.addPath(square)
+            ctx.clip()
+            if idle {
+                ctx.setFillColor(NSColor.black.cgColor) // template → adapts to the bar
+                ctx.fill(markRect)
+            } else {
+                ctx.setFillColor(inkColor.cgColor)
+                ctx.fill(markRect)
+                let accentHeight = markRect.height * fill
+                let accentRect = CGRect(x: markRect.minX, y: markRect.minY,
+                                        width: markRect.width, height: accentHeight)
                 ctx.setFillColor(accentColor.cgColor)
-                ctx.fillPath()
+                ctx.fill(accentRect)
             }
+            ctx.restoreGState()
+
+            // Punch the swoosh transparent (clipped to the square) so it reads on
+            // any background.
+            ctx.saveGState()
+            ctx.addPath(square)
+            ctx.clip()
+            ctx.setBlendMode(.clear)
+            ctx.addPath(TokeiMark.swooshPath(in: markRect).cgPath)
+            ctx.fillPath()
+            ctx.restoreGState()
             return true
         }
-        // Template only where monochrome is right; accent states keep their color.
-        image.isTemplate = !usesAccent
+        // Adapt only while all-ink; colored once the accent IS the state.
+        image.isTemplate = idle
         cache[key] = image
         return image
-    }
-
-    /// Small teardrop flame — deliberately understated at menu-bar size.
-    private static func flamePath(in rect: CGRect) -> Path {
-        var path = Path()
-        let base = CGPoint(x: rect.midX, y: rect.maxY)
-        let tip = CGPoint(x: rect.midX + rect.width * 0.16, y: rect.minY)
-        path.move(to: base)
-        path.addQuadCurve(to: tip, control: CGPoint(x: rect.maxX, y: rect.midY))
-        path.addQuadCurve(to: base, control: CGPoint(x: rect.minX, y: rect.midY + rect.height * 0.12))
-        path.closeSubpath()
-        return path
     }
 
     // MARK: Sync spinner

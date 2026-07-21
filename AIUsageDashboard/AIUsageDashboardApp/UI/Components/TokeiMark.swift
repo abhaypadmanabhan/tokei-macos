@@ -1,54 +1,65 @@
 import SwiftUI
 import AppKit
 
-/// The Tokei brand mark: four slanted meter bars ascending left to right.
-/// Monochrome Shape — fill with `.primary` in-app; use `menuBarImage` for the
-/// MenuBarExtra label (template NSImage renders reliably where Shapes don't).
-struct TokeiMark: Shape {
-    /// One path per meter bar, leftmost first — the shared geometry for the
-    /// combined logo shape and the per-bar-tinted dynamic status icon.
-    static func barPaths(in rect: CGRect) -> [Path] {
-        let barCount = 4
-        let gapRatio: CGFloat = 0.55
-        let unit = rect.width / (CGFloat(barCount) + gapRatio * CGFloat(barCount - 1))
-        let gap = unit * gapRatio
-        let slant = unit * 0.5
+/// The Tokei brand mark: a rounded-square split accent-over-ink with a white
+/// swoosh sweeping from the right edge down to the lower-left.
+///
+/// The static in-app logo renders the `BrandMark` asset (the exact brand art,
+/// crisp at any size and identical to the app icon). The shared vector geometry
+/// below is the single source of truth for the swoosh + square silhouette and is
+/// reused by the dynamic menu-bar `TokeiStatusIcon`, which must draw the mark
+/// itself so it can fill with burn.
+struct TokeiMark: View {
+    var size: CGFloat = 28
 
-        return (0..<barCount).map { i in
-            var path = Path()
-            let x = rect.minX + CGFloat(i) * (unit + gap)
-            let heightFraction = 0.35 + 0.65 * CGFloat(i) / CGFloat(barCount - 1)
-            let barHeight = rect.height * heightFraction
-            let bottom = rect.maxY
-            let top = rect.maxY - barHeight
-            path.move(to: CGPoint(x: x, y: bottom))
-            path.addLine(to: CGPoint(x: x + slant * (barHeight / rect.height), y: top))
-            path.addLine(to: CGPoint(x: x + unit + slant * (barHeight / rect.height), y: top))
-            path.addLine(to: CGPoint(x: x + unit, y: bottom))
-            path.closeSubpath()
-            return path
-        }
+    var body: some View {
+        Image("BrandMark")
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size, height: size)
+            .accessibilityLabel("Tokei")
     }
 
-    func path(in rect: CGRect) -> Path {
-        Self.barPaths(in: rect).reduce(into: Path()) { $0.addPath($1) }
+    // MARK: - Shared geometry (used by TokeiStatusIcon)
+
+    /// Corner radius as a fraction of the square's side (Apple Big Sur grid,
+    /// matching the app-icon master).
+    static let cornerFraction: CGFloat = 0.225
+
+    /// Swoosh stroke width as a fraction of the square's side.
+    static let swooshWidthFraction: CGFloat = 0.15
+
+    /// The rounded-square silhouette filling `rect`.
+    static func roundedSquarePath(in rect: CGRect) -> Path {
+        Path(roundedRect: rect, cornerRadius: min(rect.width, rect.height) * cornerFraction)
     }
 
-    /// Template image of the mark for the system menu bar (adapts to bar appearance).
-    static let menuBarImage: NSImage = {
-        let size = NSSize(width: 15, height: 11)
-        let image = NSImage(size: size, flipped: false) { rect in
-            let cgPath = TokeiMark().path(in: CGRect(origin: .zero, size: rect.size)).cgPath
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            // Path is built in SwiftUI's top-left space; flip into AppKit's bottom-left.
-            ctx.translateBy(x: 0, y: rect.height)
-            ctx.scaleBy(x: 1, y: -1)
-            ctx.addPath(cgPath)
-            ctx.setFillColor(.black)
-            ctx.fillPath()
-            return true
+    /// The swoosh as a fillable region: a single bold curve stroked round, cubic
+    /// fitted to the master's centerline (enters at the right edge ~⅓ down,
+    /// exits at the lower-left). Callers clip it to `roundedSquarePath` so the
+    /// caps meet the square's edges cleanly.
+    static func swooshPath(in rect: CGRect) -> Path {
+        let w = rect.width, h = rect.height
+        func p(_ nx: CGFloat, _ ny: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + nx * w, y: rect.minY + ny * h)
         }
-        image.isTemplate = true
-        return image
-    }()
+        var centerline = Path()
+        centerline.move(to: p(0.99, 0.33))
+        centerline.addCurve(to: p(0.26, 0.99), control1: p(0.66, 0.35), control2: p(0.40, 0.60))
+        return centerline.strokedPath(
+            StrokeStyle(lineWidth: min(w, h) * swooshWidthFraction, lineCap: .round, lineJoin: .round)
+        )
+    }
+}
+
+// MARK: - Previews
+
+#Preview("TokeiMark") {
+    HStack(spacing: 20) {
+        ForEach([16, 24, 40, 64] as [CGFloat], id: \.self) { s in
+            TokeiMark(size: s)
+        }
+    }
+    .padding(24)
+    .background(PadzyTheme.surface)
 }
