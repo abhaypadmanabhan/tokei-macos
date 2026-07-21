@@ -113,57 +113,156 @@ struct WeekdayBars: View {
     }
 }
 
-/// Per-agent quota bars (the Quota-metric replacement for the trend line): agent
-/// mark + name, a track with a `quotaColor` fill, and the percentage. Sorted
-/// desc by the caller. Honest empty state when nothing reports live quota.
+/// Per-provider quota presentation state for the Quota lens. A provider the user
+/// enabled live quota for must NEVER silently vanish just because its live fetch is
+/// transiently down (cooldown / 429 / auth / empty) — the 2026-07-21 re-QA "Claude &
+/// Antigravity missing from Quota" bug. We surface an honest state instead of omitting.
+enum ProviderQuotaState {
+    case live(Utilization)   // a real live window with a usable percentage
+    case fetching            // connectable + live-enabled, but no window right now
+    case connect             // connectable, live quota not enabled yet
+    case localOnly           // no online connector (codex / cline) and no local quota
+
+    var isLive: Bool { if case .live = self { return true }; return false }
+}
+
+/// One provider's row in the Quota-lens bar view, carrying its resolved state.
+struct AgentQuotaRow: Identifiable {
+    let id: ProviderID
+    let name: String
+    let state: ProviderQuotaState
+
+    /// The tightest window's used%, or 0 for non-live states (used only to sort).
+    var usedPercent: Double {
+        if case .live(let util) = state { return util.usedPercent }
+        return 0
+    }
+
+    /// Live rows first (highest pressure on top), then enabled-but-fetching, then
+    /// connect prompts, then local-only — so an enabled provider never sinks below
+    /// a disconnected one, and nothing the user enabled is dropped.
+    var sortRank: Int {
+        switch state {
+        case .live: return 0
+        case .fetching: return 1
+        case .connect: return 2
+        case .localOnly: return 3
+        }
+    }
+}
+
+/// Per-agent quota bars (the Quota-metric replacement for the trend line): every
+/// visible provider gets a row — a live window shows a threshold-coloured fill + %,
+/// while a provider with no live window shows its honest state (fetching / enable /
+/// local-only) rather than disappearing. Fills animate 0→value on appear
+/// (reduce-motion safe).
 struct AgentQuotaBars: View {
-    let bars: [(id: ProviderID, name: String, pct: Double)]
+    let rows: [AgentQuotaRow]
+    /// Tapping an "ENABLE →" row opens that provider's detail (where live quota is
+    /// turned on).
+    var onConnect: (ProviderID) -> Void = { _ in }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var filled = false
 
     var body: some View {
-        if bars.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("NO LIVE QUOTA CONNECTED")
-                    .font(.mono(size: 11))
-                    .tracking(11 * 0.08)
-                    .foregroundColor(PadzyTheme.ink3)
-                Text("Connect a plan's live quota to see how close each agent is to its ceiling.")
-                    .font(.sans(size: 12))
-                    .foregroundColor(PadzyTheme.ink4)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        if rows.isEmpty {
+            emptyState
         } else {
             VStack(spacing: PadzySpace.m) {
-                ForEach(bars, id: \.id) { bar in
-                    let clamped = max(0, min(100, bar.pct))
-                    VStack(spacing: 6) {
-                        HStack(spacing: PadzySpace.s) {
-                            ProviderBrandMark.tinted(bar.id, size: 16)
-                            Text(bar.name)
-                                .font(.sans(size: 12, weight: .medium))
-                                .foregroundColor(PadzyTheme.ink2)
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text("\(Int(round(bar.pct)))%")
-                                .font(.mono(size: 12, weight: .semibold))
-                                .monospacedDigit()
-                                .foregroundColor(PadzyTheme.quotaColor(bar.pct))
-                        }
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(PadzyTheme.hairline)
-                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(PadzyTheme.quotaColor(bar.pct))
-                                    .frame(width: geo.size.width * CGFloat(clamped / 100))
-                            }
-                        }
-                        .frame(height: 6)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(bar.name), \(Int(round(bar.pct))) percent of quota used")
+                ForEach(rows) { row in
+                    quotaRow(row)
                 }
             }
+            .onAppear {
+                if reduceMotion { filled = true }
+                else { withAnimation(PadzyMotion.settle) { filled = true } }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("NO LIVE QUOTA CONNECTED")
+                .font(.mono(size: 11))
+                .tracking(11 * 0.08)
+                .foregroundColor(PadzyTheme.ink3)
+            Text("Connect a plan's live quota to see how close each agent is to its ceiling.")
+                .font(.sans(size: 12))
+                .foregroundColor(PadzyTheme.ink4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func quotaRow(_ row: AgentQuotaRow) -> some View {
+        VStack(spacing: 6) {
+            HStack(spacing: PadzySpace.s) {
+                ProviderBrandMark.tinted(row.id, size: 16)
+                Text(row.name)
+                    .font(.sans(size: 12, weight: .medium))
+                    .foregroundColor(PadzyTheme.ink2)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                trailing(row.state)
+            }
+            track(row.state)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if case .connect = row.state { onConnect(row.id) } }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel(row))
+    }
+
+    /// The trailing figure/label: `%` for a live window (threshold-coloured), else a
+    /// muted status word (or an accent ENABLE → action).
+    @ViewBuilder
+    private func trailing(_ state: ProviderQuotaState) -> some View {
+        switch state {
+        case .live(let util):
+            Text("\(Int(round(util.usedPercent)))%")
+                .font(.mono(size: 12, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.quotaColor(util.usedPercent))
+        case .fetching:
+            Text("FETCHING…").font(.mono(size: 10)).foregroundColor(PadzyTheme.ink5)
+        case .connect:
+            Text("ENABLE →").font(.mono(size: 10)).foregroundColor(PadzyTheme.accent)
+        case .localOnly:
+            Text("LOCAL LOGS").font(.mono(size: 10)).foregroundColor(PadzyTheme.ink5)
+        }
+    }
+
+    /// The 6pt track: a threshold fill for live rows (animated 0→value), a faint
+    /// hairline track alone for the non-live states.
+    @ViewBuilder
+    private func track(_ state: ProviderQuotaState) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(PadzyTheme.hairline)
+                if case .live(let util) = state {
+                    let clamped = max(0, min(100, util.usedPercent))
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(PadzyTheme.quotaColor(util.usedPercent))
+                        .frame(width: geo.size.width * CGFloat(clamped / 100) * (filled ? 1 : 0))
+                }
+            }
+        }
+        .frame(height: 6)
+    }
+
+    private func accessibilityLabel(_ row: AgentQuotaRow) -> String {
+        switch row.state {
+        case .live(let util):
+            return "\(row.name), \(Int(round(util.usedPercent))) percent of quota used"
+        case .fetching:
+            return "\(row.name), live quota enabled, fetching"
+        case .connect:
+            return "\(row.name), live quota not connected. Opens \(row.name) detail to enable."
+        case .localOnly:
+            return "\(row.name), local logs only, no live quota"
         }
     }
 }
