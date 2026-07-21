@@ -1,5 +1,13 @@
 # WP-5 handoff — visual redesign to the `Tokei Dashboard.html` mockup
 
+> **STATUS 2026-07-21 — P4–P8 COMPLETE (build+test green, NOT visually verified).**
+> P4 Value `94d3ef8` · P5 Agents `2d2c933` · P6 Drill-in `7253d9c` · P7 Menu bar
+> `79ec8e4` · P8 cleanup `f9418b6`/`94181cf`/`09fcfaa` · docs `6c16b3d`.
+> Full completion log, deferred follow-ups, and the visual-verify watch-out are in
+> `tasks/patch-bibles/2026-07-19.md` §8. The "REMAINING" section below is now DONE
+> and kept only for historical spec reference. Next step: **launch Tokei.app and
+> eyeball P4–P8 + the 640×480 reflow** — no screenshot was possible this session.
+
 Checkpoint rewritten 2026-07-21. Single source of truth to resume. Everything below is durable.
 
 ## Where the code is
