@@ -1,19 +1,20 @@
 import SwiftUI
 
-/// Weekday × hour activity heatmap (design spec §3): hand-rolled `Canvas` grid,
-/// 7 weekday rows × 24 hour columns, LOW→HIGH pink ramp, hour axis labels every
-/// four hours. `nil` cells (hours the source can't attribute) render as ground.
-/// The honest empty state renders until a real hourly source exists (Phase 1b
-/// gate — WP-1's `hourlyTotals`).
+/// Weekday × hour activity heatmap (WP-5, matches the mockup's `renderHeatmap`):
+/// hand-rolled `Canvas` grid, 7 weekday rows × 24 hour columns, filled with a
+/// single neutral hue whose OPACITY tracks intensity continuously
+/// (`0.05 + t·0.85`) — a soft field, not stepped blocks. `nil`/zero cells render
+/// at the faint floor. The honest empty state renders until a real hourly source
+/// exists (Phase 1b gate — WP-1's `hourlyTotals`).
 struct ActivityHeatmap: View {
     /// 7 rows (Mon…Sun) × 24 columns (hour 0…23); `nil` = no data for that cell.
     let matrix: [[Int?]]
     /// Copy under the empty-state headline (names the missing source).
     var emptyHint: String = "Hourly activity appears once local logs are parsed with per-hour timestamps."
 
-    private static let weekdays = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
+    private static let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     private static let hourLabels: [(column: Int, label: String)] = [
-        (0, "12AM"), (4, "4AM"), (8, "8AM"), (12, "12PM"), (16, "4PM"), (20, "8PM"),
+        (0, "12a"), (6, "6a"), (12, "12p"), (18, "6p"),
     ]
 
     private var hasData: Bool {
@@ -34,14 +35,14 @@ struct ActivityHeatmap: View {
 
     private var grid: some View {
         let labelWidth: CGFloat = 30
-        let rowGap: CGFloat = 3
+        let rowGap: CGFloat = 2
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Self.weekdays, id: \.self) { day in
                         Text(day)
                             .font(.mono(size: 9))
-                            .foregroundColor(PadzyTheme.muted)
+                            .foregroundColor(PadzyTheme.ink5)
                             .frame(maxHeight: .infinity, alignment: .leading)
                     }
                 }
@@ -53,7 +54,6 @@ struct ActivityHeatmap: View {
                     let gap: CGFloat = rowGap
                     let cellWidth = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
                     let cellHeight = (size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)
-                    let ramp = PadzyChartPalette.heatmapRamp
                     let peak = Double(max(maxValue, 1))
 
                     for row in 0..<rows {
@@ -68,15 +68,15 @@ struct ActivityHeatmap: View {
                             let value = matrix.indices.contains(row) && matrix[row].indices.contains(column)
                                 ? matrix[row][column]
                                 : nil
+                            // Single neutral hue, opacity tracks intensity continuously
+                            // (mockup: 0.05 + t·0.85); nil/zero rest at the faint floor.
+                            let intensity: Double
                             if let value, value > 0 {
-                                // 5 discrete ramp stops — stepped intensity, not a
-                                // continuous hue gradient (dataviz sequential rule).
-                                let t = Double(value) / peak
-                                let step = min(ramp.count - 1, 1 + Int(t * Double(ramp.count - 2) + 0.999))
-                                context.fill(path, with: .color(ramp[step]))
+                                intensity = min(1, Double(value) / peak)
                             } else {
-                                context.fill(path, with: .color(ramp[0]))
+                                intensity = 0
                             }
+                            context.fill(path, with: .color(PadzyChartPalette.heatCell(intensity)))
                         }
                     }
                 }
@@ -90,7 +90,7 @@ struct ActivityHeatmap: View {
                     ForEach(Self.hourLabels, id: \.column) { mark in
                         Text(mark.label)
                             .font(.mono(size: 9))
-                            .foregroundColor(PadzyTheme.muted)
+                            .foregroundColor(PadzyTheme.ink5)
                             .offset(x: labelWidth + 8 + CGFloat(mark.column) * columnWidth)
                     }
                 }
