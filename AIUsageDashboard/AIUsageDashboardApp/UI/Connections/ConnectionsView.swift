@@ -66,19 +66,17 @@ struct ConnectionsView: View {
     }
 
     private var framing: some View {
-        Text("Everything Tokei reads is local and read-only. Turn on live quota for agents that expose an online limit; toggle Show to include an agent in your totals.")
+        Text("Everything here is local and read-only.")
             .font(.sans(size: 13.5))
             .foregroundColor(PadzyTheme.ink3)
-            .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 580, alignment: .leading)
     }
 
     private var privacyNote: some View {
-        Text("Live quota uses read-only credentials already on this Mac. Tokei never sends your prompts, code, or file contents anywhere.")
+        Text("Live quota uses read-only credentials already on this Mac. Tokei never sends prompts, code, or files anywhere.")
             .font(.mono(size: 11))
             .foregroundColor(PadzyTheme.ink5)
-            .lineSpacing(2)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 580, alignment: .leading)
     }

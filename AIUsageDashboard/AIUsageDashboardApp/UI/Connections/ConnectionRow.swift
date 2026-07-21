@@ -89,11 +89,6 @@ struct ConnectionRow: View {
             identityRow
             HairlineDivider()
             controlRow
-            if connectable {
-                disclosure
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
-            }
         }
         .background(PadzyTheme.window)
         .overlay(
@@ -229,6 +224,7 @@ struct ConnectionRow: View {
                     .accessibilityLabel("Live quota for \(displayName)")
             }
             .fixedSize()
+            .help(Self.liveDisclosure(for: providerID))
         } else {
             Text("LOCAL LOGS ONLY")
                 .font(.mono(size: 9.5))
@@ -253,15 +249,7 @@ struct ConnectionRow: View {
         }
     }
 
-    // MARK: Disclosure (connectable only)
-
-    private var disclosure: some View {
-        Text(Self.liveDisclosure(for: providerID))
-            .font(.sans(size: 11))
-            .foregroundColor(PadzyTheme.ink5)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    // MARK: Disclosure (now shown on hover over the live-quota control)
 
     /// Per-provider live-quota disclosure — the exact honesty the prior Connections
     /// list carried. Cursor is the one case that makes an outbound request; that is
