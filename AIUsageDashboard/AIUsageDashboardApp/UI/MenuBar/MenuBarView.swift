@@ -162,18 +162,21 @@ struct MenuBarView: View {
     // MARK: Summary (plan value + tightest quota)
 
     private var summary: some View {
-        VStack(spacing: 11) {
+        // Build the scorecard once per render — reading the computed var twice
+        // would run the whole value engine twice for one row.
+        let card = scorecard
+        return VStack(spacing: 11) {
             HStack {
                 Text("Plan value")
                     .font(.sans(size: 12.5))
                     .foregroundColor(PadzyTheme.ink3)
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
-                    Text(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))
+                    Text(MaxxerMath.formatMultiple(card.totalValueMultiple))
                         .font(.mono(size: 13, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
-                    if let tier = scorecard.tier {
+                    if let tier = card.tier {
                         Text(tier.displayName)
                             .font(.mono(size: 9))
                             .tracking(9 * 0.06)

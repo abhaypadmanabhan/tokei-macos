@@ -476,6 +476,17 @@ private enum ValueColumn {
     static let spacing: CGFloat = 12
 }
 
+/// The value-multiple cell shared by the per-agent rows and the total row: mono,
+/// ink when known and ink5 when unknown, right-aligned on the multiple column.
+private func valueMultipleCell(_ multiple: Double?) -> some View {
+    Text(MaxxerMath.formatMultiple(multiple))
+        .font(.mono(size: 20, weight: .semibold))
+        .monospacedDigit()
+        .foregroundColor(multiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+        .lineLimit(1)
+        .frame(width: ValueColumn.multiple, alignment: .trailing)
+}
+
 /// One agent's value row — a button that drills into the provider, or (when the
 /// agent has usage but no plan cost) jumps to Settings to set it. Wide layout is
 /// the three-column grid; below the 640pt minimum the dollar detail wraps to a
@@ -587,12 +598,7 @@ private struct ValueRow: View {
     }
 
     private var multipleCell: some View {
-        Text(MaxxerMath.formatMultiple(value.valueMultiple))
-            .font(.mono(size: 20, weight: .semibold))
-            .monospacedDigit()
-            .foregroundColor(value.valueMultiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
-            .lineLimit(1)
-            .frame(width: ValueColumn.multiple, alignment: .trailing)
+        valueMultipleCell(value.valueMultiple)
     }
 
     private var accessibilityText: String {
@@ -659,12 +665,7 @@ private struct ValueTotalRow: View {
     }
 
     private var multipleCell: some View {
-        Text(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))
-            .font(.mono(size: 20, weight: .semibold))
-            .monospacedDigit()
-            .foregroundColor(scorecard.totalValueMultiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
-            .lineLimit(1)
-            .frame(width: ValueColumn.multiple, alignment: .trailing)
+        valueMultipleCell(scorecard.totalValueMultiple)
     }
 }
 

@@ -39,11 +39,7 @@ struct DashboardView: View {
     private var routeTargetProviderID: ProviderID? {
         var tightestByProvider: [ProviderID: Double] = [:]
         for util in viewModel.utilization {
-            if let existing = tightestByProvider[util.providerID] {
-                if util.usedPercent > existing { tightestByProvider[util.providerID] = util.usedPercent }
-            } else {
-                tightestByProvider[util.providerID] = util.usedPercent
-            }
+            tightestByProvider[util.providerID] = max(tightestByProvider[util.providerID] ?? 0, util.usedPercent)
         }
         let quotaBearing: [(id: ProviderID, pct: Double)] = ProviderID.allCases
             .filter { !ProviderVisibility.isHidden($0) }
