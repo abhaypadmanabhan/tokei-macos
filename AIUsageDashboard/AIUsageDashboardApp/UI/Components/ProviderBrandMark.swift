@@ -1,30 +1,44 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// Provider mark for the redesigned surfaces: the monochrome `ProviderMark`
-/// template glyph (ink) on a neutral hairline chip. One monochrome family —
-/// brand hues clashed with the UI, so no per-provider color and no color
-/// assets are consulted. Sizes are the chip's outer edge, matching the old
-/// colored-mark footprint at every call site.
+/// Provider glyph container for the redesigned surfaces: the `ProviderMark`
+/// template glyph in a tight rounded-square chip.
+///
+/// WP-5: pass `tint` (an `AgentTint`) for the mockup's per-agent treatment — a
+/// faint tinted fill, a stronger tinted border, and a tinted mark. Omit `tint`
+/// to keep the monochrome ink-on-hairline chip for legacy call sites. The single
+/// product accent is never used here; the tint is DATA/identity colour.
 struct ProviderBrandMark: View {
     let providerID: ProviderID
     var size: CGFloat = 28
+    var tint: Color? = nil
 
-    init(_ providerID: ProviderID, size: CGFloat = 28) {
+    init(_ providerID: ProviderID, size: CGFloat = 28, tint: Color? = nil) {
         self.providerID = providerID
         self.size = size
+        self.tint = tint
     }
+
+    private var radius: CGFloat { size >= 32 ? 4 : 3 }
+    private var fill: Color { (tint ?? PadzyTheme.ink).opacity(tint == nil ? 0.06 : 0.08) }
+    private var stroke: Color { tint?.opacity(0.33) ?? PadzyTheme.muted.opacity(0.35) }
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: max(4, size * 0.28), style: .continuous)
-                .fill(PadzyTheme.ink.opacity(0.06))
-            RoundedRectangle(cornerRadius: max(4, size * 0.28), style: .continuous)
-                .stroke(PadzyTheme.muted.opacity(0.35), lineWidth: 1)
-            ProviderMark(providerID, size: size * 0.58)
+            RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(stroke, lineWidth: 1)
+            ProviderMark(providerID, size: size * 0.58, tint: tint)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+}
+
+/// Convenience: the tinted glyph for a provider using its `AgentTint`.
+extension ProviderBrandMark {
+    static func tinted(_ id: ProviderID, size: CGFloat = 28) -> ProviderBrandMark {
+        ProviderBrandMark(id, size: size, tint: AgentTint.color(id))
     }
 }
 

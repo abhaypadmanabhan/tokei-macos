@@ -10,11 +10,15 @@ struct ProviderMark: View {
     let providerID: ProviderID
     var size: CGFloat = 18
     var enabled: Bool = true
+    /// WP-5: when set, the glyph renders in this agent tint instead of ink. Nil
+    /// keeps the monochrome ink/muted behaviour for legacy call sites.
+    var tint: Color? = nil
 
-    init(_ providerID: ProviderID, size: CGFloat = 18, enabled: Bool = true) {
+    init(_ providerID: ProviderID, size: CGFloat = 18, enabled: Bool = true, tint: Color? = nil) {
         self.providerID = providerID
         self.size = size
         self.enabled = enabled
+        self.tint = tint
     }
 
     private var assetName: String {
@@ -25,6 +29,22 @@ struct ProviderMark: View {
         case .antigravity: return "mark_antigravity"
         case .cline: return "mark_cline"
         case .opencode: return "mark_opencode"
+        case .gemini: return "mark_gemini"
+        }
+    }
+
+    /// Vector SF Symbol standing in when a brand asset is absent (currently only
+    /// Gemini ships no `mark_*` PDF). Chosen to echo each brand so a fallback still
+    /// reads as that agent rather than a generic box.
+    private var fallbackSymbol: String {
+        switch providerID {
+        case .claudeCode: return "asterisk"
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .cursor: return "cursorarrow"
+        case .antigravity: return "arrow.up"
+        case .cline: return "terminal"
+        case .opencode: return "curlybraces"
+        case .gemini: return "sparkle"
         }
     }
 
@@ -36,13 +56,13 @@ struct ProviderMark: View {
                     .renderingMode(.template)
             } else {
                 // Fallback — never leaves a blank slot if the asset is absent.
-                Image(systemName: "cube")
+                Image(systemName: fallbackSymbol)
                     .resizable()
             }
         }
         .scaledToFit()
         .frame(width: size, height: size)
-        .foregroundColor(enabled ? PadzyTheme.ink : PadzyTheme.muted)
+        .foregroundColor(enabled ? (tint ?? PadzyTheme.ink) : PadzyTheme.muted)
         .accessibilityHidden(true)
     }
 }

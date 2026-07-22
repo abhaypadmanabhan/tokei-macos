@@ -232,7 +232,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     private let urlSession: URLSession
     private let credentialsReader: ClaudeUsageCredentialsReading
     private let cacheURL: URL
-    private let cooldownURL: URL
+    private let cooldownStore: CooldownStore
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (TimeInterval) async -> Void
 
@@ -250,7 +250,10 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
         self.urlSession = urlSession
         self.credentialsReader = credentialsReader
         self.cacheURL = cacheURL ?? Self.defaultStorageURL(filename: "claude-usage-cache.json")
-        self.cooldownURL = cooldownURL ?? Self.defaultStorageURL(filename: "claude-usage-cooldown.json")
+        self.cooldownStore = CooldownStore(
+            cooldownURL: cooldownURL ?? Self.defaultStorageURL(filename: "claude-usage-cooldown.json"),
+            now: now
+        )
         self.now = now
         self.sleep = sleep
     }
@@ -261,7 +264,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             return fresh
         }
 
-        if cooldownActive(at: referenceDate) {
+        if cooldownStore.isActive(at: referenceDate) {
             if let stale = cachedWindows(at: referenceDate, maxAge: Self.maxStaleInterval, stale: true) {
                 return stale
             }
@@ -278,7 +281,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             try persistCache(windows, fetchedAt: now())
             return windows
         } catch ClaudeUsageError.rateLimited(let retryAfter) {
-            try? persistCooldown(duration: retryAfter)
+            cooldownStore.record(duration: retryAfter)
             if let stale = cachedWindows(at: now(), maxAge: Self.maxStaleInterval, stale: true) {
                 return stale
             }
@@ -340,10 +343,10 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             case 401:
                 throw ClaudeUsageError.unauthorized
             case 429:
-                let retryAfter = retryAfter(from: httpResponse)
+                let retryAfter = cooldownStore.retryAfter(from: httpResponse)
                 lastRetryAfter = retryAfter
                 if attempt < Self.maxAttempts {
-                    await sleep(min(retryAfter ?? Self.defaultCooldownInterval, Self.maxRetrySleepInterval))
+                    await sleep(min(retryAfter ?? cooldownStore.defaultCooldownInterval, Self.maxRetrySleepInterval))
                 }
             default:
                 throw ClaudeUsageError.httpStatus(httpResponse.statusCode)
@@ -363,19 +366,6 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
         return request
     }
 
-    private func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
-        guard let value = response.value(forHTTPHeaderField: "Retry-After")?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else { return nil }
-        if let seconds = TimeInterval(value) {
-            return max(0, seconds)
-        }
-        if let date = Self.httpDateFormatter.date(from: value) {
-            return max(0, date.timeIntervalSince(now()))
-        }
-        return nil
-    }
-
     private func cachedWindows(at referenceDate: Date, maxAge: TimeInterval, stale: Bool) -> [QuotaWindow]? {
         guard let cache = try? readCache(),
               referenceDate.timeIntervalSince(cache.fetchedAt) <= maxAge else {
@@ -391,11 +381,6 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
         return windows.isEmpty ? nil : windows
     }
 
-    private func cooldownActive(at referenceDate: Date) -> Bool {
-        guard let cooldown = try? readCooldown() else { return false }
-        return cooldown.until > referenceDate
-    }
-
     private func persistCache(_ windows: [QuotaWindow], fetchedAt: Date) throws {
         try createParentDirectory(for: cacheURL)
         let data = try JSONEncoder.claudeUsageEncoder.encode(CachedQuotaWindows(fetchedAt: fetchedAt, windows: windows))
@@ -405,18 +390,6 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     private func readCache() throws -> CachedQuotaWindows {
         let data = try Data(contentsOf: cacheURL)
         return try JSONDecoder.claudeUsageDecoder.decode(CachedQuotaWindows.self, from: data)
-    }
-
-    private func persistCooldown(duration: TimeInterval?) throws {
-        try createParentDirectory(for: cooldownURL)
-        let interval = min(Self.maxCooldownInterval, max(0, duration ?? Self.defaultCooldownInterval))
-        let data = try JSONEncoder.claudeUsageEncoder.encode(Cooldown(until: now().addingTimeInterval(interval)))
-        try data.write(to: cooldownURL, options: .atomic)
-    }
-
-    private func readCooldown() throws -> Cooldown {
-        let data = try Data(contentsOf: cooldownURL)
-        return try JSONDecoder.claudeUsageDecoder.decode(Cooldown.self, from: data)
     }
 
     private func createParentDirectory(for url: URL) throws {
@@ -527,16 +500,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     private static let maxAttempts = 3
     private static let freshCacheInterval: TimeInterval = 10 * 60
     private static let maxStaleInterval: TimeInterval = 7 * 24 * 60 * 60
-    private static let defaultCooldownInterval: TimeInterval = 5 * 60
-    private static let maxCooldownInterval: TimeInterval = 60 * 60
     private static let maxRetrySleepInterval: TimeInterval = 30
-    private static let httpDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter
-    }()
 }
 
 private struct ClaudeUsagePayload: Decodable {
@@ -592,10 +556,6 @@ private struct ClaudeUsageModelScope: Decodable {
 private struct CachedQuotaWindows: Codable {
     let fetchedAt: Date
     let windows: [QuotaWindow]
-}
-
-private struct Cooldown: Codable {
-    let until: Date
 }
 
 private extension JSONEncoder {

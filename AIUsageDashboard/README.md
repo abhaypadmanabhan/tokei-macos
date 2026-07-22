@@ -71,6 +71,13 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 - **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
 - **Cursor** real token usage + live quota (opt-in). With `cursorNetworkUsageEnabled` on, Tokei reads the Cursor web dashboard the way the dashboard itself does — `cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens` for per-event token usage (today/week/month with input/cache/output split + daily totals) and `cursor.com/api/usage-summary` for plan utilisation %, authenticating with the WorkOS session cookie (userId from the JWT `sub`; token never logged or persisted). Verified live: today 1.38M tokens, quota 7% "Pro (active)". Toggle off (or any network failure) falls back to the offline `state.vscdb` code-line read, no crash.
 - 67 unit tests green, incl. real-logs smoke tests (skip on machines without logs).
+- **Value surface (#23) + lifetime (#41)** (2026-07-19): the "am I using the tokens I pay
+  for" pane — headline plan-value multiple + Maxxer tier (idle → goblin mode), per-agent
+  table of plan $ / API-equivalent $ / multiple with confidence badges; per-provider
+  monthly plan-cost entry in Settings (`maxxer.planCost.<id>`, blank = unset, never $0);
+  "X tokens all-time" lifetime stat; fourth menu-bar display mode (all-time tokens).
+  Totals compare like-with-like: only providers with BOTH a priced usage figure and a
+  configured plan cost feed the headline multiple.
 
 ## What Is Stubbed (post-MVP)
 
@@ -78,12 +85,10 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 - **Antigravity** remains a non-interactive skeleton pending data-source research.
 - WidgetKit target deferred (source exists, not in `project.yml`).
 - App icon and additional settings functionality minimal.
-- **Value engine + utilization spine landed as internal Core layers, not yet surfaced.**
-  `Core/Pricing` computes API-equivalent USD for every provider, and `Core/Utilization`
-  unifies live-quota % into one `Utilization` contract + aggregate (with a tested TTL /
-  429-cooldown cache). Both are fully tested but have **no UI** and change no existing
-  behavior — the "am I using the tokens I pay for" surface (value multiple + Maxxer score)
-  that consumes them is the next cycle (#23).
+- **Value scorecard prices only providers with a trusted reference model** (Claude Code,
+  Codex, Cursor); Antigravity/Cline/opencode/Gemini stay visibly unpriced in the Value
+  pane rather than receiving guessed API-equivalent figures. Plan-cost auto-detection
+  (plan tier → $) is not attempted — costs are user-entered in Settings.
 
 ## Post-MVP Roadmap
 

@@ -1,71 +1,84 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The guided Connections screen — the in-app way to turn on a coding agent's
-/// live quota read. Every connector is off by default and reads only local /
-/// own-account data; this screen is the single, honest opt-in surface (replacing
-/// the scattered Settings toggles). Each row owns its provider's `@AppStorage`
-/// flag and re-runs the providers on change.
+/// The Agents tab (WP-5 rebuild to the "Tokei Dashboard" mockup, outline
+/// L220-268): one management card per connected agent, plus the honest,
+/// local-first framing and the privacy note that anchors the app's whole pitch.
+///
+/// Every detected agent appears here — including hidden ones (dimmed, so they can
+/// be un-hidden) — ordered by the canonical provider order for stability. Each
+/// card owns its own visibility, rescan, and live-quota bindings (`ConnectionRow`);
+/// this view only lays them out and carries the framing copy.
 struct ConnectionsView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
-    @State private var showingAddAgent = false
+    /// Opens the shell's Add-agent drawer (overlaid on the whole window).
+    var onAddAgent: () -> Void = {}
+
+    /// Every provider that produced a snapshot this run, in canonical order.
+    /// Includes hidden providers so the Show toggle can bring them back.
+    private var agents: [ProviderID] {
+        ProviderID.allCases.filter { viewModel.snapshot(for: $0) != nil }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 10) {
-                    SectionLabel("Connections")
-                    Text("Connect a coding agent to read its live quota. Local-first — off by default.")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+
+                framing
+                    .padding(.top, 12)
+
+                if agents.isEmpty {
+                    SurfaceStateView(
+                        kind: .empty(
+                            headline: "No agents detected",
+                            hint: "Add a coding agent to manage it here. Tokei only ever reads local, read-only usage."
+                        ),
+                        compact: true
+                    )
+                    .padding(.top, 24)
+                } else {
+                    VStack(spacing: 10) {
+                        ForEach(agents, id: \.self) { ConnectionRow(providerID: $0) }
+                    }
+                    .padding(.top, 22)
                 }
-                AddAgentButton { showingAddAgent = true }
-                    .fixedSize()
+
+                privacyNote
+                    .padding(.top, 22)
             }
             .padding(.horizontal, 28)
-            .padding(.top, 24)
-            .padding(.bottom, 20)
-
-            HairlineDivider()
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ConnectionRow(
-                        providerID: .claudeCode,
-                        storageKey: "claudeNetworkUsageEnabled",
-                        disclosure: "Reads your own Claude account. May break if Anthropic changes their API.",
-                        help: "Run `claude` once to refresh your login."
-                    )
-                    HairlineDivider()
-
-                    ConnectionRow(
-                        providerID: .cursor,
-                        storageKey: "cursorNetworkUsageEnabled",
-                        disclosure: "Makes an authenticated request to Cursor's servers using your local session token to fetch real token/quota usage.",
-                        help: ""
-                    )
-                    HairlineDivider()
-
-                    ConnectionRow(
-                        providerID: .antigravity,
-                        storageKey: "antigravityOnlineQuotaEnabled",
-                        disclosure: "Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere.",
-                        help: "Requires the Antigravity app to be open."
-                    )
-                    HairlineDivider()
-                }
-            }
-
-            Spacer(minLength: 0)
+            .padding(.top, 34)
+            .padding(.bottom, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(PadzyTheme.ground)
-        .sheet(isPresented: $showingAddAgent) {
-            AddAgentSheet()
-                .environmentObject(viewModel)
+    }
+
+    // MARK: Pieces
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            SectionLabel("Connected agents")
+            AddAgentButton { onAddAgent() }
+                .fixedSize()
         }
+    }
+
+    private var framing: some View {
+        Text("Everything here is local and read-only.")
+            .font(.sans(size: 13.5))
+            .foregroundColor(PadzyTheme.ink3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 580, alignment: .leading)
+    }
+
+    private var privacyNote: some View {
+        Text("Live quota uses read-only credentials already on this Mac. Tokei never sends prompts, code, or files anywhere.")
+            .font(.mono(size: 11))
+            .foregroundColor(PadzyTheme.ink5)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 580, alignment: .leading)
     }
 }
 
@@ -79,24 +92,39 @@ private func mockViewModel(_ snapshots: [ProviderSnapshot]) -> DashboardViewMode
 }
 
 @MainActor
-private func mockSnapshot(_ id: ProviderID, name: String) -> ProviderSnapshot {
+private func mockSnapshot(_ id: ProviderID, name: String, today: TokenUsage = .unavailable) -> ProviderSnapshot {
     ProviderSnapshot(
         providerID: id,
         displayName: name,
         authStatus: .authenticated,
         quotaWindows: [],
-        todayUsage: .unavailable,
+        todayUsage: today,
         weekUsage: .unavailable,
         warnings: []
     )
 }
 
-#Preview("Connections") {
+#Preview("Agents") {
     ConnectionsView()
         .environmentObject(mockViewModel([
-            mockSnapshot(.claudeCode, name: "Claude Code"),
+            mockSnapshot(.claudeCode, name: "Claude Code",
+                         today: TokenUsage(inputTokens: 82_000_000, confidence: .exact)),
+            mockSnapshot(.codex, name: "Codex",
+                         today: TokenUsage(inputTokens: 8_000_000, confidence: .localParsed)),
+            mockSnapshot(.cursor, name: "Cursor"),
+            mockSnapshot(.antigravity, name: "Antigravity"),
+        ]))
+        .frame(width: 720, height: 620)
+        .background(PadzyTheme.ground)
+}
+
+#Preview("Agents · narrow 640") {
+    ConnectionsView()
+        .environmentObject(mockViewModel([
+            mockSnapshot(.claudeCode, name: "Claude Code",
+                         today: TokenUsage(inputTokens: 82_000_000, confidence: .exact)),
             mockSnapshot(.cursor, name: "Cursor"),
         ]))
-        .frame(width: 640, height: 560)
+        .frame(width: 410, height: 620)
         .background(PadzyTheme.ground)
 }

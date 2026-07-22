@@ -58,11 +58,17 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         warnings.append(contentsOf: usage.warnings)
 
         var quotaWindows = Self.unavailableQuotaWindows(providerID: id)
+        var liveQuotaAuthenticated = false
         if userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled") {
             do {
                 let liveWindows = try await usageClient.fetchQuotaWindows()
                 if !liveWindows.isEmpty {
                     quotaWindows = liveWindows
+                    // A successful non-empty live-quota fetch means the OAuth usage
+                    // endpoint accepted our credentials — report auth honestly
+                    // instead of the blanket `.unknown` (which read as "not signed
+                    // in" in the UI even while live quota was flowing).
+                    liveQuotaAuthenticated = true
                 }
             } catch {
                 warnings.append(ProviderWarning(
@@ -79,7 +85,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
-            authStatus: .unknown,
+            authStatus: liveQuotaAuthenticated ? .authenticated : .unknown,
             quotaWindows: quotaWindows,
             todayUsage: usage.today,
             weekUsage: usage.week,

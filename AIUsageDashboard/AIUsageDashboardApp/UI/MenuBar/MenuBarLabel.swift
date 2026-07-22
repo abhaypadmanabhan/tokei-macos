@@ -21,8 +21,17 @@ struct MenuBarLabel: View {
     @AppStorage(MenuBarDisplayMode.storageKey)
     private var rawMode = MenuBarDisplayMode.todayTokens.rawValue
 
+    /// One spinner frame every 0.15 s — the cadence the ring was tuned at.
+    private static let spinnerTick: TimeInterval = 0.15
+
+    /// Current spinner frame. Advanced by `spinnerLoop` ONLY while a sync is in
+    /// flight; a plain `Image` reads it. Deliberately NOT a `TimelineView`: this
+    /// view is a `MenuBarExtra` label, which SwiftUI snapshots into the status
+    /// item — a `TimelineView`'s self-driving clock breaks that render and the
+    /// item never appears. A `@State`-backed `Image` (the pattern shipped 0.4.0)
+    /// renders reliably; the async loop just gives us the battery win of no
+    /// ticking source at idle.
     @State private var spinnerPhase = 0
-    private let spinnerTimer = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
 
     private var mode: MenuBarDisplayMode {
         MenuBarDisplayMode(rawValue: rawMode) ?? .todayTokens
@@ -31,6 +40,15 @@ struct MenuBarLabel: View {
     /// The constraining reading across every provider — what the bars fill by.
     private var tightest: Utilization? {
         MaxxerMath.tightestWindow(in: viewModel.utilization)
+    }
+
+    /// All-time tokens across visible providers (#41). Hidden agents are skipped
+    /// here exactly as they are in the chip strip and the rest of the menu bar.
+    private var lifetimeTotal: MaxxerMath.LifetimeTotal? {
+        MaxxerMath.lifetimeTotal(
+            in: viewModel.snapshots,
+            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
+        )
     }
 
     private var mark: some View {
@@ -42,6 +60,19 @@ struct MenuBarLabel: View {
         if viewModel.isLoading {
             Image(nsImage: TokeiStatusIcon.spinnerImage(phase: reduceMotion ? 0 : spinnerPhase))
                 .accessibilityLabel("Syncing")
+        }
+    }
+
+    /// Ticks the spinner while `isLoading`, then stops. Bound via `.task(id:)` to
+    /// `isLoading`, so the loop is created when a sync starts and cancelled the
+    /// instant it ends — nothing wakes the main runloop at idle (the 0.4.0
+    /// `Timer.publish(…).autoconnect()` ran ~6.6×/s for the whole app lifetime).
+    private func spinnerLoop() async {
+        guard viewModel.isLoading, !reduceMotion else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: UInt64(Self.spinnerTick * 1_000_000_000))
+            if Task.isCancelled { break }
+            spinnerPhase = (spinnerPhase + 1) % TokeiStatusIcon.spinnerPhases
         }
     }
 
@@ -65,13 +96,23 @@ struct MenuBarLabel: View {
                     // No live quota anywhere yet — honest placeholder, never a "0%".
                     Text("—")
                 }
+
+            case .lifetime:
+                if let lifetimeTotal {
+                    // Still ONE aggregate value: `TokenFormatter` caps it at a
+                    // "1.2B"-shaped string, so the item's width stays fixed.
+                    Text(TokenFormatter.format(lifetimeTotal.tokens))
+                        .monospacedDigit()
+                } else {
+                    // No provider reports a lifetime figure or keeps daily logs.
+                    Text("—")
+                }
             }
 
             syncSpinner
         }
-        .onReceive(spinnerTimer) { _ in
-            guard viewModel.isLoading, !reduceMotion else { return }
-            spinnerPhase = (spinnerPhase + 1) % TokeiStatusIcon.spinnerPhases
+        .task(id: viewModel.isLoading) {
+            await spinnerLoop()
         }
     }
 }

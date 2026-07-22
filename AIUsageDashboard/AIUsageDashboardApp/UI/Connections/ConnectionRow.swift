@@ -1,104 +1,270 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// One coding agent's line on the guided Connections screen: identity + detected
-/// state, an **Enable** switch bound to the provider's own `UserDefaults` flag, a
-/// muted disclosure line, and — only while enabled but not yet returning data — a
-/// help line telling the user the one action that unblocks the live read.
+/// One agent's management card on the Agents tab (WP-5 rebuild to the "Tokei
+/// Dashboard" mockup, outline L235-266). Everything on the card is bound to real
+/// state — no mock toggles:
 ///
-/// The switch writes straight to the `@AppStorage` key the connector reads at
-/// fetch time. A plain `UserDefaults` write fires no sync, so on every change we
-/// re-run the providers; otherwise flipping the switch would appear to "do
-/// nothing" until the next file-watcher event (same pattern as the old Settings
-/// toggles this screen replaces).
+/// - **Show** writes `ProviderVisibility` (include/exclude from every total). The
+///   card dims when hidden, matching the mockup's opacity cue.
+/// - **Watching / Rescan** reflects that Tokei watches every detected agent's
+///   local logs; Rescan re-reads them (`viewModel.refresh()`). There is no
+///   per-agent "pause", so the dot is an honest status indicator, not a fake
+///   toggle.
+/// - **Live quota** only appears for the three providers that actually expose an
+///   online connector (`ProviderOverviewRow.connectableProviders`); its switch is
+///   the same `@AppStorage` flag the connector reads at fetch time, and the OFF /
+///   CONNECTING / LIVE state is derived from whether a live window has landed.
+///   Local-only agents read "LOCAL LOGS ONLY" instead of a dead toggle.
+///
+/// The one place anything leaves the Mac — Cursor's authenticated request — keeps
+/// its explicit disclosure line; the general privacy note lives in the footer.
 struct ConnectionRow: View {
     let providerID: ProviderID
-    let storageKey: String
-    let disclosure: String
-    let help: String
 
-    @AppStorage private var enabled: Bool
     @EnvironmentObject private var viewModel: DashboardViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(providerID: ProviderID, storageKey: String, disclosure: String, help: String) {
+    /// Include-in-totals flag, mirrored straight from `ProviderVisibility`'s key so
+    /// flipping Show here updates every surface that filters by visibility.
+    @AppStorage private var hiddenFlag: Bool
+    /// The connector's live-quota opt-in (same key the fetch path reads). A sentinel
+    /// key keeps `@AppStorage` valid for local-only providers; it always reads false.
+    @AppStorage private var liveEnabled: Bool
+    /// Transient: a Rescan is in flight (re-reading local logs).
+    @State private var rescanning = false
+
+    init(providerID: ProviderID) {
         self.providerID = providerID
-        self.storageKey = storageKey
-        self.disclosure = disclosure
-        self.help = help
-        // Runtime key — the connector's opt-in flag. Default OFF: no network /
-        // RPC read happens until the user flips this switch here.
-        _enabled = AppStorage(wrappedValue: false, storageKey)
+        _hiddenFlag = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
+        _liveEnabled = AppStorage(
+            wrappedValue: false,
+            ProviderOverviewRow.liveEnabledKey(for: providerID) ?? "connections.noLive.\(providerID.rawValue)"
+        )
     }
 
-    /// The provider produced a snapshot this run — its CLI/app is present.
-    private var detected: Bool {
-        viewModel.snapshot(for: providerID) != nil
+    // MARK: Derived state
+
+    private var snapshot: ProviderSnapshot? { viewModel.snapshot(for: providerID) }
+
+    private var displayName: String {
+        snapshot?.displayName
+            ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
-    /// Any live quota window came back for this provider.
+    private var path: String {
+        ProviderMetadata.localPaths(for: providerID).first ?? "—"
+    }
+
+    private var capability: ProviderCapabilityTier {
+        ProviderCapabilityTier.classify(snapshot)
+    }
+
+    private var connectable: Bool {
+        ProviderOverviewRow.connectableProviders.contains(providerID)
+    }
+
     private var hasLiveData: Bool {
         viewModel.utilization.contains { $0.providerID == providerID }
     }
 
-    /// Enabled, but no live reading yet — the help line's one unblocking action
-    /// is worth surfacing (Claude: refresh login; Antigravity: open the app).
-    private var showHelp: Bool {
-        enabled && !hasLiveData && !help.isEmpty
+    private var show: Bool { !hiddenFlag }
+
+    private var showBinding: Binding<Bool> {
+        Binding(get: { !hiddenFlag }, set: { hiddenFlag = !$0 })
     }
 
-    private var displayName: String {
-        viewModel.snapshot(for: providerID)?.displayName
-            ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    /// OFF → CONNECTING (enabled, first window not yet in) → LIVE. Local-only
+    /// providers never reach this — they show "LOCAL LOGS ONLY".
+    private enum LiveState { case off, connecting, live }
+    private var liveState: LiveState {
+        guard liveEnabled else { return .off }
+        return hasLiveData ? .live : .connecting
     }
+
+    // MARK: Body
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 14) {
-                ProviderMark(providerID, size: 22, enabled: enabled)
+        VStack(alignment: .leading, spacing: 0) {
+            identityRow
+            HairlineDivider()
+            controlRow
+        }
+        .background(PadzyTheme.window)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(PadzyTheme.hairline, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .opacity(show ? 1 : 0.55)
+        .animation(reduceMotion ? nil : PadzyMotion.quick, value: show)
+    }
 
-                VStack(alignment: .leading, spacing: 3) {
+    // MARK: Identity row
+
+    private var identityRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProviderBrandMark.tinted(providerID, size: 28)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 9) {
                     Text(displayName)
-                        .font(.display(size: 14, weight: .bold))
+                        .font(.sans(size: 13.5, weight: .semibold))
                         .foregroundColor(PadzyTheme.ink)
                         .lineLimit(1)
                         .truncationMode(.tail)
-
-                    Text(detected ? "INSTALLED" : "NOT FOUND")
-                        .font(.mono(size: 10))
-                        .tracking(0.5)
-                        .foregroundColor(PadzyTheme.muted)
-                        .lineLimit(1)
+                    capabilityChip
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(path)
+                    .font(.mono(size: 10.5))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-                // The one accent in this row: the enable state/action.
-                Toggle("Enable", isOn: $enabled)
+            HStack(spacing: 8) {
+                Text("Show")
+                    .font(.sans(size: 11))
+                    .foregroundColor(PadzyTheme.ink5)
+                Toggle("", isOn: showBinding)
                     .labelsHidden()
-                    .toggleStyle(.switch)
-                    .tint(PadzyTheme.accent)
-                    .onChange(of: enabled) {
+                    .toggleStyle(.padzy)
+                    .accessibilityLabel("Show \(displayName) in totals")
+            }
+            .fixedSize()
+        }
+        .padding(16)
+    }
+
+    private var capabilityChip: some View {
+        Text(capability.label)
+            .font(.mono(size: 8.5))
+            .tracking(8.5 * 0.08)
+            .foregroundColor(PadzyTheme.ink3)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                    .stroke(PadzyTheme.border2, lineWidth: 1)
+            )
+            .fixedSize()
+            .accessibilityLabel("Capability: \(capability.label)")
+    }
+
+    // MARK: Control row
+
+    private var controlRow: some View {
+        HStack(spacing: 12) {
+            watchIndicator
+            rescanButton
+            Spacer(minLength: 8)
+            liveQuotaControl
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    /// Honest status, not a toggle: Tokei watches every detected agent's local logs.
+    private var watchIndicator: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(snapshot == nil ? PadzyTheme.ink5 : PadzyTheme.good)
+                .frame(width: 6, height: 6)
+            Text(snapshot == nil ? "Not found" : "Watching")
+                .font(.sans(size: 11))
+                .foregroundColor(PadzyTheme.ink3)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var rescanButton: some View {
+        Button {
+            guard !rescanning else { return }
+            rescanning = true
+            Task {
+                await viewModel.refresh()
+                rescanning = false
+            }
+        } label: {
+            Text(rescanning ? "Rescanning…" : "Rescan")
+                .font(.sans(size: 10.5))
+                .foregroundColor(PadzyTheme.ink3)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                        .stroke(PadzyTheme.border2, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(rescanning)
+        .accessibilityLabel("Rescan \(displayName)'s local logs")
+    }
+
+    @ViewBuilder
+    private var liveQuotaControl: some View {
+        if connectable {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(liveDotColor)
+                    .frame(width: 6, height: 6)
+                Text("LIVE QUOTA · \(liveStateLabel)")
+                    .font(.mono(size: 9.5))
+                    .tracking(9.5 * 0.1)
+                    .foregroundColor(liveDotColor)
+                Toggle("", isOn: $liveEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.padzy)
+                    .onChange(of: liveEnabled) {
                         Task { await viewModel.refresh() }
                     }
-                    .accessibilityLabel("Enable \(displayName) live quota")
+                    .accessibilityLabel("Live quota for \(displayName)")
             }
-
-            Text(disclosure)
-                .font(.system(size: 11))
-                .foregroundColor(PadzyTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if showHelp {
-                Text(help)
-                    .font(.system(size: 11))
-                    .foregroundColor(PadzyTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .fixedSize()
+            .help(Self.liveDisclosure(for: providerID))
+        } else {
+            Text("LOCAL LOGS ONLY")
+                .font(.mono(size: 9.5))
+                .tracking(9.5 * 0.1)
+                .foregroundColor(PadzyTheme.ink5)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var liveStateLabel: String {
+        switch liveState {
+        case .off: return "OFF"
+        case .connecting: return "CONNECTING"
+        case .live: return "LIVE"
+        }
+    }
+
+    private var liveDotColor: Color {
+        switch liveState {
+        case .off: return PadzyTheme.ink5
+        case .connecting: return PadzyTheme.warn
+        case .live: return PadzyTheme.good
+        }
+    }
+
+    // MARK: Disclosure (now shown on hover over the live-quota control)
+
+    /// Per-provider live-quota disclosure — the exact honesty the prior Connections
+    /// list carried. Cursor is the one case that makes an outbound request; that is
+    /// said plainly.
+    static func liveDisclosure(for providerID: ProviderID) -> String {
+        switch providerID {
+        case .claudeCode:
+            return "Reads your own Claude account. May break if Anthropic changes their API."
+        case .cursor:
+            return "Makes an authenticated request to Cursor's servers using your local session token to fetch real token and quota usage."
+        case .antigravity:
+            return "Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere."
+        default:
+            return ""
+        }
     }
 }
 
@@ -115,84 +281,34 @@ private func mockViewModel(_ snapshots: [ProviderSnapshot]) -> DashboardViewMode
 private func mockSnapshot(
     _ id: ProviderID,
     name: String,
-    windows: [QuotaWindow] = []
+    windows: [QuotaWindow] = [],
+    today: TokenUsage = .unavailable
 ) -> ProviderSnapshot {
     ProviderSnapshot(
         providerID: id,
         displayName: name,
         authStatus: .authenticated,
         quotaWindows: windows,
-        todayUsage: .unavailable,
+        todayUsage: today,
         weekUsage: .unavailable,
         warnings: []
     )
 }
 
-@MainActor
-private func window(_ id: ProviderID, _ type: QuotaWindowType, used: Double) -> QuotaWindow {
-    QuotaWindow(
-        providerID: id, type: type, used: used, limit: 100,
-        resetAt: Date().addingTimeInterval(3 * 3600),
-        confidence: .providerReported, source: "preview"
-    )
-}
-
-#Preview("Installed + on (live)") {
-    // Preview-only keys so on/off states are deterministic per canvas.
-    UserDefaults.standard.set(true, forKey: "previewClaudeOn")
-    return ConnectionRow(
-        providerID: .claudeCode,
-        storageKey: "previewClaudeOn",
-        disclosure: "Reads your own Claude account. May break if Anthropic changes their API.",
-        help: "Run `claude` once to refresh your login."
-    )
+#Preview("Agent cards") {
+    VStack(spacing: 10) {
+        ConnectionRow(providerID: .claudeCode)
+        ConnectionRow(providerID: .codex)
+        ConnectionRow(providerID: .cursor)
+    }
+    .padding(28)
+    .frame(width: 640)
     .environmentObject(mockViewModel([
         mockSnapshot(.claudeCode, name: "Claude Code",
-                     windows: [window(.claudeCode, .weekly, used: 62)])
+                     today: TokenUsage(inputTokens: 82_000_000, confidence: .exact)),
+        mockSnapshot(.codex, name: "Codex",
+                     today: TokenUsage(inputTokens: 8_000_000, confidence: .localParsed)),
+        mockSnapshot(.cursor, name: "Cursor"),
     ]))
-    .frame(width: 640)
-    .background(PadzyTheme.ground)
-}
-
-#Preview("Installed + on (no data → help)") {
-    UserDefaults.standard.set(true, forKey: "previewClaudeStale")
-    return ConnectionRow(
-        providerID: .claudeCode,
-        storageKey: "previewClaudeStale",
-        disclosure: "Reads your own Claude account. May break if Anthropic changes their API.",
-        help: "Run `claude` once to refresh your login."
-    )
-    .environmentObject(mockViewModel([
-        mockSnapshot(.claudeCode, name: "Claude Code")
-    ]))
-    .frame(width: 640)
-    .background(PadzyTheme.ground)
-}
-
-#Preview("Installed + off") {
-    UserDefaults.standard.set(false, forKey: "previewCursorOff")
-    return ConnectionRow(
-        providerID: .cursor,
-        storageKey: "previewCursorOff",
-        disclosure: "Makes an authenticated request to Cursor's servers using your local session token to fetch real usage.",
-        help: ""
-    )
-    .environmentObject(mockViewModel([
-        mockSnapshot(.cursor, name: "Cursor")
-    ]))
-    .frame(width: 640)
-    .background(PadzyTheme.ground)
-}
-
-#Preview("Not found") {
-    UserDefaults.standard.set(false, forKey: "previewAntigravityOff")
-    return ConnectionRow(
-        providerID: .antigravity,
-        storageKey: "previewAntigravityOff",
-        disclosure: "Reads live quota from the running Antigravity app on your Mac.",
-        help: "Requires the Antigravity app to be open."
-    )
-    .environmentObject(mockViewModel([]))
-    .frame(width: 640)
     .background(PadzyTheme.ground)
 }

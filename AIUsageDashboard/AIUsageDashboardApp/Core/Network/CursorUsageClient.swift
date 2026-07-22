@@ -38,7 +38,9 @@ public enum CursorUsageError: LocalizedError, Sendable {
 
 public actor CursorUsageClientImpl: CursorUsageClient {
     private let urlSession: URLSession
-    private let cooldownURL: URL
+    private let explicitCooldownURL: URL?
+    private let storageDirectory: URL
+    private let legacyCooldownStore: CooldownStore?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (TimeInterval) async -> Void
 
@@ -51,8 +53,32 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     ) {
+        self.init(
+            urlSession: urlSession,
+            explicitCooldownURL: cooldownURL,
+            storageDirectory: nil,
+            now: now,
+            sleep: sleep
+        )
+    }
+
+    internal init(
+        urlSession: URLSession,
+        explicitCooldownURL: URL?,
+        storageDirectory: URL?,
+        now: @escaping @Sendable () -> Date,
+        sleep: @escaping @Sendable (TimeInterval) async -> Void
+    ) {
         self.urlSession = urlSession
-        self.cooldownURL = cooldownURL ?? Self.defaultStorageURL(filename: "cursor-usage-cooldown.json")
+        self.explicitCooldownURL = explicitCooldownURL
+        let directory = storageDirectory ?? Self.defaultStorageDirectory()
+        self.storageDirectory = directory
+        self.legacyCooldownStore = explicitCooldownURL == nil
+            ? CooldownStore(
+                cooldownURL: directory.appendingPathComponent("cursor-usage-cooldown.json"),
+                now: now
+            )
+            : nil
         self.now = now
         self.sleep = sleep
     }
@@ -70,7 +96,8 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     }
 
     private func get(_ url: URL, cookie: String, accept: String) async throws -> Data {
-        if isCooldownActive(at: now()) {
+        let referenceDate = now()
+        if isCooldownActive(for: cookie, at: referenceDate) {
             throw CursorUsageError.cooldownActive
         }
 
@@ -95,61 +122,61 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             case 200..<300:
                 return data
             case 429:
-                let retryAfter = retryAfter(from: httpResponse)
+                let cooldownStore = self.cooldownStore(for: cookie)
+                let retryAfter = cooldownStore.retryAfter(from: httpResponse)
                 lastRetryAfter = retryAfter
                 if attempt < Self.maxAttempts {
-                    await sleep(min(retryAfter ?? Self.defaultCooldownInterval, Self.maxRetrySleepInterval))
+                    await sleep(min(retryAfter ?? cooldownStore.defaultCooldownInterval, Self.maxRetrySleepInterval))
                 }
             default:
                 throw CursorUsageError.httpStatus(httpResponse.statusCode)
             }
         }
 
-        try? persistCooldown(duration: lastRetryAfter)
+        cooldownStore(for: cookie).record(duration: lastRetryAfter)
         throw CursorUsageError.rateLimited(retryAfter: lastRetryAfter)
     }
 
-    private func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
-        guard let value = response.value(forHTTPHeaderField: "Retry-After")?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else { return nil }
-        if let seconds = TimeInterval(value) {
-            return max(0, seconds)
+    private func cooldownStore(for cookie: String) -> CooldownStore {
+        let url = explicitCooldownURL ?? perCookieCooldownURL(for: cookie)
+        return CooldownStore(cooldownURL: url, now: now)
+    }
+
+    private func perCookieCooldownURL(for cookie: String) -> URL {
+        let hash = CursorSession.identityHash(for: cookie)
+        return storageDirectory.appendingPathComponent("cursor-usage-cooldown-\(hash).json")
+    }
+
+    private func isCooldownActive(for cookie: String, at referenceDate: Date) -> Bool {
+        if cooldownStore(for: cookie).isActive(at: referenceDate) {
+            return true
         }
-        if let date = Self.httpDateFormatter.date(from: value) {
-            return max(0, date.timeIntervalSince(now()))
+        // Migration: an existing global cooldown file (pre-per-cookie schema) is
+        // honored for its remaining duration, then removed. New cooldowns are
+        // written per-cookie, so this fallback eventually disappears.
+        guard let legacy = legacyCooldownStore else { return false }
+        if legacy.isActive(at: referenceDate) {
+            return true
         }
-        return nil
+        // Once the legacy cooldown has elapsed, clean it up so it never becomes
+        // a permanently stuck file.
+        cleanupExpiredLegacyCooldownIfNeeded()
+        return false
     }
 
-    private func isCooldownActive(at referenceDate: Date) -> Bool {
-        guard let cooldown = try? readCooldown() else { return false }
-        return cooldown.until > referenceDate
+    private func cleanupExpiredLegacyCooldownIfNeeded() {
+        guard let legacy = legacyCooldownStore else { return }
+        legacy.remove()
     }
 
-    private func persistCooldown(duration: TimeInterval?) throws {
-        try FileManager.default.createDirectory(
-            at: cooldownURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let interval = min(Self.maxCooldownInterval, max(0, duration ?? Self.defaultCooldownInterval))
-        let data = try JSONEncoder.cursorUsageEncoder.encode(
-            CursorUsageCooldown(until: now().addingTimeInterval(interval))
-        )
-        try data.write(to: cooldownURL, options: .atomic)
-    }
-
-    private func readCooldown() throws -> CursorUsageCooldown {
-        let data = try Data(contentsOf: cooldownURL)
-        return try JSONDecoder.cursorUsageDecoder.decode(CursorUsageCooldown.self, from: data)
+    private static func defaultStorageDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("AIUsageDashboard", isDirectory: true)
     }
 
     private static func defaultStorageURL(filename: String) -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return base
-            .appendingPathComponent("AIUsageDashboard", isDirectory: true)
-            .appendingPathComponent(filename)
+        defaultStorageDirectory().appendingPathComponent(filename)
     }
 
     private static let usageEventsCSVURL = URL(
@@ -161,37 +188,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private static let maxAttempts = 3
-    private static let defaultCooldownInterval: TimeInterval = 5 * 60
-    private static let maxCooldownInterval: TimeInterval = 60 * 60
     private static let maxRetrySleepInterval: TimeInterval = 30
-    private static let httpDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter
-    }()
-}
-
-private struct CursorUsageCooldown: Codable {
-    let until: Date
-}
-
-private extension JSONEncoder {
-    static var cursorUsageEncoder: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
-}
-
-private extension JSONDecoder {
-    static var cursorUsageDecoder: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }
 }
 
 // MARK: - Token events (CSV)

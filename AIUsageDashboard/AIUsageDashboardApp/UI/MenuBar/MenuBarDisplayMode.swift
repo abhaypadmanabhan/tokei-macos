@@ -11,6 +11,8 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
     /// The single tightest quota window's % across all providers — the number
     /// that actually constrains you right now (#38).
     case tightestPercent
+    /// All-time tokens across available providers (#41).
+    case lifetime
     /// Just the mark. Tightest for a crowded menu bar.
     case iconOnly
 
@@ -24,6 +26,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .todayTokens: return "Today's tokens"
         case .tightestPercent: return "Tightest quota %"
+        case .lifetime: return "All-time tokens"
         case .iconOnly: return "Icon only"
         }
     }
@@ -33,6 +36,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable {
         switch self {
         case .todayTokens: return "Total tokens used today across your agents."
         case .tightestPercent: return "The fullest quota window — how close to a wall you are."
+        case .lifetime: return "Every token your agents have ever spent."
         case .iconOnly: return "Mark only, for the most compact menu bar."
         }
     }

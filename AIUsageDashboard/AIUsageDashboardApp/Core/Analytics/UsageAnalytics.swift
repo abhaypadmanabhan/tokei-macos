@@ -123,12 +123,27 @@ public enum UsageAnalytics {
         )
     }
 
+    /// Fold per-hour token totals into a fixed 7×24 weekday×hour grid, **restricted
+    /// to the requested range**. The hourly buckets carry their own dates, so a slot
+    /// only contributes when its calendar day falls inside the same window
+    /// `filteredDailyTotals` uses for the trend/stats — otherwise the punch-card would
+    /// always show all-time activity while the range control moved everything else
+    /// (the 2026-07-21 re-QA bug). `.lifetime` (the default) keeps the all-time fold,
+    /// so existing callers are unchanged.
     public static func heatmapMatrix(
         hourlyTotals: [Date: Int],
-        calendar: Calendar = .current
+        range: UsageRange = .lifetime,
+        calendar: Calendar = .current,
+        now: Date = Date()
     ) -> [[Int?]] {
+        let windowed = filteredHourlyTotals(
+            hourlyTotals,
+            range: dailyRange(for: range),
+            calendar: calendar,
+            now: now
+        )
         var matrix = Array(repeating: Array<Int?>(repeating: nil, count: 24), count: 7)
-        for (date, tokens) in hourlyTotals where tokens > 0 {
+        for (date, tokens) in windowed where tokens > 0 {
             let weekdayIndex = calendar.component(.weekday, from: date) - 1
             let hour = calendar.component(.hour, from: date)
             guard matrix.indices.contains(weekdayIndex), matrix[weekdayIndex].indices.contains(hour) else {
@@ -275,6 +290,45 @@ extension UsageAnalytics {
             let startDay = calendar.startOfDay(for: start)
             let endDay = calendar.startOfDay(for: end)
             return normalized.filter { $0.key >= startDay && $0.key <= endDay }
+        }
+    }
+
+    /// Filter per-hour buckets to those whose **calendar day** falls in `range`,
+    /// preserving each slot's original timestamp (so `heatmapMatrix` keeps its hour
+    /// resolution). Parallels `filteredDailyTotals` but never collapses to start-of-day.
+    static func filteredHourlyTotals(
+        _ hourlyTotals: [Date: Int],
+        range: DailyRange,
+        calendar: Calendar = .current,
+        now: Date = Date()
+    ) -> [Date: Int] {
+        switch range {
+        case .all:
+            return hourlyTotals
+        case .days(let days):
+            let today = calendar.startOfDay(for: now)
+            let start = calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? today
+            return hourlyTotals.filter { slot in
+                let day = calendar.startOfDay(for: slot.key)
+                return day >= start && day <= today
+            }
+        case .previousDays(let days):
+            let today = calendar.startOfDay(for: now)
+            guard let end = calendar.date(byAdding: .day, value: -days, to: today),
+                  let start = calendar.date(byAdding: .day, value: -(days * 2 - 1), to: today) else {
+                return [:]
+            }
+            return hourlyTotals.filter { slot in
+                let day = calendar.startOfDay(for: slot.key)
+                return day >= start && day <= end
+            }
+        case let .custom(start, end):
+            let startDay = calendar.startOfDay(for: start)
+            let endDay = calendar.startOfDay(for: end)
+            return hourlyTotals.filter { slot in
+                let day = calendar.startOfDay(for: slot.key)
+                return day >= startDay && day <= endDay
+            }
         }
     }
 

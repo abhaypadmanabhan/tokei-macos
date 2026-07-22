@@ -7,10 +7,17 @@ public actor QuotaSeriesStore {
     /// this preserves a bounded recent history without allowing the sidecar to grow forever.
     public static let defaultRetentionLimit = 20_000
 
+    /// Per-series cap `(providerID, windowType, bucketKey)`. A high-frequency series
+    /// can fill its own bucket but cannot evict samples from another series. The
+    /// existing `defaultRetentionLimit` remains the global backstop for total on-disk
+    /// size.
+    public static let defaultPerSeriesRetentionLimit = 2_000
+
     private let now: @Sendable () -> Date
     private let directory: URL
     private let fileName: String
     private let retentionLimit: Int
+    private let perSeriesRetentionLimit: Int
     private var samples: [QuotaSample] = []
     private var didLoad = false
 
@@ -18,7 +25,8 @@ public actor QuotaSeriesStore {
         now: @escaping @Sendable () -> Date = { Date() },
         directory: URL? = nil,
         fileName: String = "quota-series.json",
-        retentionLimit: Int = QuotaSeriesStore.defaultRetentionLimit
+        retentionLimit: Int = QuotaSeriesStore.defaultRetentionLimit,
+        perSeriesRetentionLimit: Int = QuotaSeriesStore.defaultPerSeriesRetentionLimit
     ) {
         self.now = now
         if let directory {
@@ -30,6 +38,7 @@ public actor QuotaSeriesStore {
         }
         self.fileName = fileName
         self.retentionLimit = max(1, retentionLimit)
+        self.perSeriesRetentionLimit = max(1, perSeriesRetentionLimit)
     }
 
     public func append(from snapshots: [ProviderSnapshot]) {
@@ -87,10 +96,28 @@ public actor QuotaSeriesStore {
     }
 
     private func enforceRetentionLimit() {
+        // Per-series cap first so a noisy series cannot evict another series' history.
+        // Within each series we keep the newest samples (oldest-first eviction).
+        var kept: [QuotaSample] = []
+        let grouped = Dictionary(grouping: samples) { seriesKey(for: $0) }
+        for (_, seriesSamples) in grouped {
+            let trimmed = seriesSamples
+                .sorted { $0.sampledAt < $1.sampledAt }
+                .suffix(perSeriesRetentionLimit)
+            kept.append(contentsOf: trimmed)
+        }
+        samples = kept.sorted { $0.sampledAt < $1.sampledAt }
+
+        // Global backstop; only trims when the per-series pass still leaves the
+        // total over the absolute cap.
         guard samples.count > retentionLimit else { return }
         samples = Array(samples
             .sorted { $0.sampledAt < $1.sampledAt }
             .suffix(retentionLimit))
+    }
+
+    private func seriesKey(for sample: QuotaSample) -> String {
+        "\(sample.providerID.rawValue)|\(sample.windowType.rawValue)|\(sample.bucketKey)"
     }
 
     private func persist() {

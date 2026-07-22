@@ -63,6 +63,8 @@ enum ProviderMetadata {
             return ["~/Library/Application Support/Antigravity/User/globalStorage/state.vscdb"]
         case .opencode:
             return ["~/.local/share/opencode"]
+        case .gemini:
+            return ["~/.gemini/oauth_creds.json"]
         }
     }
 

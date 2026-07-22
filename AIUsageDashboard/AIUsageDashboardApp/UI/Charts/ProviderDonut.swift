@@ -2,11 +2,11 @@ import SwiftUI
 import Charts
 import AIUsageDashboardCore
 
-/// Usage-by-provider donut (design spec §3): Swift Charts `SectorMark` slices in
-/// the pink-shade ramp, total in the center, external legend rows carrying
-/// name · % · absolute. Plain value inputs; slices ordered largest-first so the
-/// brightest shade always maps to the biggest share. Honest empty state when
-/// every share is zero.
+/// Usage-by-provider donut (WP-5 mockup): Swift Charts `SectorMark` slices coloured
+/// by each agent's `AgentTint` (identity colour, DATA — never the product accent or
+/// the legacy pink ramp), total in the center, external legend rows carrying
+/// tint · name · absolute · %. Plain value inputs; slices ordered largest-first.
+/// Honest empty state when every share is zero.
 struct ProviderDonut: View {
     let slices: [(provider: ProviderID, tokens: Int)]
 
@@ -22,14 +22,13 @@ struct ProviderDonut: View {
         let positive = slices.filter { $0.tokens > 0 }.sorted { $0.tokens > $1.tokens }
         let total = positive.reduce(0) { $0 + $1.tokens }
         guard total > 0 else { return [] }
-        let ramp = PadzyChartPalette.donutRamp(positive.count)
-        return positive.enumerated().map { index, slice in
+        return positive.map { slice in
             Slice(
                 id: slice.provider.rawValue,
                 name: displayName(slice.provider),
                 tokens: slice.tokens,
                 share: Double(slice.tokens) / Double(total) * 100,
-                color: ramp[index]
+                color: AgentTint.color(slice.provider)
             )
         }
     }
@@ -44,6 +43,7 @@ struct ProviderDonut: View {
         case .antigravity: return "Antigravity"
         case .cline: return "Cline"
         case .opencode: return "opencode"
+        case .gemini: return "Gemini"
         }
     }
 
@@ -95,18 +95,19 @@ struct ProviderDonut: View {
                         .frame(width: 8, height: 8)
                     Text(slice.name.uppercased())
                         .font(.mono(size: 10))
-                        .foregroundColor(PadzyTheme.muted)
+                        .foregroundColor(PadzyTheme.ink2)
                         .lineLimit(1)
                     Spacer(minLength: 8)
-                    Text("\(Int(round(slice.share)))%")
-                        .font(.mono(size: 10))
-                        .monospacedDigit()
-                        .foregroundColor(PadzyTheme.ink)
                     Text(TokenFormatter.format(slice.tokens))
                         .font(.mono(size: 10))
                         .monospacedDigit()
-                        .foregroundColor(PadzyTheme.muted)
-                        .frame(width: 48, alignment: .trailing)
+                        .foregroundColor(PadzyTheme.ink)
+                        .frame(width: 52, alignment: .trailing)
+                    Text("\(Int(round(slice.share)))%")
+                        .font(.mono(size: 10))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.ink4)
+                        .frame(width: 34, alignment: .trailing)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(slice.name), \(Int(round(slice.share))) percent, \(TokenFormatter.format(slice.tokens)) tokens")
