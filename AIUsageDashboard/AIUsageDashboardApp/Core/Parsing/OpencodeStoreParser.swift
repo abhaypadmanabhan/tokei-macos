@@ -229,14 +229,35 @@ public actor OpencodeStoreParser {
     }
 
     private func openDatabase(at url: URL) throws -> OpaquePointer {
+        // Open the temp copy as `immutable=1` rather than a bare read-only path.
+        // opencode.db is a large, hot WAL database; `SQLiteSidecarCopy` duplicates
+        // the `.db` then its `-wal`/`-shm` in sequence, so if opencode checkpoints
+        // mid-copy the copied sidecars no longer match the `.db` and a plain
+        // read-only open fails with "unable to open database file" (SQLITE_CANTOPEN).
+        // `immutable=1` tells SQLite the file cannot change, so it ignores the
+        // sidecars entirely and reads the committed image — trading at most a few
+        // un-checkpointed frames (negligible for usage counts) for an open that
+        // never races. Requires the URI opener; percent-encode the path.
+        let uri = "file:\(Self.percentEncodedForFileURI(url.path))?immutable=1"
         var database: OpaquePointer?
-        let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
+        let openResult = sqlite3_open_v2(
+            uri, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nil
+        )
         guard openResult == SQLITE_OK, let database else {
             let message = database.map { sqliteMessage($0) } ?? "unable to open copied opencode database"
             if let database { sqlite3_close(database) }
             throw OpencodeSQLiteReadError(message: message)
         }
         return database
+    }
+
+    /// Minimal encoding for a filesystem path embedded in a `file:` SQLite URI —
+    /// the temp-copy path is app-generated (a UUID dir), so only `%`/`?`/`#` and
+    /// spaces realistically need escaping, but encode conservatively.
+    private static func percentEncodedForFileURI(_ path: String) -> String {
+        let allowed = CharacterSet(charactersIn:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/")
+        return path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
     }
 
     // MARK: - JSON fallback
