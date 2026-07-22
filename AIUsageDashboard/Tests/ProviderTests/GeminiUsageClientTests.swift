@@ -61,6 +61,23 @@ final class GeminiUsageClientTests: XCTestCase {
         XCTAssertEqual(window.resetAt, ISO8601DateFormatter().date(from: "2026-07-13T12:30:00Z"))
     }
 
+    /// Regression (Macroscope): a fractional usedPercent must not round `used` and
+    /// `remaining` independently — 25.5% previously gave used 26 + remaining 75 = 101%.
+    func testDecodeQuotaWindowUsedAndRemainingSumToLimit() throws {
+        let json = """
+        { "quotaGroups": [ { "displayName": "Gemini", "buckets": [
+          { "bucketId": "b", "window": "daily", "usedPercent": 25.5, "resetTime": "2026-07-13T12:30:00Z" }
+        ] } ] }
+        """
+        let window = try XCTUnwrap(try GeminiUsageClientImpl.decodeQuotaWindows(Data(json.utf8)).first)
+        let used = try XCTUnwrap(window.used)
+        let remaining = try XCTUnwrap(window.remaining)
+        let limit = try XCTUnwrap(window.limit)
+        XCTAssertEqual(used, 26)
+        XCTAssertEqual(remaining, 74)
+        XCTAssertEqual(used + remaining, limit)
+    }
+
     func testDecodeQuotaWindowsUnrecognizedThrows() {
         let data = Data(GeminiFixtures.retrieveUserQuotaUnrecognizedJSON.utf8)
         XCTAssertThrowsError(try GeminiUsageClientImpl.decodeQuotaWindows(data)) { error in

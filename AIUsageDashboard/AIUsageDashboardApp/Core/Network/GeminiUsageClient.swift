@@ -275,12 +275,16 @@ public actor GeminiUsageClientImpl: QuotaProvider {
                     return nil
                 }
                 let clamped = min(100, max(0, usedPercent))
+                // Round `used` once and derive `remaining` from it so the two
+                // always sum to `limit` (100). Rounding both sides independently
+                // let e.g. 25.5% report used 26 + remaining 75 = 101% (Macroscope).
+                let usedRounded = clamped.rounded()
                 return QuotaWindow(
                     providerID: .gemini,
                     type: type,
-                    used: clamped.rounded(),
+                    used: usedRounded,
                     limit: 100,
-                    remaining: (100 - clamped).rounded(),
+                    remaining: 100 - usedRounded,
                     resetAt: resetAt,
                     confidence: .providerReported,
                     source: "gemini-cli",
