@@ -13,8 +13,8 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.5.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.6.0"
+    CURRENT_PROJECT_VERSION: "4"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"

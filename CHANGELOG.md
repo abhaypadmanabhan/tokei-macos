@@ -3,9 +3,20 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
-## [Unreleased] — on `dev` (2026-07-19 wave)
+## [0.6.0] — 2026-07-21 (release candidate)
 
-Audit trail: `tasks/patch-bibles/2026-07-19.md`. Awaiting manual QA (`/dev-approved`).
+Prepared via `/dev-approved`. On `dev`, PR dev → main; **not yet merged to `main` or
+tagged.** Audit trail: `tasks/patch-bibles/2026-07-19.md`. Manual QA completed against the
+`dev` Debug build. **Supersedes the 0.5.0 RC (PR #50) — all of 0.5.0 (Gemini connector,
+LiteLLM pricing, menu-bar fixes; see below) ships as part of 0.6.0.**
+
+### Fixed (provider connections — 2026-07-21 audit, live-verified)
+- **opencode database now reads.** Large hot WAL databases intermittently failed with
+  "unable to open database file"; the copied DB is now opened `immutable=1`, ignoring
+  mismatched WAL sidecars. Verified reading 165.9M lifetime tokens where it previously
+  errored.
+- **Claude auth state honest.** `authStatus` reported `.unknown` ("not signed in") even
+  while live quota flowed; now `.authenticated` on a successful live-quota fetch.
 
 ### Changed
 - **New brand identity.** Rebranded to the red/black split-square + white swoosh mark:
