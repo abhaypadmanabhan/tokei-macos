@@ -4,6 +4,9 @@ import AIUsageDashboardCore
 struct DashboardView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// False when the app is idling in the menu bar; stops the status-dot pulse so
+    /// its `repeatForever` animation isn't left churning on the retained window.
+    @Environment(\.dashboardVisible) private var dashboardVisible
 
     /// Local top-level navigation. `Core` is untouched; `.settings` is mirrored
     /// into `viewModel.showingSettings` so existing Core consumers stay in sync.
@@ -72,23 +75,31 @@ struct DashboardView: View {
 
     var body: some View {
         ZStack {
-            shell
+            if dashboardVisible {
+                shell
 
-            // Settings drawer — driven directly by `viewModel.showingSettings`
-            // (the gear toggles it; the menu-bar Settings action sets it true).
-            if viewModel.showingSettings {
-                SettingsDrawer(
-                    onClose: { viewModel.showingSettings = false },
-                    onOpenAgents: { select(tab: .agents) }
-                )
-                .zIndex(1)
-            }
-
-            // Add-agent drawer — driven by the shell's `showingAddAgent` flag,
-            // shared by Overview's blank canvas and the Agents tab's + button.
-            if showingAddAgent {
-                AddAgentDrawer(onClose: { showingAddAgent = false })
+                // Settings drawer — driven directly by `viewModel.showingSettings`
+                // (the gear toggles it; the menu-bar Settings action sets it true).
+                if viewModel.showingSettings {
+                    SettingsDrawer(
+                        onClose: { viewModel.showingSettings = false },
+                        onOpenAgents: { select(tab: .agents) }
+                    )
                     .zIndex(1)
+                }
+
+                // Add-agent drawer — driven by the shell's `showingAddAgent` flag,
+                // shared by Overview's blank canvas and the Agents tab's + button.
+                if showingAddAgent {
+                    AddAgentDrawer(onClose: { showingAddAgent = false })
+                        .zIndex(1)
+                }
+            } else {
+                // Idling in the menu bar. The dashboard is a retained `Window` scene,
+                // so its whole graph — charts, status strip, relative-time labels —
+                // keeps re-rendering off screen and burns CPU for nothing. Collapse to
+                // a static fill while hidden; the shell rebuilds the moment it's shown.
+                PadzyTheme.ground
             }
         }
         .frame(minWidth: 640, minHeight: 480)
