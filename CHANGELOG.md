@@ -3,10 +3,13 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
-## [Unreleased] (dev) — 2026-07-22
+## [0.6.1] — 2026-07-23 (release candidate)
 
-Integrated via `/agents-done`. On `dev` (`804f28d`), **not on `main`**. Audit trail:
-`tasks/patch-bibles/2026-07-22.md`. Manual QA pending against the `dev` Debug build.
+Prepared via `/dev-approved`. On `dev`, PR dev → main; **not yet merged to `main` or
+tagged.** Supersedes the unshipped 0.6.0 RC (never merged/tagged) — all of 0.6.0 ships as
+part of 0.6.1. Audit trail: `tasks/patch-bibles/2026-07-22.md`. **Manual QA completed**
+against the `dev` Debug build — the overheat fix verified live (idle CPU 0%). Security
+review + /simplify pass clean. Build 5.
 
 ### Fixed
 - **P0 — app no longer overheats the machine (the dominant cause).** A CPU sampler on
