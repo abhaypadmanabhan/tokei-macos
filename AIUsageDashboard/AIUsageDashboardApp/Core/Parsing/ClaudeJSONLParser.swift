@@ -130,6 +130,11 @@ public actor ClaudeJSONLParser {
             }
         }
 
+        // Evict cache entries for files no longer present so the cache can't grow
+        // unbounded across a long-running session as Claude rotates project logs.
+        let activePaths = Set(logSources.map(\.url.path))
+        fileCache = fileCache.filter { activePaths.contains($0.key) }
+
         let snapshot = windows.snapshot()
         return AggregateUsage(
             today: snapshot.today,

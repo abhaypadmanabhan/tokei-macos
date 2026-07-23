@@ -157,6 +157,12 @@ public actor CodexJSONLParser {
             }
         }
 
+        // Evict cache entries for files no longer present so the cache can't grow
+        // unbounded — Codex creates a new per-session log file continually, and a
+        // long-running menu-bar app would otherwise retain every one ever seen.
+        let activePaths = Set(logSources.map(\.url.path))
+        fileCache = fileCache.filter { activePaths.contains($0.key) }
+
         let snapshot = windows.snapshot()
         return AggregateUsage(
             today: snapshot.today,
