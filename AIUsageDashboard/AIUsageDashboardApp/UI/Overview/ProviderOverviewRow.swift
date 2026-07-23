@@ -209,6 +209,15 @@ struct ProviderOverviewRow: View {
                     .buttonStyle(.plain)
                     .accessibilityHint("Opens Connections")
                 }
+            } else if providerID == .gemini {
+                // Gemini quota needs a one-time CLI sign-in (#54) — the generic
+                // "LOCAL LOGS ONLY" muted state would be misleading here since
+                // there's a real, cheap fix the user can take right now.
+                Text("Run `gemini` and sign in to enable Gemini quota")
+                    .font(.mono(size: 11))
+                    .foregroundColor(PadzyTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             } else {
                 // codex / cline expose no online connector — honest muted state, no
                 // dead-end Connect button routing to a screen without their row.

@@ -225,6 +225,16 @@ struct ConnectionRow: View {
             }
             .fixedSize()
             .help(Self.liveDisclosure(for: providerID))
+        } else if providerID == .gemini {
+            // Gemini quota needs a one-time CLI sign-in (#54) — surface the fix
+            // here instead of the generic local-only state, which would read as
+            // "nothing to do" when there actually is.
+            Text("Run `gemini` and sign in to enable Gemini quota")
+                .font(.mono(size: 9.5))
+                .tracking(9.5 * 0.1)
+                .foregroundColor(PadzyTheme.ink5)
+                .lineLimit(1)
+                .truncationMode(.tail)
         } else {
             Text("LOCAL LOGS ONLY")
                 .font(.mono(size: 9.5))

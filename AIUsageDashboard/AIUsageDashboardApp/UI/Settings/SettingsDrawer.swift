@@ -141,9 +141,26 @@ struct SettingsDrawer: View {
 
             VStack(spacing: PadzySpace.s) {
                 ForEach(activeProviders, id: \.self) { id in
-                    PlanCostDrawerRow(providerID: id, displayName: displayName(id), store: planCosts)
+                    PlanCostDrawerRow(
+                        providerID: id,
+                        displayName: displayName(id),
+                        store: planCosts,
+                        detected: detectedPlan(for: id)
+                    )
                 }
             }
+        }
+    }
+
+    /// Detection dispatch seam: one provider wired (Cursor, from its already-parsed
+    /// plan label), the rest are `PlanDetector`'s research stubs (`nil` for now).
+    private func detectedPlan(for id: ProviderID) -> DetectedPlan? {
+        switch id {
+        case .cursor:
+            let planLabel = viewModel.snapshot(for: .cursor)?.quotaWindows.first?.label
+            return PlanDetector.detectCursorPlan(planLabel: planLabel)
+        default:
+            return nil
         }
     }
 
@@ -359,63 +376,158 @@ struct SettingsDrawer: View {
 /// Empty input clears the key — blank is "unset", distinct from "$0", and only
 /// `nil` says the former, so the Value pane can tell them apart. Unparseable input
 /// reverts to the stored value rather than writing garbage.
+///
+/// A preset menu (when the provider has a known catalog) prefills the field on
+/// selection — an explicit pick commits immediately, same as typing. A `detected`
+/// plan (best-effort, from `PlanDetector`) only ever prefills an *unset* field: the
+/// row shows it badged and un-persisted until the user actually interacts with the
+/// field (focuses it) — closing the drawer without touching it writes nothing, so
+/// detection can never silently overwrite or fabricate a value (#51).
 private struct PlanCostDrawerRow: View {
     let providerID: ProviderID
     let displayName: String
     let store: MaxxerPlanCostStore
+    let detected: DetectedPlan?
 
     @State private var text: String = ""
+    @State private var hasInteracted = false
     @FocusState private var isFocused: Bool
 
+    private var presets: [PlanPreset] { PlanPresetCatalog.presets(for: providerID.rawValue) }
+
+    /// `nil` once a value is saved — detection never overwrites it.
+    private var suggestion: DetectedPlan? {
+        PlanDetector.suggestedPlan(existingValue: store.monthlyUSD(for: providerID.rawValue), detected: detected)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            ProviderBrandMark.tinted(providerID, size: 22)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 12) {
+                ProviderBrandMark.tinted(providerID, size: 22)
 
-            Text(displayName)
-                .font(.sans(size: 13))
-                .foregroundColor(PadzyTheme.ink2)
-                .lineLimit(1)
+                Text(displayName)
+                    .font(.sans(size: 13))
+                    .foregroundColor(PadzyTheme.ink2)
+                    .lineLimit(1)
 
-            Spacer(minLength: 8)
+                Spacer(minLength: 8)
 
-            HStack(spacing: 3) {
-                Text("$")
-                    .font(.mono(size: 11))
-                    .foregroundColor(text.isEmpty ? PadzyTheme.ink5 : PadzyTheme.ink2)
-                TextField("unset", text: $text)
-                    .textFieldStyle(.plain)
-                    .font(.mono(size: 11))
-                    .monospacedDigit()
-                    .multilineTextAlignment(.trailing)
-                    .foregroundColor(PadzyTheme.ink)
-                    .frame(width: 50)
-                    .focused($isFocused)
-                    .onSubmit { commit() }
-                    .accessibilityLabel("\(displayName) monthly plan cost in US dollars")
-                Text("/mo")
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.ink5)
+                if !presets.isEmpty {
+                    presetMenu
+                }
+                priceField
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                    .fill(PadzyTheme.statusBar)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                    .stroke(isFocused ? PadzyTheme.accent : PadzyTheme.border2, lineWidth: 1)
-            )
+
+            if let suggestion {
+                detectedCaption(suggestion)
+            }
         }
-        .onAppear { text = Self.fieldText(store.monthlyUSD(for: providerID.rawValue)) }
+        .onAppear {
+            text = Self.fieldText(store.monthlyUSD(for: providerID.rawValue) ?? suggestion?.monthlyUSD)
+        }
         .onChange(of: isFocused) { _, focused in
-            if !focused { commit() }
+            if focused {
+                hasInteracted = true
+            } else {
+                commit()
+            }
         }
         // The drawer can be torn down without a focus change firing.
         .onDisappear { commit() }
     }
 
+    private var priceField: some View {
+        HStack(spacing: 3) {
+            Text("$")
+                .font(.mono(size: 11))
+                .foregroundColor(text.isEmpty ? PadzyTheme.ink5 : PadzyTheme.ink2)
+            TextField("unset", text: $text)
+                .textFieldStyle(.plain)
+                .font(.mono(size: 11))
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+                .foregroundColor(PadzyTheme.ink)
+                .frame(width: 50)
+                .focused($isFocused)
+                .onSubmit { commit() }
+                .accessibilityLabel("\(displayName) monthly plan cost in US dollars")
+            Text("/mo")
+                .font(.mono(size: 10))
+                .foregroundColor(PadzyTheme.ink5)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                .fill(PadzyTheme.statusBar)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
+                .stroke(isFocused ? PadzyTheme.accent : PadzyTheme.border2, lineWidth: 1)
+        )
+    }
+
+    /// Known-plan picker — a plain chip menu, not a text hint, so it stays legible
+    /// in the drawer's tight width. Selecting an entry is an explicit user action
+    /// (like typing a price) and commits immediately.
+    private var presetMenu: some View {
+        Menu {
+            ForEach(presets) { preset in
+                Button("\(preset.label) · $\(Self.fieldText(preset.monthlyUSD))/mo") {
+                    applyPreset(preset.monthlyUSD)
+                }
+            }
+        } label: {
+            Text("PRESET")
+                .font(.mono(size: 8.5))
+                .tracking(8.5 * 0.08)
+                .foregroundColor(PadzyTheme.ink4)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                        .stroke(PadzyTheme.border2, lineWidth: 1)
+                )
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("\(displayName) plan presets")
+    }
+
+    /// Subtle disclosure for an un-persisted detected suggestion — never a second
+    /// accent hue, just a bordered mono kicker plus its source.
+    private func detectedCaption(_ plan: DetectedPlan) -> some View {
+        HStack(spacing: 6) {
+            Text("DETECTED")
+                .font(.mono(size: 8.5))
+                .tracking(8.5 * 0.08)
+                .foregroundColor(PadzyTheme.ink5)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .overlay(
+                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                        .stroke(PadzyTheme.border2, lineWidth: 1)
+                )
+            Text("from \(plan.source) — edit or leave as-is to confirm")
+                .font(.sans(size: 10))
+                .foregroundColor(PadzyTheme.ink5)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 34)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func applyPreset(_ amount: Double) {
+        hasInteracted = true
+        text = Self.fieldText(amount)
+        store.setMonthlyUSD(amount, for: providerID.rawValue)
+    }
+
     private func commit() {
+        // An un-persisted detected suggestion the user never touched: leave it
+        // alone rather than writing it on a stray blur/teardown.
+        guard hasInteracted || suggestion == nil else { return }
+
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmed.isEmpty else {
