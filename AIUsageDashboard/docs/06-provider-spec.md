@@ -9,6 +9,8 @@ enum ProviderID {
     case cursor
     case antigravity
     case cline
+    case opencode
+    case gemini
 }
 ```
 
@@ -155,6 +157,13 @@ protocol TokenUsageProvider {
 - Skeleton only in MVP.
 - Support per-model quota window type in the model layer.
 - Document research TODOs in code comments.
+
+### Gemini
+- Source: `~/.gemini/oauth_creds.json` written by the official Gemini CLI.
+- Read-only: Tokei reads the CLI's credential file and never writes it or persists tokens elsewhere.
+- Auth: if `oauth_creds.json` is missing, empty, or unparseable, surface `GeminiUsageError.notAuthenticated` — **"Gemini CLI is not signed in on this machine."**
+- Refresh: if the stored access token expires, surface `GeminiUsageError.tokenRefreshUnavailable` — **"Gemini access token expired and cannot be refreshed automatically."** The gemini-cli OAuth client secret is intentionally not bundled (the no-secret gate), so Tokei cannot refresh an expired token silently. The supported recovery is re-running `gemini` to refresh `~/.gemini/oauth_creds.json`.
+- Live quota comes from the Code Assist backend via `GeminiUsageClientImpl`; keep endpoint logic isolated in the adapter.
 
 ## Raw Response Storage
 

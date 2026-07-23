@@ -6,11 +6,13 @@ import Sparkle
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = DashboardViewModel()
+    @StateObject private var windowVisibility = WindowVisibilityMonitor()
 
     var body: some Scene {
         Window("Tokei", id: "dashboard-window") {
             DashboardView()
                 .environmentObject(viewModel)
+                .environment(\.dashboardVisible, windowVisibility.isVisible)
         }
         .windowStyle(.titleBar)
         // Free-resize down to the DashboardView's 640×480 minimum (and up to
@@ -27,6 +29,7 @@ struct AIUsageDashboardApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(viewModel)
+                .environment(\.dashboardVisible, windowVisibility.isVisible)
         } label: {
             MenuBarLabel()
                 .environmentObject(viewModel)

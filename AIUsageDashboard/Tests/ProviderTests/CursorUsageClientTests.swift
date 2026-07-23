@@ -313,6 +313,52 @@ final class CursorUsageClientImplTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path), "expired legacy cooldown must be removed")
     }
 
+    func testMalformedCooldownFilesTreatedAsNoCooldown() async throws {
+        let cookieA = "WorkosCursorSessionToken=user_a%3A%3Ajwt-a"
+        let hash = CursorSession.identityHash(for: "user_a")
+        let perCookieURL = tempDirectory.appendingPathComponent("cursor-usage-cooldown-\(hash).json")
+        let legacyURL = tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
+        try Data("not-json{{{".utf8).write(to: perCookieURL, options: .atomic)
+        try Data("{broken".utf8).write(to: legacyURL, options: .atomic)
+
+        let client = makePerCookieClient()
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(CursorFixtures.usageSummary.utf8), statusCode: 200)
+        ]
+        let data = try await client.fetchUsageSummary(cookie: cookieA)
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1)
+        // Corrupt legacy file is inactive → cleaned up on first check.
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+    }
+
+    func testCooldownSurvivesJWTRefreshForSameAccount() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+        ]
+        let client = makePerCookieClient()
+        let cookieWithJWT1 = "WorkosCursorSessionToken=user_a%3A%3Ajwt-v1"
+        let cookieWithJWT2 = "WorkosCursorSessionToken=user_a%3A%3Ajwt-v2"
+
+        do {
+            _ = try await client.fetchUsageSummary(cookie: cookieWithJWT1)
+            XCTFail("expected rateLimited")
+        } catch CursorUsageError.rateLimited {
+            // Expected.
+        }
+
+        // Same durable userId, rotated JWT — must still be gated by the same file.
+        do {
+            _ = try await client.fetchUsageSummary(cookie: cookieWithJWT2)
+            XCTFail("expected cooldownActive")
+        } catch CursorUsageError.cooldownActive {
+            // Expected.
+        }
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 3)
+    }
+
     private var cooldownURL: URL {
         tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
     }

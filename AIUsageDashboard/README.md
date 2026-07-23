@@ -59,6 +59,18 @@ cd AIUsageDashboard
 xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test
 ```
 
+## Enable Gemini (optional)
+
+Gemini quota tracking is powered by the official [Google Gemini CLI](https://github.com/google-gemini/gemini-cli). Tokei reads the OAuth credentials that the CLI writes to `~/.gemini/oauth_creds.json`; it never writes that file or stores tokens anywhere else.
+
+1. Install and run `gemini` in Terminal.
+2. Complete the OAuth sign-in flow.
+3. Return to Tokei — the Gemini provider now shows live quota.
+
+If `~/.gemini/oauth_creds.json` is missing or unreadable, Tokei reports **"Gemini CLI is not signed in on this machine."** This is the expected empty state; sign in with `gemini` to resolve it.
+
+If your access token expires, Tokei reports **"Gemini access token expired and cannot be refreshed automatically."** Tokei intentionally does not bundle the gemini-cli OAuth client secret (the no-secret gate), so it cannot silently refresh an expired token. The supported recovery is to re-run `gemini` once; the CLI refreshes the token in `~/.gemini/oauth_creds.json`, and Tokei reads it on the next sync.
+
 ## What Works (MVP, verified 2026-07-06)
 
 - **Claude Code** tracking end-to-end from local JSONL (`~/.claude/projects`): real schema, dedupe by `message.id`/`requestId`/`uuid`, fractional-second ISO8601 timestamps, malformed-line warnings. Verified against an independent baseline (<0.1% divergence).

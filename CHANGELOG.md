@@ -3,6 +3,54 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.6.1] — 2026-07-23 (release candidate)
+
+Prepared via `/dev-approved`. On `dev`, PR dev → main; **not yet merged to `main` or
+tagged.** Supersedes the unshipped 0.6.0 RC (never merged/tagged) — all of 0.6.0 ships as
+part of 0.6.1. Audit trail: `tasks/patch-bibles/2026-07-22.md`. **Manual QA completed**
+against the `dev` Debug build — the overheat fix verified live (idle CPU 0%). Security
+review + /simplify pass clean. Build 5.
+
+### Fixed
+- **P0 — app no longer overheats the machine (the dominant cause).** A CPU sampler on
+  the running build put the entire idle burn in **SwiftUI ViewGraph rendering**, not
+  parsing: the dashboard is a `Window` scene whose view graph is retained when the window
+  closes, so its live content (per-second countdown `TimelineView`s, Swift Charts, a
+  `repeatForever` status-dot pulse, a content-width `GeometryReader`) kept re-rendering
+  forever — ~20–24% CPU as a background menu-bar app with no window open. `DashboardView`
+  now gates its whole content on `NSApplication.occlusionState` (new `WindowVisibilityMonitor`):
+  off screen it collapses to a static fill and tears down the graph. **Measured: idle
+  (window closed) ~20% → 0%; window-open ~11%.**
+- **P0 (secondary) — parser CPU on large actively-written logs.** Both JSONL parsers now
+  cache per-file aggregates and stop full-re-parsing large logs every sync.
+  - *Claude* (`000f393`): per-file cache keyed by mtime+size; grown files resume from the
+    last byte offset via `FileHandle.seek`; rotated/truncated files fall back to a full parse.
+  - *Codex* (#55): same pattern plus inode + a 4 KiB continuity-tail check to detect
+    same-inode rewrites; additive delta/daily/hourly sums with timestamp "latest-wins"
+    re-derived at combine time for per-session final totals and rate-limit snapshots.
+    Steady-state syncs do zero content reads when mtime+size+inode match. (CPU before ~11%;
+    after-sample to be captured in manual QA.)
+- **Cursor cooldown keyed by durable account id (#49).** The per-cookie usage cooldown now
+  hashes the stable WorkOS `userId` instead of the full cookie/JWT, so a refreshed token for
+  the same account reuses its cooldown file and one account's 429 never blocks another. Raw
+  cookie never touches disk or logs. Legacy global cooldown file honored then migrated.
+
+### Added
+- **Plan-cost presets + best-effort detection (#51).** Settings plan-cost rows gain a
+  known-plan preset picker (published per-provider prices) and a badged, un-persisted
+  "detected" suggestion (Cursor wired from its reported plan label; other providers stubbed
+  to `nil`). Detection never overwrites a user-entered value and never fabricates `$0`.
+
+### Documented
+- **Gemini one-time CLI sign-in (#54).** README + provider-spec now cover enabling Gemini
+  (`~/.gemini/oauth_creds.json`), the "not signed in" empty state, and the re-run-`gemini`
+  token-refresh recovery (the OAuth client secret is intentionally unbundled). A matching
+  provider-row hint replaces the misleading "LOCAL LOGS ONLY" state for Gemini.
+
+### Website (separate repo, not in this app build)
+- Versioned the previously-untracked `website/` (baseline `bc9fd31`) and landed an
+  Awwwards-direction narrative + texture pass on `rebuild/awwwards` (not pushed/deployed).
+
 ## [0.6.0] — 2026-07-21 (release candidate)
 
 Prepared via `/dev-approved`. On `dev`, PR dev → main; **not yet merged to `main` or

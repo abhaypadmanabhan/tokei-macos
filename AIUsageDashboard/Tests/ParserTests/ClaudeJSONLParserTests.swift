@@ -29,6 +29,18 @@ final class ClaudeJSONLParserTests: XCTestCase {
     LogSource(providerID: .claudeCode, url: url, sessionID: sessionID)
   }
 
+  private func makeSourceWithModificationDate(url: URL, sessionID: String = "test-session") -> LogSource {
+    let modificationDate = try? url.resourceValues(
+      forKeys: [.contentModificationDateKey]
+    ).contentModificationDate
+    return LogSource(
+      providerID: .claudeCode,
+      url: url,
+      sessionID: sessionID,
+      lastModified: modificationDate
+    )
+  }
+
   private func referenceNow() -> Date {
     var comps = DateComponents()
     comps.year = 2026
@@ -198,5 +210,29 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(usage.lifetime.inputTokens, 100)
     XCTAssertEqual(usage.lifetime.outputTokens, 50)
     XCTAssertEqual(usage.lifetime.totalTokens, 180)
+  }
+
+  func testIncrementalParseResumesAppendedLogs() async {
+    let parser = makeParser()
+    let baseLine = """
+    {"message":{"id":"msg_base","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_base","type":"assistant","uuid":"uuid-base","timestamp":"2026-07-06T10:00:00.000Z"}
+    """
+    let url = writeFixture(baseLine, named: "incremental.jsonl")
+    let source = makeSourceWithModificationDate(url: url, sessionID: "s1")
+    let first = await parser.parse(logSources: [source])
+    XCTAssertEqual(first.lifetime.totalTokens, 15)
+
+    let appendedLine = """
+    {"message":{"id":"msg_appended","usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_appended","type":"assistant","uuid":"uuid-appended","timestamp":"2026-07-06T11:00:00.000Z"}
+    """
+    if let handle = try? FileHandle(forWritingTo: url) {
+      handle.seekToEndOfFile()
+      handle.write(Data("\n\(appendedLine)".utf8))
+      handle.closeFile()
+    }
+
+    let updatedSource = makeSourceWithModificationDate(url: url, sessionID: "s1")
+    let second = await parser.parse(logSources: [updatedSource])
+    XCTAssertEqual(second.lifetime.totalTokens, 45)
   }
 }

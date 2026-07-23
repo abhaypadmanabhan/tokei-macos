@@ -9,8 +9,26 @@ enum LineParseOutcome: Sendable {
 extension ClaudeJSONLParser {
     /// Streams a JSONL file line-by-line using URL.lines. Never loads the entire file into memory.
     func parseFile(at url: URL, onRecord: (ClaudeUsageRecord) -> Void) async throws -> Int {
+        try await parseFile(at: url, startingAtByte: 0, onRecord: onRecord).malformedCount
+    }
+
+    /// Streams a JSONL file starting at `byteOffset` (useful for append-only logs that have
+    /// already been partially parsed). Returns the number of malformed lines and the final
+    /// file offset reached, so callers can resume from the end on the next sync.
+    func parseFile(
+        at url: URL,
+        startingAtByte byteOffset: UInt64,
+        onRecord: (ClaudeUsageRecord) -> Void
+    ) async throws -> (malformedCount: Int, finalOffset: UInt64) {
         var malformedCount = 0
-        for try await line in url.lines {
+        let fileHandle = try FileHandle(forReadingFrom: url)
+        defer { fileHandle.closeFile() }
+
+        if byteOffset > 0 {
+            try? fileHandle.seek(toOffset: byteOffset)
+        }
+
+        for try await line in fileHandle.bytes.lines {
             guard let data = line.data(using: .utf8) else { continue }
             switch parseLine(data) {
             case .usage(let record):
@@ -21,7 +39,9 @@ extension ClaudeJSONLParser {
                 malformedCount += 1
             }
         }
-        return malformedCount
+
+        let finalOffset = (try? fileHandle.offsetInFile) ?? byteOffset
+        return (malformedCount, finalOffset)
     }
 
     func parseLine(_ data: Data) -> LineParseOutcome {

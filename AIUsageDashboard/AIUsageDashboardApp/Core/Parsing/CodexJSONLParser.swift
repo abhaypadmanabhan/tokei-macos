@@ -17,6 +17,11 @@ public actor CodexJSONLParser {
     private let calendar: Calendar
     private let now: () -> Date
 
+    /// Caches per-file aggregates so unchanged logs are not re-parsed on every sync.
+    /// Each entry retains additive usage plus the per-file latest-wins values needed
+    /// to reconstruct the global result.
+    private var fileCache: [String: FileCacheEntry] = [:]
+
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
         self.now = now
@@ -26,42 +31,123 @@ public actor CodexJSONLParser {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
+        var hourlyTotals: [Date: Int] = [:]
         var latestRateLimits: CodexRateLimitSnapshot?
         var deltaReportedTotalTokens = 0
         var finalTotalsBySession: [String: CodexSessionFinalTotal] = [:]
 
         for source in logSources {
-            do {
-                let malformedCount = try await parseFile(at: source.url) { record in
-                    windows.accumulate(
-                        record.deltaUsage,
-                        timestamp: record.timestamp,
-                        dailyTotal: record.deltaReportedTotalTokens
-                    )
-                    deltaReportedTotalTokens += record.deltaReportedTotalTokens
+            let path = source.url.path
+            let currentModificationDate = source.lastModified
+            let currentMetadata = fileMetadata(of: source.url)
+            let currentSize = currentMetadata.size
 
-                    if let cumulativeTotal = record.cumulativeReportedTotalTokens {
-                        let key = source.sessionID ?? source.url.path
-                        let current = finalTotalsBySession[key]
-                        if current == nil || record.isNewerThan(current!) {
-                            finalTotalsBySession[key] = CodexSessionFinalTotal(
-                                timestamp: record.timestamp,
-                                totalTokens: cumulativeTotal
-                            )
-                        }
-                    }
-
-                    if let rateLimits = record.rateLimits,
-                       latestRateLimits == nil || rateLimits.timestamp > latestRateLimits!.timestamp {
-                        latestRateLimits = rateLimits
-                    }
+            if let cached = fileCache[path],
+               cached.modificationDate == currentModificationDate,
+               cached.byteOffset == currentSize,
+               cached.fileIdentifier == currentMetadata.identifier {
+                apply(
+                    cached.aggregate,
+                    to: &windows,
+                    hourlyTotals: &hourlyTotals,
+                    latestRateLimits: &latestRateLimits,
+                    deltaReportedTotalTokens: &deltaReportedTotalTokens,
+                    finalTotalsBySession: &finalTotalsBySession
+                )
+                if cached.malformedCount > 0 {
+                    warnings.append(malformedWarning(count: cached.malformedCount, url: source.url))
                 }
+                continue
+            }
 
-                if malformedCount > 0 {
-                    warnings.append(ProviderWarning(
-                        message: "\(source.url.lastPathComponent): \(malformedCount) malformed line(s) skipped",
-                        level: .warning
-                    ))
+            do {
+                var incrementalAggregate = FileAggregate.empty
+                let sessionKey = source.sessionID ?? path
+                let parseResult: (malformedCount: Int, finalOffset: UInt64)
+
+                if let cached = fileCache[path],
+                   let cachedModificationDate = cached.modificationDate,
+                   let currentModificationDate,
+                   currentModificationDate >= cachedModificationDate,
+                   cached.byteOffset < currentSize,
+                   cached.byteOffset > 0,
+                   cached.fileIdentifier == currentMetadata.identifier,
+                   try continuityTail(at: source.url, endingAt: cached.byteOffset)
+                    == cached.continuityTail {
+                    parseResult = try await parseFile(
+                        at: source.url,
+                        startingAtByte: cached.byteOffset
+                    ) { [self] record in
+                        self.accumulate(
+                            into: &incrementalAggregate,
+                            record: record,
+                            sessionKey: sessionKey
+                        )
+                    }
+
+                    var updatedAggregate = cached.aggregate
+                    merge(incrementalAggregate, into: &updatedAggregate)
+                    let updatedEntry = FileCacheEntry(
+                        modificationDate: currentModificationDate,
+                        byteOffset: parseResult.finalOffset,
+                        fileIdentifier: currentMetadata.identifier,
+                        continuityTail: try continuityTail(
+                            at: source.url,
+                            endingAt: parseResult.finalOffset
+                        ),
+                        aggregate: updatedAggregate,
+                        malformedCount: cached.malformedCount + parseResult.malformedCount
+                    )
+                    fileCache[path] = updatedEntry
+                    apply(
+                        updatedEntry.aggregate,
+                        to: &windows,
+                        hourlyTotals: &hourlyTotals,
+                        latestRateLimits: &latestRateLimits,
+                        deltaReportedTotalTokens: &deltaReportedTotalTokens,
+                        finalTotalsBySession: &finalTotalsBySession
+                    )
+                    if updatedEntry.malformedCount > 0 {
+                        warnings.append(malformedWarning(
+                            count: updatedEntry.malformedCount,
+                            url: source.url
+                        ))
+                    }
+                } else {
+                    parseResult = try await parseFile(
+                        at: source.url,
+                        startingAtByte: 0
+                    ) { [self] record in
+                        self.accumulate(
+                            into: &incrementalAggregate,
+                            record: record,
+                            sessionKey: sessionKey
+                        )
+                    }
+
+                    let entry = FileCacheEntry(
+                        modificationDate: currentModificationDate,
+                        byteOffset: parseResult.finalOffset,
+                        fileIdentifier: currentMetadata.identifier,
+                        continuityTail: try continuityTail(
+                            at: source.url,
+                            endingAt: parseResult.finalOffset
+                        ),
+                        aggregate: incrementalAggregate,
+                        malformedCount: parseResult.malformedCount
+                    )
+                    fileCache[path] = entry
+                    apply(
+                        entry.aggregate,
+                        to: &windows,
+                        hourlyTotals: &hourlyTotals,
+                        latestRateLimits: &latestRateLimits,
+                        deltaReportedTotalTokens: &deltaReportedTotalTokens,
+                        finalTotalsBySession: &finalTotalsBySession
+                    )
+                    if entry.malformedCount > 0 {
+                        warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
+                    }
                 }
             } catch {
                 warnings.append(ProviderWarning(
@@ -71,6 +157,12 @@ public actor CodexJSONLParser {
             }
         }
 
+        // Evict cache entries for files no longer present so the cache can't grow
+        // unbounded — Codex creates a new per-session log file continually, and a
+        // long-running menu-bar app would otherwise retain every one ever seen.
+        let activePaths = Set(logSources.map(\.url.path))
+        fileCache = fileCache.filter { activePaths.contains($0.key) }
+
         let snapshot = windows.snapshot()
         return AggregateUsage(
             today: snapshot.today,
@@ -78,12 +170,188 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyTotals: snapshot.dailyTotals,
-            hourlyTotals: snapshot.hourlyTotals,
+            hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
             finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
             warnings: warnings
         )
+    }
+
+    // MARK: - Caching
+
+    private struct FileCacheEntry {
+        var modificationDate: Date?
+        var byteOffset: UInt64
+        var fileIdentifier: UInt64?
+        var continuityTail: Data
+        var aggregate: FileAggregate
+        var malformedCount: Int
+    }
+
+    private func continuityTail(at url: URL, endingAt byteOffset: UInt64) throws -> Data {
+        let tailLength = min(byteOffset, 4 * 1024)
+        guard tailLength > 0 else { return Data() }
+
+        let fileHandle = try FileHandle(forReadingFrom: url)
+        defer { fileHandle.closeFile() }
+        try fileHandle.seek(toOffset: byteOffset - tailLength)
+        return try fileHandle.read(upToCount: Int(tailLength)) ?? Data()
+    }
+
+    private struct FileAggregate: Sendable {
+        var lifetime: TokenUsage
+        var dailyUsage: [Date: TokenUsage]
+        var dailyReportedTotals: [Date: Int]
+        var hourlyTotals: [Date: Int]
+        var deltaReportedTotalTokens: Int
+        var finalTotalsBySession: [String: CodexSessionFinalTotal]
+        var latestRateLimits: CodexRateLimitSnapshot?
+
+        static var empty: FileAggregate {
+            FileAggregate(
+                lifetime: TokenUsage(confidence: .localParsed),
+                dailyUsage: [:],
+                dailyReportedTotals: [:],
+                hourlyTotals: [:],
+                deltaReportedTotalTokens: 0,
+                finalTotalsBySession: [:],
+                latestRateLimits: nil
+            )
+        }
+    }
+
+    private func accumulate(
+        into aggregate: inout FileAggregate,
+        record: CodexUsageRecord,
+        sessionKey: String
+    ) {
+        aggregate.lifetime = aggregate.lifetime.merging(record.deltaUsage)
+        aggregate.deltaReportedTotalTokens += record.deltaReportedTotalTokens
+
+        if let cumulativeTotal = record.cumulativeReportedTotalTokens {
+            let current = aggregate.finalTotalsBySession[sessionKey]
+            if current == nil || record.isNewerThan(current!) {
+                aggregate.finalTotalsBySession[sessionKey] = CodexSessionFinalTotal(
+                    timestamp: record.timestamp,
+                    totalTokens: cumulativeTotal
+                )
+            }
+        }
+
+        if let rateLimits = record.rateLimits,
+           aggregate.latestRateLimits == nil
+            || rateLimits.timestamp > aggregate.latestRateLimits!.timestamp {
+            aggregate.latestRateLimits = rateLimits
+        }
+
+        guard let timestamp = record.timestamp else { return }
+        let day = calendar.startOfDay(for: timestamp)
+        aggregate.dailyUsage[day] = (aggregate.dailyUsage[day] ?? emptyUsage())
+            .merging(record.deltaUsage)
+        aggregate.dailyReportedTotals[day, default: 0] += record.deltaReportedTotalTokens
+
+        guard record.deltaReportedTotalTokens > 0,
+              let hour = hourStart(for: timestamp) else { return }
+        aggregate.hourlyTotals[hour, default: 0] += record.deltaReportedTotalTokens
+    }
+
+    private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
+        aggregate.lifetime = aggregate.lifetime.merging(incremental.lifetime)
+        for (day, usage) in incremental.dailyUsage {
+            aggregate.dailyUsage[day] = (aggregate.dailyUsage[day] ?? emptyUsage()).merging(usage)
+        }
+        for (day, total) in incremental.dailyReportedTotals {
+            aggregate.dailyReportedTotals[day, default: 0] += total
+        }
+        for (hour, total) in incremental.hourlyTotals {
+            aggregate.hourlyTotals[hour, default: 0] += total
+        }
+        aggregate.deltaReportedTotalTokens += incremental.deltaReportedTotalTokens
+
+        for (sessionKey, candidate) in incremental.finalTotalsBySession {
+            let current = aggregate.finalTotalsBySession[sessionKey]
+            if current == nil || candidate.isNewerThan(current!) {
+                aggregate.finalTotalsBySession[sessionKey] = candidate
+            }
+        }
+        if let candidate = incremental.latestRateLimits,
+           aggregate.latestRateLimits == nil
+            || candidate.timestamp > aggregate.latestRateLimits!.timestamp {
+            aggregate.latestRateLimits = candidate
+        }
+    }
+
+    private func apply(
+        _ aggregate: FileAggregate,
+        to windows: inout UsageWindows,
+        hourlyTotals: inout [Date: Int],
+        latestRateLimits: inout CodexRateLimitSnapshot?,
+        deltaReportedTotalTokens: inout Int,
+        finalTotalsBySession: inout [String: CodexSessionFinalTotal]
+    ) {
+        windows.accumulate(aggregate.lifetime, timestamp: nil, dailyTotal: 0)
+        for (day, usage) in aggregate.dailyUsage {
+            windows.accumulate(
+                usage,
+                timestamp: day,
+                dailyTotal: aggregate.dailyReportedTotals[day] ?? 0,
+                includeInLifetime: false
+            )
+        }
+        for (hour, total) in aggregate.hourlyTotals {
+            guard hour >= windows.hourlyStartDate else { continue }
+            hourlyTotals[hour, default: 0] += total
+        }
+        deltaReportedTotalTokens += aggregate.deltaReportedTotalTokens
+
+        for (sessionKey, candidate) in aggregate.finalTotalsBySession {
+            let current = finalTotalsBySession[sessionKey]
+            if current == nil || candidate.isNewerThan(current!) {
+                finalTotalsBySession[sessionKey] = candidate
+            }
+        }
+        if let candidate = aggregate.latestRateLimits,
+           latestRateLimits == nil || candidate.timestamp > latestRateLimits!.timestamp {
+            latestRateLimits = candidate
+        }
+    }
+
+    private struct FileMetadata {
+        let size: UInt64
+        let identifier: UInt64?
+    }
+
+    private func fileMetadata(of url: URL) -> FileMetadata {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return FileMetadata(size: 0, identifier: nil)
+        }
+        let identifier = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        return FileMetadata(size: size.uint64Value, identifier: identifier)
+    }
+
+    private func malformedWarning(count: Int, url: URL) -> ProviderWarning {
+        ProviderWarning(
+            message: "\(url.lastPathComponent): \(count) malformed line(s) skipped",
+            level: .warning
+        )
+    }
+
+    private func emptyUsage() -> TokenUsage {
+        TokenUsage(
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            reasoningTokens: 0,
+            confidence: .localParsed
+        )
+    }
+
+    private func hourStart(for timestamp: Date) -> Date? {
+        let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
+        return calendar.date(from: components)
     }
 }
 
@@ -117,6 +385,19 @@ struct CodexUsageRecord: Sendable {
 struct CodexSessionFinalTotal: Sendable {
     let timestamp: Date?
     let totalTokens: Int
+
+    func isNewerThan(_ other: CodexSessionFinalTotal) -> Bool {
+        switch (timestamp, other.timestamp) {
+        case let (lhs?, rhs?):
+            return lhs >= rhs
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            return true
+        }
+    }
 }
 
 struct CodexRateLimitSnapshot: Sendable {
@@ -195,22 +476,6 @@ extension CodexJSONLParser {
             return nil
         }
         return model
-    }
-
-    func parseFile(at url: URL, onRecord: (CodexUsageRecord) -> Void) async throws -> Int {
-        var malformedCount = 0
-        for try await line in url.lines {
-            guard let data = line.data(using: .utf8) else { continue }
-            switch parseLine(data) {
-            case .usage(let record):
-                onRecord(record)
-            case .skipped:
-                break
-            case .malformed:
-                malformedCount += 1
-            }
-        }
-        return malformedCount
     }
 
     func parseLine(_ data: Data) -> CodexLineParseOutcome {

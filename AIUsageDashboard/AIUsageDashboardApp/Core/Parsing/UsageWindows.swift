@@ -41,8 +41,8 @@ struct UsageWindows: Sendable {
         self.lifetime = seed
     }
 
-    mutating func accumulate(_ usage: TokenUsage, timestamp: Date?, dailyTotal: Int) {
-        lifetime = lifetime.merging(usage)
+    mutating func accumulate(_ usage: TokenUsage, timestamp: Date?, dailyTotal: Int, includeInLifetime: Bool = true) {
+        if includeInLifetime { lifetime = lifetime.merging(usage) }
 
         guard let timestamp else { return }
         if timestamp >= todayStart { today = today.merging(usage) }
@@ -53,6 +53,8 @@ struct UsageWindows: Sendable {
             hourlyTotals[hour, default: 0] += dailyTotal
         }
     }
+
+    var hourlyStartDate: Date { hourlyStart }
 
     func snapshot() -> WindowedTokenUsage {
         WindowedTokenUsage(
