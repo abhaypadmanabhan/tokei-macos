@@ -143,8 +143,25 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     }
 
     private func perCookieCooldownURL(for cookie: String) -> URL {
-        let hash = CursorSession.identityHash(for: cookie)
+        // Hash the durable account id (userId), not the full cookie/JWT — a refreshed
+        // token for the same account must hit the same cooldown file. identityHash
+        // is the same SHA-256 prefix CursorSession uses for per-account file suffixes.
+        let hash = CursorSession.identityHash(for: Self.durableAccountIdentity(for: cookie))
         return storageDirectory.appendingPathComponent("cursor-usage-cooldown-\(hash).json")
+    }
+
+    /// Extracts the stable account key from a WorkOS session cookie.
+    /// Shape: `WorkosCursorSessionToken=<userId>%3A%3A<jwt>` — only `<userId>` is
+    /// durable across token refresh. Falls back to the full string when the shape
+    /// is unrecognised so malformed inputs still get a stable per-value key.
+    /// The returned value is hashed before touching disk; never logged raw.
+    private static func durableAccountIdentity(for cookie: String) -> String {
+        let prefix = "WorkosCursorSessionToken="
+        guard cookie.hasPrefix(prefix) else { return cookie }
+        let value = cookie.dropFirst(prefix.count)
+        guard let separator = value.range(of: "%3A%3A") else { return cookie }
+        let userID = String(value[..<separator.lowerBound])
+        return userID.isEmpty ? cookie : userID
     }
 
     private func isCooldownActive(for cookie: String, at referenceDate: Date) -> Bool {
