@@ -9,8 +9,17 @@ Integrated via `/agents-done`. On `dev` (`804f28d`), **not on `main`**. Audit tr
 `tasks/patch-bibles/2026-07-22.md`. Manual QA pending against the `dev` Debug build.
 
 ### Fixed
-- **P0 — app no longer overheats the machine on steady-state syncs.** Both JSONL
-  parsers now cache per-file aggregates and stop full-re-parsing large logs every sync.
+- **P0 — app no longer overheats the machine (the dominant cause).** A CPU sampler on
+  the running build put the entire idle burn in **SwiftUI ViewGraph rendering**, not
+  parsing: the dashboard is a `Window` scene whose view graph is retained when the window
+  closes, so its live content (per-second countdown `TimelineView`s, Swift Charts, a
+  `repeatForever` status-dot pulse, a content-width `GeometryReader`) kept re-rendering
+  forever — ~20–24% CPU as a background menu-bar app with no window open. `DashboardView`
+  now gates its whole content on `NSApplication.occlusionState` (new `WindowVisibilityMonitor`):
+  off screen it collapses to a static fill and tears down the graph. **Measured: idle
+  (window closed) ~20% → 0%; window-open ~11%.**
+- **P0 (secondary) — parser CPU on large actively-written logs.** Both JSONL parsers now
+  cache per-file aggregates and stop full-re-parsing large logs every sync.
   - *Claude* (`000f393`): per-file cache keyed by mtime+size; grown files resume from the
     last byte offset via `FileHandle.seek`; rotated/truncated files fall back to a full parse.
   - *Codex* (#55): same pattern plus inode + a 4 KiB continuity-tail check to detect
