@@ -9,7 +9,7 @@ import Foundation
 ///     tokei mcp             stdio MCP server (tools: get_usage, get_route_recommendation)
 enum TokeiCLI {
     /// Tracks the app's marketing version (see AIUsageDashboard/project.yml).
-    static let version = "0.6.1"
+    static let version = "0.7.0"
 }
 
 func printUsage(to handle: FileHandle = .standardOutput) {
