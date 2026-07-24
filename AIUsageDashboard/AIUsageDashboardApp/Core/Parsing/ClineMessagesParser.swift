@@ -35,18 +35,24 @@ public actor ClineMessagesParser {
 
         for source in logSources {
             do {
-                let attributes = try? FileManager.default.attributesOfItem(atPath: source.url.path)
-                let fileSize = (attributes?[.size] as? UInt64) ?? 0
-                guard fileSize <= maxFileSizeBytes else {
+                // Bound the read itself rather than stat-then-read: a separate
+                // attributesOfItem() check races a file that grows between the check
+                // and Data(contentsOf:). Reading at most maxFileSizeBytes+1 bytes means
+                // the cap is enforced on the actual bytes we consume, and — since a
+                // within-cap file returns fewer bytes than requested — this read also
+                // *is* the full file content, no second pass needed.
+                let handle = try FileHandle(forReadingFrom: source.url)
+                let data = try handle.read(upToCount: Int(maxFileSizeBytes) + 1) ?? Data()
+                try handle.close()
+                guard data.count <= maxFileSizeBytes else {
                     let name = source.url.lastPathComponent
                     warnings.append(ProviderWarning(
-                        message: "\(name): file size \(fileSize) exceeds maximum \(maxFileSizeBytes); skipped",
+                        message: "\(name): file exceeds maximum \(maxFileSizeBytes) bytes; skipped",
                         level: .warning
                     ))
                     continue
                 }
 
-                let data = try Data(contentsOf: source.url)
                 let sessionFile = try JSONDecoder().decode(ClineSessionFile.self, from: data)
                 let sessionMillis = sessionMillisHint(from: source.sessionID ?? source.url.deletingLastPathComponent().lastPathComponent)
 

@@ -73,12 +73,17 @@ append completion note. Dispatch it the same way morning-patch Step 8 does: chec
 (see the table in `/morning-patch` Step 8 / `herdr-agent-fleet-test` memory), split
 a pane at the fix worktree, `agent start`, submit the prompt (marker-based
 completion check for cline, long timeout for opencode), then wait/poll for
-done/blocked the same way as morning-patch Step 8.5. If `HERDR_ENV` is unset or the
-kind is GLM, fall back to printing the copy-paste block instead.
+done/blocked the same way as morning-patch Step 8.5 — including reading pane output
+before treating `idle` as done (herdr's `agent_status` can miss a real blocked-on-
+question state). If `HERDR_ENV` is unset or the kind is GLM, fall back to printing
+the copy-paste block instead.
 
-Once the fixing agent reports done, automatically run `.claude/commands/agents-done.md`
-Steps 1–7 inline (same as `/morning-patch` Step 9) to re-verify and merge the fix —
-do not stop and tell the user to type `/agents-done` themselves.
+If the fix was herdr-dispatched and confirmed done, automatically run
+`.claude/commands/agents-done.md` Steps 1–7 inline (same as `/morning-patch` Step 9)
+to re-verify and merge the fix — do not stop and tell the user to type
+`/agents-done` themselves. **If the fix fell back to the copy-paste block**, do NOT
+assume it's committed — stop and ask the human to confirm before running the
+collection step; only then re-verify and merge.
 
 ## Output
 

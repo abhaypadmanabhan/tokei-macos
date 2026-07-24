@@ -49,7 +49,11 @@ struct MCPServer {
 
         switch method {
         case "initialize":
-            respond(id: id, result: initializeResult(from: object))
+            if let error = unsupportedProtocolVersionError(from: object) {
+                send(errorResponse(id: id, code: -32602, message: error))
+            } else {
+                respond(id: id, result: initializeResult())
+            }
         case "notifications/initialized", "notifications/cancelled":
             break // notifications — no response
         case "ping":
@@ -67,11 +71,22 @@ struct MCPServer {
 
     // MARK: - initialize
 
-    private func initializeResult(from request: [String: Any]) -> [String: Any] {
-        // Echo the client's protocol version when it sent one; otherwise our default.
-        let clientVersion = (request["params"] as? [String: Any])?["protocolVersion"] as? String
-        return [
-            "protocolVersion": clientVersion ?? Self.protocolVersion,
+    /// Only accept a client-requested protocol version when it exactly matches what we
+    /// implement — silently echoing back an arbitrary client-claimed version would let a
+    /// client believe we support a protocol shape we don't. `nil` params (no version
+    /// requested) is fine; we just proceed with our own version.
+    private func unsupportedProtocolVersionError(from request: [String: Any]) -> String? {
+        guard let clientVersion = (request["params"] as? [String: Any])?["protocolVersion"] as? String
+        else { return nil }
+        guard clientVersion == Self.protocolVersion else {
+            return "Unsupported protocol version \(clientVersion); server supports \(Self.protocolVersion)"
+        }
+        return nil
+    }
+
+    private func initializeResult() -> [String: Any] {
+        [
+            "protocolVersion": Self.protocolVersion,
             "capabilities": ["tools": [String: Any]()],
             "serverInfo": ["name": Self.serverName, "version": version]
         ]

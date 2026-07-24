@@ -173,3 +173,20 @@ All 3 packages finished successfully, no timeouts/quarantine-by-cap needed:
 - Second attempt: **BUILD SUCCEEDED.** `Tokei.app` (v0.6.1) at
   `AIUsageDashboard/build/dev/Build/Products/Debug/Tokei.app`, `tokei` helper correctly
   embedded at `Contents/Helpers/tokei` and runnable (`tokei version` → `tokei 0.6.1`).
+
+## CodeRabbit review (PR #58) — triage
+14 actionable comments. 12 fixed directly (fallback-collection guards in morning-patch/
+dev-reject, Step 8.5's blocked-detection gap now documented — the exact bug hit live
+with Codex today, independently caught by CodeRabbit too — Antigravity/Kimi/GLM table
+tightening, ClineMessagesParser TOCTOU fix via bounded read instead of stat-then-read,
+MCPServer protocol-version validation, markdown fence labels, README provider list,
+Bible scope/count corrections, BATON.md workflow-distinction note, todo.md machine-local
+path removed). 1 explicitly skipped (not fixed): Patch Bible §8's shared-file concurrent-
+completion-append pattern (multiple agents appending to one Bible file) is a real
+architectural gap for TRUE simultaneous completions — CodeRabbit tagged it "Heavy lift"
+itself; today's actual agents completed at different times (no real collision), so
+tracking as a follow-up rather than redesigning the completion-recording mechanism now.
+1 rejected as a misread: CodeRabbit suggested retroactively rewriting the already-
+published `tasks/reports/release-notes-0.6.1.md` to include today's new features —
+declined, that file is a correct historical record of the 0.6.1 release's own scope;
+today's features belong in (and are already in) `release-notes-0.7.0.md`.

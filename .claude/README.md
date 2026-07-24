@@ -84,9 +84,15 @@ printing a copy-paste prompt for a human to paste in. Verified 2026-07-23 (see
 | Cursor | `cursor` | `--trust --force` | real lifecycle tracking; async paste — submit via `pane send-text`+`pane send-keys enter` |
 | opencode | `opencode` | `--auto` | **pinned to a local model here** — 80s+ per response is normal, not stalled; has crashed once (Bun segfault); least reliable kind currently |
 | Cline | `cline` | `--auto-approve true` | **no herdr lifecycle tracking** — submit via `pane send-text`+`pane send-keys enter`, confirm completion only via a task-specific marker string, never trust `agent_status` |
-| Antigravity | `agy` | `--dangerously-skip-permissions` | **no herdr lifecycle tracking** (like cline) — submit via `pane send-text`+`pane send-keys enter`; the herdr skill itself had to be installed into agy's own plugin system (`agy plugin install`, `~/.gemini/config/plugins/herdr/`) before it could see it — see `herdr-agent-fleet-test` memory for how |
-| Kimi | `kimi` | untested | verify before relying on it |
+| Antigravity | `agy` | `--dangerously-skip-permissions` | **no herdr lifecycle tracking** (like cline) — submit via `pane send-text`+`pane send-keys enter`, confirm completion only via a task-specific marker string, never trust `agent_status`; the herdr skill itself had to be installed into agy's own plugin system (`agy plugin install`, `~/.gemini/config/plugins/herdr/`) before it could see it — see `herdr-agent-fleet-test` memory for how |
+| Kimi | `kimi` | untested | **do not herdr-dispatch until verified** — fall back to the copy-paste prompt like GLM until this row has a confirmed flag |
 | GLM | *(no herdr kind)* | — | fall back to the old copy-paste prompt for that package |
+
+Every "idle"/"done" report must be confirmed by reading the agent's pane output before
+collection — `agent_status` alone is not proof of completion. Verified 2026-07-24: Codex
+correctly stopped on a real scope question but herdr reported it as `idle`, not
+`blocked`. Treat a pane showing an unresolved question the same as an explicit
+`blocked` status.
 
 Dispatched agents are polled (bounded iterations), not babysat synchronously. Any
 agent reaching `blocked` is surfaced immediately with its pane contents so the human

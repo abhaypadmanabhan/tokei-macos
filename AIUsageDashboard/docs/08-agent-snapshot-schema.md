@@ -89,7 +89,7 @@ Bundled at `Tokei.app/Contents/Helpers/tokei`. Standalone executable — it does
 link the app framework; it compiles in the shared public schema file directly and
 reads the snapshot only (no network, no Keychain, no other apps' files).
 
-```
+```sh
 tokei status          # human-readable table
 tokei status --json   # the raw snapshot (with stale/ageSeconds), for scripting
 tokei mcp             # stdio MCP server
@@ -119,7 +119,7 @@ file is missing, the tool call returns `isError: true` with launch instructions.
 ## 3. Registration (agent side)
 
 **Claude Code:**
-```
+```sh
 claude mcp add tokei -- /Applications/Tokei.app/Contents/Helpers/tokei mcp
 ```
 

@@ -143,6 +143,17 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Tests: 304 Core, `run-all.sh full` ALL GREEN on dev. Security: Core parser change, 0 new network/credential surface (immutable URI uses app-generated temp path).
 
 ### Patch 2026-07-24 — herdr-dispatch pipeline dry run: WP-1 agent MCP + WP-2 Copilot + WP-3 robustness (morning-patch → herdr dispatch → auto-collect, first live run)
+
+**Note on workflow:** this entry (and all "### Patch <date>" entries above it) describe
+the `/morning-patch` → `/agents-done` → `/dev-approved` pipeline — `dev`-based, git
+worktrees per agent, merges into `dev` via `--no-ff`. This is a DIFFERENT, newer
+workflow from the "Sequential relay" convention documented at the top of this file
+(`main`-based, one agent at a time, `relay/0N-<agent>` branches merged straight to
+`main`). Both conventions currently coexist in this same BATON.md — check which one
+actually applies before following either's "standing rules": if you're picking up
+`/morning-patch`-produced work, follow the patch/worktree rules in `.claude/README.md`,
+not the relay rules at the top of this file.
+
 - Trigger: live dry run of the newly-restructured /morning-patch pipeline (direct herdr
   dispatch to agent CLIs + automatic inline collection, replacing the old copy-paste +
   manual /agents-done flow). User also mandated including the MCP-integration issue.

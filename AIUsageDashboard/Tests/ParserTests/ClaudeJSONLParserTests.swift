@@ -236,10 +236,10 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(second.lifetime.totalTokens, 45)
   }
 
-  func testParseErrorWarningContainsFilenameNotFullPath() async {
+  func testParseErrorWarningContainsFilenameNotFullPath() async throws {
     let parser = makeParser()
     let dirURL = tempDirectory.appendingPathComponent("notAFile.jsonl", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
 
     let usage = await parser.parse(logSources: [makeSource(url: dirURL)])
 

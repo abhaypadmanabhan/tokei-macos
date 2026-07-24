@@ -188,8 +188,8 @@ agent kind and dispatch:
 | Cursor | `cursor` | `--trust --force` |
 | opencode | `opencode` | `--auto` — **this repo's opencode is pinned to a local model: 80s+ per response is normal, not stalled, and it has crashed once (Bun segfault). Treat as the least reliable/slowest kind; give it a much longer timeout than the others.** |
 | Cline | `cline` | `--auto-approve true` (also its CLI default) |
-| Antigravity | `agy` | `--dangerously-skip-permissions` — like cline, **no herdr lifecycle tracking**; submit via `pane send-text`+`pane send-keys enter`. The herdr skill must be installed into its own plugin system first (`agy plugin install`, one-time — already done as of 2026-07-24, see `herdr-agent-fleet-test` memory) or it won't recognize itself as running inside herdr. |
-| Kimi | `kimi` | untested this session — verify its flag before relying on it |
+| Antigravity | `agy` | `--dangerously-skip-permissions` — like cline, **no herdr lifecycle tracking**; submit via `pane send-text`+`pane send-keys enter` (not `agent prompt`), and confirm completion only via a task-specific marker string appended to the prompt (same convention as cline — e.g. "print HERDR_TEST_DONE as your last line"), read back with `pane read`; never trust `agent_status` for it. The herdr skill must be installed into its own plugin system first (`agy plugin install`, one-time — already done as of 2026-07-24, see `herdr-agent-fleet-test` memory) or it won't recognize itself as running inside herdr. |
+| Kimi | `kimi` | **untested — do not herdr-dispatch until a flag is verified.** Treat like GLM: fall back to the copy-paste block for any Kimi-assigned package until this row is updated with a confirmed flag. |
 | **GLM** | **not a herdr kind today** | **no herdr dispatch available — fall back to printing the copy-paste block for this package only, and say so in Output** |
 
 For each herdr-dispatchable package:
@@ -225,12 +225,19 @@ e.g. 20 iterations max so this can never hang forever):
   completion marker; ignore `agent_status` for it entirely.
 - opencode: same polling, much longer per-iteration timeout (local model).
 
-On each pass: agents reporting `done`/`idle` (or cline's marker present) move to
-"ready for collection." Agents reporting `blocked` are surfaced **immediately** in
-your running output — print their name, pane id, and `herdr pane read` contents —
-so the human can intervene live; do not silently retry a blocked agent. Agents still
-`working` loop again. If the iteration cap is hit with packages still outstanding,
-stop and report exactly which ones, rather than hanging.
+**`agent_status` is not sufficient proof of completion — it can report `idle` for an
+agent that actually stopped to ask a real question.** Verified live 2026-07-24: Codex
+correctly stopped mid-task and asked a scope question, but herdr reported it as
+`idle`, not `blocked`. Before moving ANY agent from `done`/`idle` to "ready for
+collection," read its pane output (`herdr agent read <name> --source
+recent-unwrapped` or `herdr pane read <pane_id>`) and check whether it contains an
+unresolved question, a request for permission, or anything else that isn't a genuine
+finished/stopped state. If it does, treat it as blocked: surface it immediately (name,
+pane id, pane contents) so the human can intervene, same as an explicit `blocked`
+status — do not silently collect it. Agents reporting `blocked` from herdr itself are
+surfaced the same way. Do not silently retry a blocked agent. Agents still `working`
+loop again. If the iteration cap is hit with packages still outstanding, stop and
+report exactly which ones, rather than hanging.
 
 Once every dispatched package is done or explicitly quarantined-by-timeout, continue
 directly to Step 9 in the same run — do not stop and wait for the user to type
@@ -238,11 +245,20 @@ anything.
 
 ## Step 9 — Auto-collect (was: tell the user to run `/agents-done`)
 
-Execute `.claude/commands/agents-done.md` Steps 1–7 now, inline, in this same run,
-exactly as written there (inspect every worktree, quarantine gate, verify + merge
-accepted worktrees in Bible §2 order, full gate run on `dev`, build a testable dev
-`.app`, emit the tailored manual QA checklist). That file's step logic is the source
-of truth — read it and follow it; do not duplicate or diverge from it here.
+**If any package fell back to a copy-paste prompt** (`HERDR_ENV` unset, or a
+GLM/kind-with-no-herdr-support package — see the Fallback block below), do NOT run
+this step automatically for those packages. Stop and ask the human to confirm each
+fallback package is committed before including it in collection; auto-collect only
+the herdr-dispatched packages that Step 8.5 actually confirmed done. Do not infer
+"probably committed by now" — get an explicit yes.
+
+Once every herdr-dispatched package is confirmed done (and any fallback packages are
+either confirmed committed by the human or explicitly excluded), execute
+`.claude/commands/agents-done.md` Steps 1–7 now, inline, in this same run, exactly as
+written there (inspect every worktree, quarantine gate, verify + merge accepted
+worktrees in Bible §2 order, full gate run on `dev`, build a testable dev `.app`,
+emit the tailored manual QA checklist). That file's step logic is the source of
+truth — read it and follow it; do not duplicate or diverge from it here.
 
 For the diff-review sub-step specifically (agents-done Step 4.1 — reading each
 merge diff and judging architecture-rule compliance before merging): spawn it to a

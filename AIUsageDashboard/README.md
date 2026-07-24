@@ -9,6 +9,9 @@ Tokei (formerly "AI Usage Dashboard") — a local-first native macOS app for tra
 - Cursor
 - Cline / Cline Pass
 - Antigravity
+- Google Gemini CLI
+- opencode
+- GitHub Copilot (install detection only — no local usage/quota data available yet)
 
 ## Project Structure
 

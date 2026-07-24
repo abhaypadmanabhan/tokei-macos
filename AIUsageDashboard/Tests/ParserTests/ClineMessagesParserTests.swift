@@ -170,16 +170,16 @@ final class ClineMessagesParserTests: XCTestCase {
         )
     }
 
-    func testSymlinkedOversizedFileIsSkippedWithWarning() async {
+    func testSymlinkedOversizedFileIsSkippedWithWarning() async throws {
         let sessionID = "1783325327533_symlink"
         let targetSessionID = "1783325327533_target"
         let targetFixture = ClineFixtures.twoAssistantMessages(sessionID: targetSessionID)
         let targetURL = writeFixture(targetFixture, sessionID: targetSessionID)
 
         let sessionDir = tempDirectory.appendingPathComponent(sessionID, isDirectory: true)
-        try? FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
         let symlinkURL = sessionDir.appendingPathComponent("\(sessionID).messages.json")
-        try? FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: targetURL)
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: targetURL)
 
         let source = makeSource(url: symlinkURL, sessionID: sessionID)
         let usage = await makeParser(maxFileSizeBytes: 10).parse(logSources: [source])
