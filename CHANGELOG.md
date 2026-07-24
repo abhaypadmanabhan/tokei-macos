@@ -3,6 +3,62 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.7.0] — 2026-07-24 (release candidate)
+
+Prepared via the newly-restructured `/morning-patch` → herdr dispatch → auto-collect →
+`/dev-approved` pipeline (first live run — see
+`tasks/reports/morning-patch-dryrun-hindrances-2026-07-24.md` for the full pipeline
+assessment). On `dev`, PR dev → main (#58); **not yet merged to `main` or tagged.**
+Audit trail: `tasks/patch-bibles/2026-07-24.md`. Security review clean (no findings).
+Build 6. **Manual QA: functional/CLI paths independently verified live (see below);
+the SwiftUI menu bar/dashboard UI itself was checked by a delegated Codex agent via
+real accessibility automation + screenshots, not by the user yet.**
+
+### Added
+- **Agent-facing quota snapshot + `tokei` CLI/MCP server (#57).** Tokei now writes a
+  versioned, world-readable `agent-snapshot.json` after every refresh
+  (percentages/counts/timestamps only — audited + test-guarded against secrets). A
+  bundled read-only `tokei` helper (`Tokei.app/Contents/Helpers/tokei`) exposes it via
+  `tokei status [--json]` and a dependency-free stdio MCP server (`tokei mcp`, two
+  tools: `get_usage`, `get_route_recommendation`) so orchestrating agents (Claude Code,
+  Codex CLI) can route work away from a near-exhausted provider. Never serves stale
+  data silently — verified live end-to-end via raw JSON-RPC, including the missing-file
+  and stale-data paths. Settings "Agent Access" registration UI is a follow-up, not yet
+  built.
+- **GitHub Copilot provider detection (#26, Copilot half).** Detects local Copilot
+  installs (CLI/config markers, VS Code/Cursor extension dirs, Copilot for Xcode)
+  without ever reading credentials. Copilot has no documented local usage/quota record,
+  so it honestly reports unavailable metrics rather than a guessed number (Gemini and
+  OpenCode, the other #26 targets, already shipped earlier). Verified live in the
+  running app.
+
+### Fixed
+- **Robustness batch (#19, Core slice).** Cline messages parser caps reads at 16MB
+  (configurable) to prevent unbounded memory growth on a huge/symlinked session file.
+  `UsageStore.persist()` now writes atomically via `replaceItemAt` (previously a
+  non-atomic delete-then-move) and creates new store files `0600` (existing files are
+  never retroactively chmod'd). Claude parser warning strings no longer leak full
+  filesystem paths (filename only).
+
+### Known issues
+- **macOS release archive is signed but not yet notarized.** Notarization submission
+  failed on Sparkle's nested helper binaries (Updater.app, Autoupdate, the XPC
+  services) — "not signed with a valid Developer ID certificate" / "signature does not
+  include a secure timestamp." Confirmed **not caused by this patch**: 0.6.1 notarized
+  cleanly yesterday with no Sparkle changes since. Root cause suspected to be SPM
+  dependency drift — `Sparkle` is pinned only to `majorVersion: 2.6.0` (currently
+  resolves to 2.9.4) and `Package.resolved` isn't committed, so the exact Sparkle
+  version floats between builds. Needs a dedicated investigation (pin the exact
+  Sparkle version that notarizes cleanly, or an explicit re-sign pass on Sparkle's
+  nested binaries) before this can ship as a distributable — tracked separately, not
+  blocking this dev→main promotion.
+- Repo-wide lint/format tooling was run for real for the first time this session
+  (`swiftlint`/`swiftformat` were never installed before). Surfaced ~400 pre-existing
+  lint violations and a 137/162-file formatting backlog across the whole codebase,
+  unrelated to this patch — today's own diff is confirmed lint-clean (verified via
+  `git blame` on every violation), but the backlog itself is untouched and tracked
+  separately.
+
 ## [0.6.1] — 2026-07-23 (release candidate)
 
 Prepared via `/dev-approved`. On `dev`, PR dev → main; **not yet merged to `main` or
