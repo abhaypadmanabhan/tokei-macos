@@ -53,6 +53,14 @@ targets:
     dependencies:
       - target: AIUsageDashboardCore
       - package: Sparkle
+      # Bundle the read-only agent CLI at Tokei.app/Contents/Helpers/tokei (issue #57).
+      # It's a standalone executable, not linked into the app — just copied in.
+      - target: tokei
+        link: false
+        embed: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
     info:
       path: AIUsageDashboardApp/Info.plist
       properties:
@@ -90,3 +98,23 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.CoreTests
+  # Read-only agent CLI + stdio MCP server (issue #57). Standalone executable —
+  # does NOT link the Core framework; it compiles in the shared public schema file
+  # directly so it can decode the snapshot with no app-internal dependencies.
+  tokei:
+    type: tool
+    platform: macOS
+    sources:
+      - path: TokeiCLI
+      - path: AIUsageDashboardApp/Core/Agent/AgentSnapshot.swift
+    settings:
+      base:
+        PRODUCT_NAME: tokei
+        PRODUCT_BUNDLE_IDENTIFIER: ai.padzy.tokei.cli
+        CODE_SIGN_IDENTITY: "-"
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application: Abhay Padmanabhan (A47GG9FV27)"
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: A47GG9FV27
+    scheme: {}
