@@ -65,6 +65,8 @@ enum ProviderMetadata {
             return ["~/.local/share/opencode"]
         case .gemini:
             return ["~/.gemini/oauth_creds.json"]
+        case .copilot:
+            return ["~/.copilot", "~/.vscode/extensions", "~/Library/Application Support/Code/User/globalStorage/github.copilot-chat"]
         }
     }
 
