@@ -3,12 +3,16 @@ import Foundation
 /// Computes the agent routing hint (`AgentRecommendation`) from the utilization
 /// spine. Pure and clock-injected, so it is deterministic and unit-testable.
 ///
-/// This deliberately mirrors the least-filled-provider logic behind the human-facing
-/// "Route work here" chip (`MaxxerMath.routeTarget`, issue #37). That engine lives
-/// under `UI/MenuBar/` and is **not** compiled into the Core framework, so it can't
-/// be called here; the shared semantics are re-expressed against `Utilization`.
-/// FOLLOW-UP: when `MaxxerMath` moves into Core, collapse the two into one engine so
-/// the UI chip and the agent snapshot are guaranteed identical.
+/// This is the same *idea* as the human-facing "Route work here" chip
+/// (`MaxxerMath.routeTarget`, issue #37) — route to the least-utilized provider — but
+/// it is NOT a faithful port: the chip also requires a >=15-point spread between the
+/// tightest and least-filled provider before it suggests anything, while this engine
+/// uses only the issue's own flat 85%-avoid rule with no spread gate. `MaxxerMath`
+/// lives under `UI/MenuBar/` and isn't compiled into the Core framework, so it can't be
+/// called here regardless. A third, independent least-filled-provider heuristic also
+/// exists at `DashboardView.routeTargetProviderID` (no threshold at all).
+/// FOLLOW-UP: reconcile all three into one canonical policy once `MaxxerMath` moves
+/// into Core — that requires picking a single rule, not just deleting a duplicate.
 public enum AgentRecommendationEngine {
     /// At or above this utilization, a provider is one to avoid. The issue's own
     /// steering guidance is "avoid providers above 85% utilization".
@@ -19,7 +23,8 @@ public enum AgentRecommendationEngine {
     ///
     /// - `routeTo` is the least-utilized provider, returned only when at least two
     ///   providers reported usable quota and the least one is below the avoid
-    ///   threshold — matching the chip's "only suggest when there's a clear winner".
+    ///   threshold. No minimum spread is required (unlike the UI chip — see the type
+    ///   doc above), so this can suggest a target even when providers are close together.
     /// - `avoid` lists every provider at/over the avoid threshold, tightest first.
     public static func recommend(
         from utilizations: [Utilization],
@@ -103,8 +108,6 @@ public enum AgentRecommendationEngine {
     private static func resetDelta(from now: Date, to resetAt: Date) -> String? {
         let seconds = resetAt.timeIntervalSince(now)
         guard seconds > 0 else { return nil }
-        if seconds >= 3600 { return "\(Int(seconds / 3600))h" }
-        if seconds >= 60 { return "\(Int(seconds / 60))m" }
-        return "<1m"
+        return AgentSnapshot.compactDuration(seconds)
     }
 }

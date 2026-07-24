@@ -36,9 +36,11 @@ public actor SyncEngine {
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
-        await agentSnapshotWriter.write(from: snapshots)
         await NotificationEngine.shared.evaluateThresholds(for: snapshots)
         updatesContinuation?.yield(snapshots)
+        // Last: nothing in-process reads this back (only the external `tokei` CLI/MCP
+        // helper does), so it shouldn't gate notification delivery or the UI-facing yield.
+        await agentSnapshotWriter.write(from: snapshots)
         return snapshots
     }
 

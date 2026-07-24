@@ -72,7 +72,7 @@ public enum UtilizationEngine {
     /// `limit == 100`), but this stays correct for any real limit — it divides.
     /// Falls back to `limit - remaining` when only `remaining` is reported. Returns
     /// `nil` (omit) when there is no denominator or no numerator.
-    private static func usedPercent(from window: QuotaWindow) -> Double? {
+    static func usedPercent(from window: QuotaWindow) -> Double? {
         guard let limit = window.limit, limit > 0 else { return nil }
         guard let used = window.used ?? window.remaining.map({ limit - $0 }) else { return nil }
         return min(100, max(0, used / limit * 100))

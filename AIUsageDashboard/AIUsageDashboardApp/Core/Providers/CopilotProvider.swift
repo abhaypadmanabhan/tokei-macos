@@ -18,6 +18,10 @@ public actor CopilotProvider: UsageProvider {
     private let installationMarkers: [URL]
     private let extensionDirectories: [URL]
 
+    /// Install status doesn't flip mid-session — compute once instead of re-stat'ing
+    /// up to 8 marker paths plus scanning 3 extension directories on every sync cycle.
+    private var cachedAvailability: ProviderAvailability?
+
     public init(
         fileManager: FileManager = .default,
         installationMarkers: [URL]? = nil,
@@ -26,6 +30,12 @@ public actor CopilotProvider: UsageProvider {
         self.fileManager = fileManager
 
         let home = fileManager.homeDirectoryForCurrentUser
+        // Copilot has no single canonical install location (VS Code extension, Cursor's
+        // bundled VS Code, Xcode plugin, standalone CLI). The VS Code globalStorage and
+        // Xcode-app paths are verified against real local installs; the standalone-CLI
+        // paths (~/.copilot, ~/.config/github-copilot, and the bin/copilot locations) are
+        // best-effort guesses at where a future/less-common CLI install might land — a
+        // wrong guess here just means "not detected," never a false positive.
         self.installationMarkers = installationMarkers ?? [
             home.appendingPathComponent(".copilot", isDirectory: true),
             home.appendingPathComponent(".config/github-copilot", isDirectory: true),
@@ -50,6 +60,14 @@ public actor CopilotProvider: UsageProvider {
     }
 
     public func detectAvailability() async -> ProviderAvailability {
+        if let cachedAvailability { return cachedAvailability }
+
+        let availability = scanForInstallation()
+        cachedAvailability = availability
+        return availability
+    }
+
+    private func scanForInstallation() -> ProviderAvailability {
         if installationMarkers.contains(where: { fileManager.fileExists(atPath: $0.path) }) {
             return .installed
         }
@@ -105,9 +123,6 @@ public actor CopilotProvider: UsageProvider {
 
     private nonisolated static func isCopilotExtension(_ url: URL) -> Bool {
         let name = url.lastPathComponent.lowercased()
-        return name == "github.copilot"
-            || name.hasPrefix("github.copilot-")
-            || name == "github.copilot-chat"
-            || name.hasPrefix("github.copilot-chat-")
+        return name == "github.copilot" || name.hasPrefix("github.copilot-")
     }
 }

@@ -84,7 +84,7 @@ public actor AgentSnapshotWriter {
     /// rule the utilization spine uses (`UtilizationEngine.usedPercent`), replicated
     /// here to keep `source` (which the spine drops) and avoid widening its API.
     private static func agentWindow(from window: QuotaWindow) -> AgentWindow? {
-        guard let percent = usedPercent(from: window) else { return nil }
+        guard let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
         return AgentWindow(
             type: window.type.rawValue,
             usedPercent: percent,
@@ -92,12 +92,6 @@ public actor AgentSnapshotWriter {
             confidence: publicConfidence(window.confidence),
             source: window.source
         )
-    }
-
-    private static func usedPercent(from window: QuotaWindow) -> Double? {
-        guard let limit = window.limit, limit > 0 else { return nil }
-        guard let used = window.used ?? window.remaining.map({ limit - $0 }) else { return nil }
-        return min(100, max(0, used / limit * 100))
     }
 
     /// Collapse the internal five-level confidence to the three public labels agents

@@ -115,9 +115,7 @@ enum StatusFormatting {
     private static func resetColumn(from date: Date) -> String {
         let delta = date.timeIntervalSinceNow
         guard delta > 0 else { return "now" }
-        if delta >= 3600 { return "\(Int(delta / 3600))h" }
-        if delta >= 60 { return "\(Int(delta / 60))m" }
-        return "<1m"
+        return AgentSnapshot.compactDuration(delta)
     }
 
     static func humanAge(seconds: Int) -> String {

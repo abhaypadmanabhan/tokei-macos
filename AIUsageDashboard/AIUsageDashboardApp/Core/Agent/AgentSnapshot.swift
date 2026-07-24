@@ -184,3 +184,17 @@ public extension AgentSnapshot {
         return copy
     }
 }
+
+// MARK: - Shared formatting (used by both AgentRecommendationEngine and StatusFormatting,
+// which independently reimplemented this bucketing — kept here since this file is the one
+// already compiled into both the Core framework and the `tokei` CLI target)
+
+public extension AgentSnapshot {
+    /// Compact "3h" / "12m" / "<1m" for a positive duration. Callers own how to handle a
+    /// non-positive interval (omit the clause vs. show "now") since that's caller-specific.
+    static func compactDuration(_ interval: TimeInterval) -> String {
+        if interval >= 3600 { return "\(Int(interval / 3600))h" }
+        if interval >= 60 { return "\(Int(interval / 60))m" }
+        return "<1m"
+    }
+}
