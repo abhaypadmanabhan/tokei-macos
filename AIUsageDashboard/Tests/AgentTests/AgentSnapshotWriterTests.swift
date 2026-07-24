@@ -90,9 +90,10 @@ final class AgentSnapshotWriterTests: XCTestCase {
     }
 
     func testConfidenceCollapsesToPublicLabels() {
-        func label(_ c: MetricConfidence) -> String? {
-            AgentSnapshotWriter.buildSnapshot(
-                from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 10, confidence: c)])],
+        func label(_ confidence: MetricConfidence) -> String? {
+            let win = window(.weekly, used: 10, confidence: confidence)
+            return AgentSnapshotWriter.buildSnapshot(
+                from: [snapshot(.codex, displayName: "Codex", windows: [win])],
                 generatedAt: generatedAt
             ).providers[0].windows.first?.confidence
         }
@@ -111,7 +112,7 @@ final class AgentSnapshotWriterTests: XCTestCase {
             windows: [
                 window(.weekly, used: nil, limit: nil), // dropped
                 window(.daily, used: nil, remaining: 30), // used = 100-30 = 70 → kept
-                window(.monthly, used: 55), // kept
+                window(.monthly, used: 55) // kept
             ]
         )
         let provider = AgentSnapshotWriter.buildSnapshot(from: [snap], generatedAt: generatedAt).providers[0]
@@ -130,9 +131,10 @@ final class AgentSnapshotWriterTests: XCTestCase {
     func testSchemaRoundTripsThroughJSON() throws {
         let snaps = [
             snapshot(.claudeCode, displayName: "Claude Code",
-                     windows: [window(.fiveHour, used: 42, resetAt: generatedAt)], todayTokens: 1000, lastSyncedAt: generatedAt),
+                     windows: [window(.fiveHour, used: 42, resetAt: generatedAt)],
+                     todayTokens: 1000, lastSyncedAt: generatedAt),
             snapshot(.antigravity, displayName: "Antigravity",
-                     windows: [window(.weekly, used: 92)], todayTokens: 250, lastSyncedAt: generatedAt),
+                     windows: [window(.weekly, used: 92)], todayTokens: 250, lastSyncedAt: generatedAt)
         ]
         let built = AgentSnapshotWriter.buildSnapshot(from: snaps, generatedAt: generatedAt)
 
@@ -146,9 +148,14 @@ final class AgentSnapshotWriterTests: XCTestCase {
         let snaps = [snapshot(.claudeCode, displayName: "Claude Code",
                               windows: [window(.fiveHour, used: 42, source: "oauth_usage_api")], todayTokens: 1000)]
         let built = AgentSnapshotWriter.buildSnapshot(from: snaps, generatedAt: generatedAt)
-        let json = String(decoding: try AgentSnapshot.makeEncoder().encode(built), as: UTF8.self).lowercased()
+        let data = try AgentSnapshot.makeEncoder().encode(built)
+        let json = try XCTUnwrap(String(bytes: data, encoding: .utf8)).lowercased()
 
-        for forbidden in ["access_token", "refresh_token", "authorization", "\"cookie\"", "bearer", "password", "\"secret\"", "api_key", "apikey"] {
+        let forbiddenTerms = [
+            "access_token", "refresh_token", "authorization", "\"cookie\"",
+            "bearer", "password", "\"secret\"", "api_key", "apikey"
+        ]
+        for forbidden in forbiddenTerms {
             XCTAssertFalse(json.contains(forbidden), "snapshot JSON must not contain \(forbidden)")
         }
     }
@@ -157,11 +164,11 @@ final class AgentSnapshotWriterTests: XCTestCase {
 
     func testWriteProducesDecodableFile() async throws {
         let writer = AgentSnapshotWriter(directory: tempDirectory)
-        let ok = await writer.write(
+        let succeeded = await writer.write(
             from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 31)], todayTokens: 500)],
             generatedAt: generatedAt
         )
-        XCTAssertTrue(ok)
+        XCTAssertTrue(succeeded)
 
         let location = await writer.location
         XCTAssertTrue(FileManager.default.fileExists(atPath: location.path))
@@ -177,8 +184,14 @@ final class AgentSnapshotWriterTests: XCTestCase {
 
     func testWriteOverwritesPreviousSnapshot() async throws {
         let writer = AgentSnapshotWriter(directory: tempDirectory)
-        await writer.write(from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 10)])], generatedAt: generatedAt)
-        await writer.write(from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 80)])], generatedAt: generatedAt)
+        await writer.write(
+            from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 10)])],
+            generatedAt: generatedAt
+        )
+        await writer.write(
+            from: [snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 80)])],
+            generatedAt: generatedAt
+        )
 
         let location = await writer.location
         let decoded = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: Data(contentsOf: location))

@@ -4,12 +4,17 @@ import XCTest
 final class AgentRecommendationEngineTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
-    private func util(_ providerID: ProviderID, _ percent: Double, window: QuotaWindowType = .weekly, resetAt: Date? = nil) -> Utilization {
+    private func util(
+        _ providerID: ProviderID,
+        _ percent: Double,
+        window: QuotaWindowType = .weekly,
+        resetAt: Date? = nil
+    ) -> Utilization {
         Utilization(providerID: providerID, window: window, usedPercent: percent, resetAt: resetAt, confidence: .exact)
     }
 
     private let names: [ProviderID: String] = [
-        .claudeCode: "Claude Code", .codex: "OpenAI Codex", .antigravity: "Antigravity",
+        .claudeCode: "Claude Code", .codex: "OpenAI Codex", .antigravity: "Antigravity"
     ]
 
     func testRoutesToLeastFilledAndAvoidsOverThreshold() {

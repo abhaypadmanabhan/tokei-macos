@@ -156,27 +156,33 @@ final class ClineMessagesParserTests: XCTestCase {
     func testOversizedFileIsSkippedWithWarning() async {
         let sessionID = "1783325327533_large"
         let url = writeFixture(ClineFixtures.twoAssistantMessages(sessionID: sessionID), sessionID: sessionID)
-        let usage = await makeParser(maxFileSizeBytes: 10).parse(logSources: [makeSource(url: url, sessionID: sessionID)])
+        let source = makeSource(url: url, sessionID: sessionID)
+        let usage = await makeParser(maxFileSizeBytes: 10).parse(logSources: [source])
 
         XCTAssertEqual(usage.lifetime.totalTokens, 0)
         XCTAssertEqual(usage.totalCost, 0, accuracy: 0.0001)
         XCTAssertEqual(usage.warnings.count, 1)
         let message = usage.warnings.first?.message ?? ""
         XCTAssertTrue(message.contains(url.lastPathComponent), "warning should name the file: \(message)")
-        XCTAssertTrue(message.contains("exceeds") || message.contains("size"), "warning should mention the size cap: \(message)")
+        XCTAssertTrue(
+            message.contains("exceeds") || message.contains("size"),
+            "warning should mention the size cap: \(message)"
+        )
     }
 
     func testSymlinkedOversizedFileIsSkippedWithWarning() async {
         let sessionID = "1783325327533_symlink"
         let targetSessionID = "1783325327533_target"
-        let targetURL = writeFixture(ClineFixtures.twoAssistantMessages(sessionID: targetSessionID), sessionID: targetSessionID)
+        let targetFixture = ClineFixtures.twoAssistantMessages(sessionID: targetSessionID)
+        let targetURL = writeFixture(targetFixture, sessionID: targetSessionID)
 
         let sessionDir = tempDirectory.appendingPathComponent(sessionID, isDirectory: true)
         try? FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
         let symlinkURL = sessionDir.appendingPathComponent("\(sessionID).messages.json")
         try? FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: targetURL)
 
-        let usage = await makeParser(maxFileSizeBytes: 10).parse(logSources: [makeSource(url: symlinkURL, sessionID: sessionID)])
+        let source = makeSource(url: symlinkURL, sessionID: sessionID)
+        let usage = await makeParser(maxFileSizeBytes: 10).parse(logSources: [source])
 
         XCTAssertEqual(usage.lifetime.totalTokens, 0)
         XCTAssertEqual(usage.warnings.count, 1)

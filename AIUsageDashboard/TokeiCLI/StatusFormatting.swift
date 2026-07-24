@@ -52,7 +52,7 @@ enum StatusFormatting {
                         "\(percent(window.usedPercent))%",
                         window.resetsAt.map(resetColumn(from:)) ?? "—",
                         window.confidence,
-                        window.source,
+                        window.source
                     ])
                 }
             }

@@ -73,7 +73,7 @@ struct MCPServer {
         return [
             "protocolVersion": clientVersion ?? Self.protocolVersion,
             "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": Self.serverName, "version": version],
+            "serverInfo": ["name": Self.serverName, "version": version]
         ]
     }
 
@@ -83,7 +83,7 @@ struct MCPServer {
         let emptyInput: [String: Any] = [
             "type": "object",
             "properties": [String: Any](),
-            "additionalProperties": false,
+            "additionalProperties": false
         ]
         return [
             [
@@ -92,15 +92,15 @@ struct MCPServer {
                     + "quota windows (used %, reset time, confidence, source), aggregate "
                     + "utilization, token counts, and timestamps. Includes a `stale` flag when "
                     + "the data is old or Tokei isn't running.",
-                "inputSchema": emptyInput,
+                "inputSchema": emptyInput
             ],
             [
                 "name": "get_route_recommendation",
                 "description": "Return only Tokei's routing recommendation: which provider to "
                     + "route new work to (least-utilized) and which to avoid (near their limit), "
                     + "with a human-readable reason. Use before delegating to another coding agent.",
-                "inputSchema": emptyInput,
-            ],
+                "inputSchema": emptyInput
+            ]
         ]
     }
 
@@ -142,13 +142,20 @@ struct MCPServer {
     }
 
     private func encode<T: Encodable>(_ value: T) throws -> String {
-        String(decoding: try AgentSnapshot.makeEncoder().encode(value), as: UTF8.self)
+        let data = try AgentSnapshot.makeEncoder().encode(value)
+        guard let text = String(bytes: data, encoding: .utf8) else {
+            throw EncodingError.invalidValue(
+                value,
+                EncodingError.Context(codingPath: [], debugDescription: "Encoded data is not valid UTF-8")
+            )
+        }
+        return text
     }
 
     private func textContent(_ text: String, isError: Bool = false) -> [String: Any] {
         [
             "content": [["type": "text", "text": text]],
-            "isError": isError,
+            "isError": isError
         ]
     }
 

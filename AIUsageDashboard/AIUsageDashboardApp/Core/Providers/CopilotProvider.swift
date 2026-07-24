@@ -50,12 +50,12 @@ public actor CopilotProvider: UsageProvider {
                 "Library/Application Support/Code/User/globalStorage/github.copilot",
                 isDirectory: true
             ),
-            URL(fileURLWithPath: "/Applications/GitHub Copilot for Xcode.app", isDirectory: true),
+            URL(fileURLWithPath: "/Applications/GitHub Copilot for Xcode.app", isDirectory: true)
         ]
         self.extensionDirectories = extensionDirectories ?? [
             home.appendingPathComponent(".vscode/extensions", isDirectory: true),
             home.appendingPathComponent(".vscode-insiders/extensions", isDirectory: true),
-            home.appendingPathComponent(".cursor/extensions", isDirectory: true),
+            home.appendingPathComponent(".cursor/extensions", isDirectory: true)
         ]
     }
 
@@ -98,7 +98,8 @@ public actor CopilotProvider: UsageProvider {
         let isInstalled = availability == .installed
         let warning = isInstalled
             ? ProviderWarning(
-                message: "GitHub Copilot usage is unavailable because Copilot doesn't persist a documented local usage or quota record that Tokei can safely read.",
+                message: "GitHub Copilot usage is unavailable because Copilot doesn't persist a documented "
+                    + "local usage or quota record that Tokei can safely read.",
                 level: .info
             )
             : ProviderWarning(

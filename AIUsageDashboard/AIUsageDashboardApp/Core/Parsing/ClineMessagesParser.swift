@@ -35,10 +35,12 @@ public actor ClineMessagesParser {
 
         for source in logSources {
             do {
-                let fileSize = (try? FileManager.default.attributesOfItem(atPath: source.url.path)[.size] as? UInt64) ?? 0
+                let attributes = try? FileManager.default.attributesOfItem(atPath: source.url.path)
+                let fileSize = (attributes?[.size] as? UInt64) ?? 0
                 guard fileSize <= maxFileSizeBytes else {
+                    let name = source.url.lastPathComponent
                     warnings.append(ProviderWarning(
-                        message: "\(source.url.lastPathComponent): file size \(fileSize) exceeds maximum \(maxFileSizeBytes); skipped",
+                        message: "\(name): file size \(fileSize) exceeds maximum \(maxFileSizeBytes); skipped",
                         level: .warning
                     ))
                     continue

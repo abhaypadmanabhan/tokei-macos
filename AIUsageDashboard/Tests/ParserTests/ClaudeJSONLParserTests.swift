@@ -246,6 +246,9 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(usage.warnings.count, 1)
     let message = usage.warnings.first?.message ?? ""
     XCTAssertTrue(message.contains("notAFile.jsonl"), "warning should contain the filename: \(message)")
-    XCTAssertFalse(message.contains(tempDirectory.path), "warning should not contain the full filesystem path: \(message)")
+    XCTAssertFalse(
+      message.contains(tempDirectory.path),
+      "warning should not contain the full filesystem path: \(message)"
+    )
   }
 }
