@@ -8,4 +8,5 @@ public enum ProviderID: String, CaseIterable, Sendable {
     case cline = "cline"
     case opencode = "opencode"
     case gemini = "gemini"
+    case copilot = "copilot"
 }

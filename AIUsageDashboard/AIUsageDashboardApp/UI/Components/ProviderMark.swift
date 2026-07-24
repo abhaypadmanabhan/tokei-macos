@@ -30,6 +30,7 @@ struct ProviderMark: View {
         case .cline: return "mark_cline"
         case .opencode: return "mark_opencode"
         case .gemini: return "mark_gemini"
+        case .copilot: return "mark_copilot"
         }
     }
 
@@ -45,6 +46,7 @@ struct ProviderMark: View {
         case .cline: return "terminal"
         case .opencode: return "curlybraces"
         case .gemini: return "sparkle"
+        case .copilot: return "chevron.left.forwardslash.chevron.right"
         }
     }
 
