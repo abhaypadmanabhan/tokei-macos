@@ -90,6 +90,19 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
   "X tokens all-time" lifetime stat; fourth menu-bar display mode (all-time tokens).
   Totals compare like-with-like: only providers with BOTH a priced usage figure and a
   configured plan cost feed the headline multiple.
+- **Agent-facing quota snapshot + `tokei` CLI/MCP server (#57)** (2026-07-24): Tokei
+  writes a versioned, world-readable `agent-snapshot.json` after every refresh
+  (percentages/counts/timestamps only, no secrets — audited + test-guarded). A bundled
+  read-only `tokei` helper (`Tokei.app/Contents/Helpers/tokei`) exposes it via
+  `tokei status [--json]` and a dependency-free stdio MCP server (`tokei mcp`, two
+  tools: `get_usage`, `get_route_recommendation`) so orchestrating agents (Claude Code,
+  Codex CLI) can route work away from a near-exhausted provider. Never serves stale
+  data silently. Settings "Agent Access" registration UI is a follow-up, not yet built.
+- **GitHub Copilot provider detection (#26 Copilot half)** (2026-07-24): `CopilotProvider`
+  detects local Copilot installs (CLI/config markers, VS Code/Cursor extension dirs,
+  Copilot for Xcode) without ever reading credentials. Copilot doesn't expose a
+  documented local usage/quota record, so it honestly reports unavailable metrics
+  rather than a guessed number — Gemini/OpenCode (also #26) already had full data.
 
 ## What Is Stubbed (post-MVP)
 

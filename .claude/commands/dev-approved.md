@@ -19,7 +19,8 @@ EXPECT_CLEAN=1 bash .claude/gates/preflight.sh
 BASE_REF=main bash .claude/gates/run-all.sh full
 ```
 Abort if anything is red — a failing gate here means dev is not release-ready; send the
-user back to `/agents-done` or `/dev-reject`.
+user back to `/dev-reject` (or a standalone `/agents-done` re-collection if the gap is
+just an uncollected worktree).
 
 ## Step 2 — PR dev → main
 
@@ -77,7 +78,8 @@ adhoc archive as a test artifact, not a distributable. Record every produced art
 ## Step 8 — Release documentation
 
 Update (create if missing): CHANGELOG / release notes, known issues, "manual QA completed"
-record (link the `/agents-done` checklist run), rollback instructions (`git revert -m 1 <merge-sha>`
+record (link the collection run's checklist — via `/morning-patch` or standalone
+`/agents-done`), rollback instructions (`git revert -m 1 <merge-sha>`
 per package; `dev`/`main` safety net). Keep the Patch Bible linked as the audit trail.
 
 ## Step 9 — Website

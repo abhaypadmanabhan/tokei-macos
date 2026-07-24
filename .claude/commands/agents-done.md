@@ -10,7 +10,14 @@ You are the **integration owner**. Merge only what is safe; keep a clean audit t
 Never merge broken, untested, or suspicious work. Never hide a failing test. Optional
 scope from user: `$ARGUMENTS`.
 
-Announce: "Using /agents-done to verify agent work and integrate into dev."
+This procedure is now also invoked automatically, inline, by `/morning-patch` Step 9
+once its herdr-dispatched agents finish, and by `/dev-reject`'s recovery loop after a
+fix-forward worktree — in those cases skip the announcement below and just run the
+steps as a continuation of that command. It remains fully runnable standalone (e.g.
+to re-collect after a manual/fallback-dispatched agent, or a partial `$ARGUMENTS` scope).
+
+Announce (only when run standalone, i.e. typed directly): "Using /agents-done to
+verify agent work and integrate into dev."
 
 ## Step 1 — Ensure `dev`
 

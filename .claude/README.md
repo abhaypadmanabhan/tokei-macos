@@ -7,19 +7,25 @@ isolate parallel agents; every step leaves an audit trail.
 ## The loop
 
 ```
-/morning-patch  → plan, prioritize, write Patch Bible, create worktrees, emit agent prompts
-      ↓            (you dispatch the emitted prompts to the chosen external agents)
-/agents-done    → verify each worktree, merge accepted work into dev, full gates, dev build + manual QA list
+/morning-patch  → plan, prioritize, write Patch Bible, create worktrees,
+                   dispatch agents directly via herdr, wait for the fleet,
+                   then automatically verify/merge/gate/build + manual QA list
       ↓
    manual test
    ┌────────────┴────────────┐
 /dev-approved            /dev-reject
  PR dev→main,             triage failure, trace to commits,
  security-review,         fix worktree OR revert bad merge,
- simplify, release        update Bible → back to /agents-done
- gates, archive,
+ simplify, release        dispatch fixing agent via herdr,
+ gates, archive,          auto re-collect on completion
  docs, website
 ```
+
+`/agents-done` still exists as the collection/verify/merge/gate/build procedure —
+it's just no longer a step you type by hand. `/morning-patch` runs it inline once
+its dispatched agents finish, and `/dev-reject`'s recovery loop runs it again after
+a fix-forward worktree. It's still fully runnable standalone (e.g. to re-collect
+after a manual/fallback-dispatched agent).
 
 Branch model: `main` (release, protected) ← `dev` (integration) ← `patch/<date>/<slug>`
 (one per agent, in its own worktree under `../tokei-worktrees/`). Each package merges to
@@ -29,10 +35,10 @@ Branch model: `main` (release, protected) ← `dev` (integration) ← `patch/<da
 
 | Command | Role |
 |---------|------|
-| `/morning-patch` | Plan & launch the day's parallel work |
-| `/agents-done` | Collect, verify, merge to `dev`, build for manual test |
+| `/morning-patch` | Plan, launch, dispatch via herdr, and auto-collect the day's parallel work |
+| `/agents-done` | Collect, verify, merge to `dev`, build for manual test — invoked automatically by `/morning-patch` and `/dev-reject`; still runnable standalone |
 | `/dev-approved` | Promote `dev` toward release (PR, security, simplify, archive, docs) |
-| `/dev-reject` | Recover safely from failed manual testing |
+| `/dev-reject` | Recover safely from failed manual testing; dispatches the fix via herdr, auto re-collects |
 
 ## Gates (`.claude/gates/`)
 
@@ -63,6 +69,42 @@ BASE_REF=main bash .claude/gates/run-all.sh release  # strict: lint/format becom
 
 `swiftlint`/`swiftformat` are not installed on this machine → those gates SKIP by default.
 `brew install swiftlint swiftformat` to make them enforce (or use `release` mode to require them).
+
+## Orchestrator dispatch (herdr)
+
+`/morning-patch` and `/dev-reject` dispatch work-package/fix agents directly via the
+`herdr` skill (terminal multiplexer control, requires `HERDR_ENV=1`) instead of
+printing a copy-paste prompt for a human to paste in. Verified 2026-07-23 (see
+`herdr-agent-fleet-test` memory for the full write-up):
+
+| Kind | herdr `--kind` | Auto-approve flag | Notes |
+|---|---|---|---|
+| Claude Code | `claude` | `--dangerously-skip-permissions` | real lifecycle tracking |
+| Codex | `codex` | `--dangerously-bypass-approvals-and-sandbox` | real lifecycle tracking |
+| Cursor | `cursor` | `--trust --force` | real lifecycle tracking; async paste — submit via `pane send-text`+`pane send-keys enter` |
+| opencode | `opencode` | `--auto` | **pinned to a local model here** — 80s+ per response is normal, not stalled; has crashed once (Bun segfault); least reliable kind currently |
+| Cline | `cline` | `--auto-approve true` | **no herdr lifecycle tracking** — submit via `pane send-text`+`pane send-keys enter`, confirm completion only via a task-specific marker string, never trust `agent_status` |
+| Antigravity | `agy` | `--dangerously-skip-permissions` | **no herdr lifecycle tracking** (like cline) — submit via `pane send-text`+`pane send-keys enter`; the herdr skill itself had to be installed into agy's own plugin system (`agy plugin install`, `~/.gemini/config/plugins/herdr/`) before it could see it — see `herdr-agent-fleet-test` memory for how |
+| Kimi | `kimi` | untested | verify before relying on it |
+| GLM | *(no herdr kind)* | — | fall back to the old copy-paste prompt for that package |
+
+Dispatched agents are polled (bounded iterations), not babysat synchronously. Any
+agent reaching `blocked` is surfaced immediately with its pane contents so the human
+can intervene — never silently retried or hung on forever.
+
+## Internal research subagents
+
+Separately from the table above (which is about the *external work-package agents*),
+`/morning-patch` and `/agents-done` also spawn Claude Code's own Agent-tool
+subagents for their own research/gathering/review substeps (repo inspection, diff
+review before a merge decision) instead of doing that work inline in the
+orchestrator's context. Model tier by stakes: mundane/repetitive gathering (issue
+lists, TODO greps, test-run summaries) → **Sonnet** or smaller; high-stakes judgment
+(reviewing a merge diff for architecture-rule/frozen-contract compliance, deciding
+what's safe to land) → **Opus**. This is a different rule from the UI-agent
+Sonnet/Opus tiering in "Agent selection" below — that one picks the model for the
+*external* Claude Code work-package agent; this one picks the model for the
+orchestrator's *own* internal helpers.
 
 ## Hook (`.claude/hooks/pre-commit`)
 

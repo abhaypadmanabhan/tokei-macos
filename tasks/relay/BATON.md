@@ -141,3 +141,44 @@ Then the user returns to Fable (Claude Code) for final review with: "relay done"
 - Verified fetch state (all fresh, one sync pass): Cursor ✅ live (1.13M today, quota 0.38% Pro), Claude ✅ (quota session 61%/weekly 28%), Codex ✅ (weekly 1%, $553 est), opencode ✅ (after fix), Cline idle (no 24h sessions), Gemini not-signed-in (user runs `gemini`), Antigravity plan+credits only.
 - **Antigravity ≈ Gemini finding** (`tasks/reports/provider-connections-2026-07-21.md`): Antigravity is Google's Gemini IDE (stores under ~/.gemini/antigravity*), but its brain transcripts hold conversation content, NO token counts → real Antigravity tokens not locally available (only estimable); weekly/5h quota in-app only. No clean fix — filed as follow-up options.
 - Tests: 304 Core, `run-all.sh full` ALL GREEN on dev. Security: Core parser change, 0 new network/credential surface (immutable URI uses app-generated temp path).
+
+### Patch 2026-07-24 — herdr-dispatch pipeline dry run: WP-1 agent MCP + WP-2 Copilot + WP-3 robustness (morning-patch → herdr dispatch → auto-collect, first live run)
+- Trigger: live dry run of the newly-restructured /morning-patch pipeline (direct herdr
+  dispatch to agent CLIs + automatic inline collection, replacing the old copy-paste +
+  manual /agents-done flow). User also mandated including the MCP-integration issue.
+- Selection correction: 4 of 8 initial candidates (#41, #48, #55, plus already-known
+  #49/#51/#54) turned out already shipped but left open on GitHub — caught by
+  cross-checking prior Patch Bibles + live source before dispatch. Recommend bulk-closing
+  all seven stale issues. See `tasks/reports/morning-patch-dryrun-hindrances-2026-07-24.md`
+  for the full pipeline-assessment writeup (a real gap: nothing closes issues on merge).
+- Merged into `dev` (not `main`), in order WP-3 → WP-2 → WP-1:
+  - **WP-3 (#19 Core slice, Cline):** Cline-log 16MB size cap, atomic `UsageStore.persist()`
+    via `replaceItemAt` + new-file `0600` perms (existing files never chmod'd), Claude
+    parser warnings now filename-only (no full path leak).
+  - **WP-2 (#26 Copilot half, Codex):** `CopilotProvider` — detects local Copilot installs
+    via markers/extension dirs only (no credential reads); honestly reports `.unavailable`
+    usage since Copilot has no documented local quota record (Gemini/OpenCode halves of
+    #26 were already shipped earlier). Mid-run: Codex correctly stopped and asked before
+    touching UI exhaustive-switch arms broken by the new `ProviderID.copilot` case;
+    approved minimal case-arm additions only (4 files, display-name/tint/icon/paths, no
+    new views/behavior).
+  - **WP-1 (#57, Claude Opus):** `AgentSnapshotWriter` + versioned `agent-snapshot.json`
+    (percentages/counts/timestamps only, audited + test-guarded against secrets) + bundled
+    `tokei` CLI (`Contents/Helpers/tokei`) with `tokei status [--json]` and a dependency-free
+    stdio MCP server (`tokei mcp`, 2 tools). Delivered beyond the "stretch goal" line in one
+    dispatch — full feature, not just the core writer.
+- Tests: 329 (WP-2/WP-3 baseline) → 344 after WP-1, all green on `dev` post-merge.
+  `run-all.sh full`: 7/8 PASS — only `no-uncommitted` FAILed, caused entirely by
+  pre-existing uncommitted pipeline-doc changes unrelated to these 3 packages (not
+  committed per standing "never commit without being asked" rule — left for the user).
+- Security review (`/security-review` on `3e16ed4..HEAD`): no findings ≥ threshold.
+  New `agent-snapshot.json` (world-readable by design) traced end-to-end — structurally
+  cannot carry more than percentages/counts/timestamps since the mapper never reads
+  `ProviderSnapshot.warnings`/`authStatus`/`costUsage`. MCP server takes no meaningful
+  tool input, only reads the one fixed/env-overridable snapshot path (env vars trusted
+  per this project's threat model).
+- Watch out: WP-1's `AgentRecommendationEngine` duplicates `MaxxerMath.routeTarget`
+  (#37) logic because `MaxxerMath` lives under `UI/`, not Core — flagged as a follow-up
+  consolidation once `MaxxerMath` moves into Core. Settings "Agent Access" registration
+  UI (copy-paste one-liners) is a known, explicitly-deferred follow-up, not built this
+  run. 4 stale pre-existing worktrees from 2026-07-22 still not pruned (out of scope).

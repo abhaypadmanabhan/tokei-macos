@@ -1,7 +1,7 @@
 ---
-description: Plan and launch the day's parallel engineering — inspect repo, prioritize issues, write the Patch Bible, create per-agent worktrees from dev, verify gates, emit copy-paste agent prompts.
+description: Plan and launch the day's parallel engineering — inspect repo, prioritize issues, write the Patch Bible, create per-agent worktrees from dev, dispatch agents directly via herdr, wait for completion, then automatically collect/verify/merge/gate/build and emit a manual QA checklist.
 argument-hint: "[optional: issue filter, e.g. 'labels=bug' or a milestone]"
-allowed-tools: Bash(git*), Bash(gh*), Bash(bash .claude/gates/*), Bash(xcodegen*), Bash(xcodebuild*), Bash(grep*), Bash(rg*), Bash(find*), Bash(ls*), Bash(cp*), Bash(chmod*), Bash(mkdir*), Read, Write, Edit, Skill
+allowed-tools: Bash(git*), Bash(gh*), Bash(bash .claude/gates/*), Bash(xcodegen*), Bash(xcodebuild*), Bash(grep*), Bash(rg*), Bash(find*), Bash(ls*), Bash(cp*), Bash(chmod*), Bash(mkdir*), Bash(herdr*), Read, Write, Edit, Skill, Agent
 ---
 
 # /morning-patch — plan & launch parallel work
@@ -24,7 +24,10 @@ Announce: "Using /morning-patch to plan and launch today's parallel work."
 
 ## Step 1 — Inspect repo state
 
-Gather, in parallel where possible, and summarize concisely:
+This is mundane gathering work — do not burn your own context doing it inline.
+Spawn it to a Claude Code Agent-tool subagent (model tier: **Sonnet** or smaller —
+this is repetitive collection, not judgment), and have it return a concise summary
+covering:
 
 - Current branch, `git status --short`, recent commits, existing `git worktree list`.
 - **Open issues:** `gh issue list --state open --limit 50` (if `gh` unauthenticated,
@@ -35,6 +38,9 @@ Gather, in parallel where possible, and summarize concisely:
   (both SKIP cleanly if swiftlint/swiftformat absent — note that).
 - **Product gaps:** read `tasks/BACKLOG.md`, `tasks/todo.md`, README stubbed list,
   `AIUsageDashboard/docs/` roadmap. Note Cursor (stubbed) and Antigravity (skeleton).
+
+Read the subagent's summary and proceed from it — do not re-run the same commands
+yourself.
 
 ## Step 2 — Prioritize
 
@@ -130,10 +136,14 @@ numeric data. No shadows, no gradients, no rounded card grids, radius ≤ 4px. N
 kickers (`01 / OVERVIEW`). Exposed 1px hairline structure. 2px accent tick on active state.
 Real empty / loading / error states on every surface.
 
-## Step 8 — Emit one copy-paste prompt per agent
+## Step 8 — Dispatch via herdr
 
-For each work package output a fenced block the user can paste verbatim into that agent.
-Every prompt MUST contain, in this shape:
+Requires `HERDR_ENV=1` (check first: `test "${HERDR_ENV:-}" = 1`). If unset, you are
+not running inside Herdr — fall back to the old copy-paste behavior for every
+package (see the fallback block at the end of this step) and say so plainly.
+
+Build the same self-contained prompt as before for each work package — the content
+is unchanged, only the delivery mechanism changes:
 
 ```
 cd <ABSOLUTE worktree path>
@@ -161,18 +171,101 @@ Commit ONLY in this worktree (small, reviewable commits). Do NOT merge, do NOT p
 do NOT open a PR. The pre-commit hook runs secret/artifact/format checks — respect it.
 
 When done, APPEND a completion note to the Patch Bible §8 (branch+commits, what's done,
-what's stubbed, tests run + result, files touched, risks). Then stop.
+what's stubbed, tests run + result, files touched, risks), then print the exact line
+HERDR_TEST_DONE as your last line if you are cline (marker convention — see below).
 ```
 
-Tailor scope/criteria/tests per package. Keep prompts self-contained.
+Tailor scope/criteria/tests per package. Then, per package, resolve its assigned
+agent kind and dispatch:
+
+**Kind → verified auto-approve flag** (no permission prompts; confirmed working
+2026-07-23, see `herdr-agent-fleet-test` memory):
+
+| Kind | herdr `--kind` | Auto-approve flag |
+|---|---|---|
+| Claude Code | `claude` | `--dangerously-skip-permissions` |
+| Codex | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| Cursor | `cursor` | `--trust --force` |
+| opencode | `opencode` | `--auto` — **this repo's opencode is pinned to a local model: 80s+ per response is normal, not stalled, and it has crashed once (Bun segfault). Treat as the least reliable/slowest kind; give it a much longer timeout than the others.** |
+| Cline | `cline` | `--auto-approve true` (also its CLI default) |
+| Antigravity | `agy` | `--dangerously-skip-permissions` — like cline, **no herdr lifecycle tracking**; submit via `pane send-text`+`pane send-keys enter`. The herdr skill must be installed into its own plugin system first (`agy plugin install`, one-time — already done as of 2026-07-24, see `herdr-agent-fleet-test` memory) or it won't recognize itself as running inside herdr. |
+| Kimi | `kimi` | untested this session — verify its flag before relying on it |
+| **GLM** | **not a herdr kind today** | **no herdr dispatch available — fall back to printing the copy-paste block for this package only, and say so in Output** |
+
+For each herdr-dispatchable package:
+
+```bash
+herdr pane split --current --direction right --cwd "<ABSOLUTE worktree path>" --no-focus
+# → read new pane_id from .result.pane.pane_id
+herdr agent start "<wp-slug>" --kind <kind> --pane <pane_id> --timeout 45000 -- <verified-flag>
+```
+
+Submit the prompt:
+- **claude / codex / opencode:** `herdr agent prompt "<wp-slug>" "<prompt text>" --wait --timeout <ms>`
+  (use a long timeout for opencode per the caveat above).
+- **cursor / cline:** these apply bracketed-paste text asynchronously — submit as two
+  separate calls instead: `herdr pane send-text <pane_id> "<prompt text>"` then
+  `herdr pane send-keys <pane_id> enter`. Cursor still has real lifecycle tracking
+  afterward (`agent wait`); cline does not — its `agent_status` is not trustworthy,
+  confirm completion only via the `HERDR_TEST_DONE`-style marker you asked it to
+  print, read back with `herdr pane read <pane_id> --source recent-unwrapped`.
+
+If a prompt lands in the composer but doesn't submit (`agent_prompt_stalled`), don't
+resend the text — send one bare `herdr agent send-keys "<name>" enter` and re-check.
+
+## Step 8.5 — Wait for the fleet, surface blockers
+
+Poll the dispatched agents rather than babysitting synchronously. Loop (bounded —
+e.g. 20 iterations max so this can never hang forever):
+
+- claude/codex/cursor: `herdr agent wait "<name>" --until blocked --timeout 60000`
+  (or poll `herdr agent list` for status) run concurrently across all dispatched
+  names.
+- cline: poll `herdr pane read <pane_id> --source recent-unwrapped` for its
+  completion marker; ignore `agent_status` for it entirely.
+- opencode: same polling, much longer per-iteration timeout (local model).
+
+On each pass: agents reporting `done`/`idle` (or cline's marker present) move to
+"ready for collection." Agents reporting `blocked` are surfaced **immediately** in
+your running output — print their name, pane id, and `herdr pane read` contents —
+so the human can intervene live; do not silently retry a blocked agent. Agents still
+`working` loop again. If the iteration cap is hit with packages still outstanding,
+stop and report exactly which ones, rather than hanging.
+
+Once every dispatched package is done or explicitly quarantined-by-timeout, continue
+directly to Step 9 in the same run — do not stop and wait for the user to type
+anything.
+
+## Step 9 — Auto-collect (was: tell the user to run `/agents-done`)
+
+Execute `.claude/commands/agents-done.md` Steps 1–7 now, inline, in this same run,
+exactly as written there (inspect every worktree, quarantine gate, verify + merge
+accepted worktrees in Bible §2 order, full gate run on `dev`, build a testable dev
+`.app`, emit the tailored manual QA checklist). That file's step logic is the source
+of truth — read it and follow it; do not duplicate or diverge from it here.
+
+For the diff-review sub-step specifically (agents-done Step 4.1 — reading each
+merge diff and judging architecture-rule compliance before merging): spawn it to a
+Claude Code Agent-tool subagent tiered **Opus** — this is the risky, judgment-heavy
+gate that decides what reaches `dev`, not mundane collection.
 
 ## Output (produce all of these)
 
 1. **Prioritized issue plan** (scored table + selection rationale).
 2. **Worktree map** (path → branch → agent).
 3. **Agent assignment table.**
-4. **Agent prompts** (one fenced block each).
+4. **Dispatch log** — which packages went via herdr (kind + pane id) vs. fell back
+   to a copy-paste block (GLM, or `HERDR_ENV` unset).
 5. **Gates created/verified.**
-6. **Next command:** tell the user to run **`/agents-done`** once agents have committed.
+6. **Fleet wait outcome** — done/blocked/timed-out per package.
+7. **Collection results** — everything `/agents-done` used to output: per-agent
+   summary, what merged (shas + order), what was quarantined and why, gate/build
+   output, dev build path, manual QA checklist.
+8. **Next step:** `/dev-approved` if you expect manual testing to pass, or point at
+   `/dev-reject` if something's already known-broken.
 
-Do not launch the external agents yourself — you emit prompts the user dispatches.
+### Fallback (no herdr, or GLM packages)
+
+For any package without herdr dispatch, output its fenced copy-paste prompt block
+(same shape as above) instead, and do not include it in Step 8.5's polling — it
+will only enter Step 9's collection once the human confirms it's committed.
