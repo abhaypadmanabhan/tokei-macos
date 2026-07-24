@@ -1,7 +1,10 @@
 import Foundation
+import os
 
 public actor UsageStore {
     public static let shared = UsageStore()
+
+    private static let logger = Logger(subsystem: "ai.padzy.tokei", category: "UsageStore")
 
     private var snapshots: [ProviderID: ProviderSnapshot] = [:]
     private var dailyUsages: [DailyUsageKey: DailyUsage] = [:]
@@ -37,21 +40,47 @@ public actor UsageStore {
 
     private func persist() {
         let container = PersistenceContainer(snapshots: snapshots, dailyUsages: dailyUsages)
-        guard let data = try? JSONEncoder().encode(container) else { return }
 
-        try? FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(container)
+        } catch {
+            Self.logger.error("Failed to encode usage store: \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
-        let tempURL = directory.appendingPathComponent(UUID().uuidString + ".tmp")
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            Self.logger.error("Failed to create usage store directory: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+
+        let tempURL = directory.appendingPathComponent(fileName + ".tmp")
         do {
             try data.write(to: tempURL, options: .atomic)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
+
+            let fileExisted = FileManager.default.fileExists(atPath: fileURL.path)
+            if !fileExisted {
+                // Create a placeholder with restricted permissions so the atomic
+                // replace below yields a new file that is readable only by the owner.
+                guard FileManager.default.createFile(
+                    atPath: fileURL.path,
+                    contents: nil,
+                    attributes: [.posixPermissions: 0o600]
+                ) else {
+                    Self.logger.error("Failed to create usage store placeholder")
+                    try? FileManager.default.removeItem(at: tempURL)
+                    return
+                }
             }
-            try FileManager.default.moveItem(at: tempURL, to: fileURL)
+
+            _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: tempURL)
         } catch {
+            Self.logger.error("Failed to persist usage store: \(error.localizedDescription, privacy: .public)")
             try? FileManager.default.removeItem(at: tempURL)
         }
     }
