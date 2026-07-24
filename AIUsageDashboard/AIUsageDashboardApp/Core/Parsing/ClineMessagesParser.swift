@@ -14,10 +14,16 @@ public actor ClineMessagesParser {
 
     private let calendar: Calendar
     private let now: () -> Date
+    private let maxFileSizeBytes: UInt64
 
-    public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
+    public init(
+        calendar: Calendar = .current,
+        now: @escaping () -> Date = Date.init,
+        maxFileSizeBytes: UInt64 = 16 * 1024 * 1024
+    ) {
         self.calendar = calendar
         self.now = now
+        self.maxFileSizeBytes = maxFileSizeBytes
     }
 
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
@@ -29,6 +35,15 @@ public actor ClineMessagesParser {
 
         for source in logSources {
             do {
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: source.url.path)[.size] as? UInt64) ?? 0
+                guard fileSize <= maxFileSizeBytes else {
+                    warnings.append(ProviderWarning(
+                        message: "\(source.url.lastPathComponent): file size \(fileSize) exceeds maximum \(maxFileSizeBytes); skipped",
+                        level: .warning
+                    ))
+                    continue
+                }
+
                 let data = try Data(contentsOf: source.url)
                 let sessionFile = try JSONDecoder().decode(ClineSessionFile.self, from: data)
                 let sessionMillis = sessionMillisHint(from: source.sessionID ?? source.url.deletingLastPathComponent().lastPathComponent)
