@@ -121,3 +121,41 @@
   gives clean monochrome single-shape SVGs that drop straight into a
   template-rendering-intent imageset and tint per-agent. Keep the path's
   `fill-rule` (opencode's frame needs evenodd).
+
+## 2026-07-25 — Shipping an MCP server: a tool nobody calls is dead weight
+- **The correction:** I shipped `tokei mcp` with two accurate tool descriptions and
+  called it done. Accurate ≠ invoked. A description that opens with "Returns …"
+  answers a question the agent wasn't asking; the agent needs to know *when to
+  reach for this*, and it decides that from the opening clause.
+- **The mechanism I'd missed:** MCP's `initialize` result takes an optional
+  `instructions` string. Clients surface it to the model **once at connect time**,
+  so it persists for the whole session — that is how a standard MCP server "knows
+  when to use what". Without it, nothing makes an orchestrating agent check quota
+  before it spawns a subagent.
+- **Fix pattern (three layers, since none is guaranteed):** server-level
+  `instructions` (some clients ignore it) → trigger-first tool descriptions (always
+  sent) → a steering line in `CLAUDE.md`/`AGENTS.md` (works with no MCP at all).
+- **Generalize:** when adding any agent-facing surface, write the *trigger* before
+  the payload. "Call this BEFORE you delegate" beats a perfect schema.
+
+## 2026-07-25 — Notarization: `xcodebuild archive` + export ≠ the release script
+- **Symptom:** 0.7.0 notarization came back `Invalid`, 18 errors. 16 were Sparkle's
+  nested helpers (`Autoupdate`, `Updater.app`, `Downloader.xpc`, `Installer.xpc`)
+  carrying `flags=0x10002(adhoc,runtime)`.
+- **Cause:** the build used `xcodebuild archive` + export, which skips
+  `build-app.sh`'s step-4 re-sign (`codesign --force --deep` on Sparkle). That step
+  is the only reason 0.6.1 passed. Use `scripts/release.sh`; don't hand-roll the
+  archive path.
+- **Corollary that bit right after:** the app-level sign is deliberately NOT
+  `--deep`, so anything added by a copy-files phase (the new `Contents/Helpers/tokei`)
+  keeps xcodebuild's signature — Developer ID and hardened runtime, but **no secure
+  timestamp**, which notarization rejects. Every copied-in executable needs its own
+  explicit re-sign, inside-out, before the app.
+- **Diagnose before rebuilding:** `xcrun notarytool history` + `notarytool log <id>`
+  names the exact failing path and reason. Reading it first saved a blind rebuild.
+- **Publish order matters:** create the GitHub release and confirm the asset is live
+  (`HTTP 200`, `content-length` == the appcast's `length`) BEFORE pushing the
+  appcast. Feed first = clients 404 mid-update.
+- **Appcast drift is a downgrade risk:** `docs/appcast.xml` on dev was a version
+  behind what main/Pages served. Regenerating from dev would have published 0.6.0
+  over 0.6.1. Pages serves `main:/docs` — treat that as the source of truth.
