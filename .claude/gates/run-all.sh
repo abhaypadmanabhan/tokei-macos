@@ -3,7 +3,7 @@
 # Deterministic order; stops nothing (runs all), exits non-zero if any FAIL.
 #
 # Usage:
-#   run-all.sh fast     # cheap gates only: preflight,no-secret,no-large-artifact,no-uncommitted,format,lint
+#   run-all.sh fast     # cheap gates only: preflight,no-secret,no-large-artifact,no-uncommitted,cli-version-sync,format,lint
 #   run-all.sh full     # fast + build + test          (default)
 #   run-all.sh release  # full + STRICT_GATES=1        (lint/format become hard)
 #
@@ -14,8 +14,8 @@ mode="${1:-full}"
 [ "$mode" = "release" ] && export STRICT_GATES=1
 
 case "$mode" in
-  fast)    gates=(preflight no-secret no-large-artifact no-uncommitted format lint) ;;
-  full|release) gates=(preflight no-secret no-large-artifact no-uncommitted format lint build test) ;;
+  fast)    gates=(preflight no-secret no-large-artifact no-uncommitted cli-version-sync format lint) ;;
+  full|release) gates=(preflight no-secret no-large-artifact no-uncommitted cli-version-sync format lint build test) ;;
   *) fail "unknown mode: $mode (use fast|full|release)" ;;
 esac
 

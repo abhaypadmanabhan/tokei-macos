@@ -49,11 +49,7 @@ struct MCPServer {
 
         switch method {
         case "initialize":
-            if let error = unsupportedProtocolVersionError(from: object) {
-                send(errorResponse(id: id, code: -32602, message: error))
-            } else {
-                respond(id: id, result: initializeResult())
-            }
+            respond(id: id, result: initializeResult())
         case "notifications/initialized", "notifications/cancelled":
             break // notifications — no response
         case "ping":
@@ -71,19 +67,14 @@ struct MCPServer {
 
     // MARK: - initialize
 
-    /// Only accept a client-requested protocol version when it exactly matches what we
-    /// implement — silently echoing back an arbitrary client-claimed version would let a
-    /// client believe we support a protocol shape we don't. `nil` params (no version
-    /// requested) is fine; we just proceed with our own version.
-    private func unsupportedProtocolVersionError(from request: [String: Any]) -> String? {
-        guard let clientVersion = (request["params"] as? [String: Any])?["protocolVersion"] as? String
-        else { return nil }
-        guard clientVersion == Self.protocolVersion else {
-            return "Unsupported protocol version \(clientVersion); server supports \(Self.protocolVersion)"
-        }
-        return nil
-    }
-
+    /// Always answer with the version we actually implement, never the one the client
+    /// asked for. That is the whole of MCP version negotiation: if the server doesn't
+    /// support the requested revision it responds with one it does, and the client
+    /// decides whether to continue. Erroring instead is a hard-fail against every
+    /// client on a newer spec revision — Claude Code 2.1.x requests `2025-11-25` and
+    /// got `-32602: Unsupported protocol version`, so `claude mcp add tokei` registered
+    /// fine and then never connected. Echoing the client's value back would be the
+    /// opposite bug (claiming support we don't have); returning our own is neither.
     private func initializeResult() -> [String: Any] {
         [
             "protocolVersion": Self.protocolVersion,
