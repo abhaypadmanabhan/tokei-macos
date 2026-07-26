@@ -159,3 +159,43 @@
 - **Appcast drift is a downgrade risk:** `docs/appcast.xml` on dev was a version
   behind what main/Pages served. Regenerating from dev would have published 0.6.0
   over 0.6.1. Pages serves `main:/docs` — treat that as the source of truth.
+
+## 2026-07-26 — Verify with the real client, not a friendly one
+- **The failure:** I shipped 0.7.0's MCP server after driving it with raw JSON-RPC
+  and declaring it verified. It never worked with any real client. I had chosen
+  `protocolVersion: 2024-11-05` myself, which is precisely the one value that
+  didn't trigger the bug. Claude Code sends `2025-11-25` and got
+  `-32602: Unsupported protocol version`.
+- **Rule:** when a feature's whole purpose is to be consumed by a specific client,
+  the verification must run that client. `claude mcp add` + `claude mcp list` and
+  look for `✔ Connected`. Hand-rolled protocol calls prove the parser works, not
+  that the integration works.
+- **Compounding trap:** `claude mcp add` reports success on *registration*. It never
+  connects. So the happy-looking output meant nothing. Any "add/register/configure"
+  command needs a separate health check before you call it done.
+- **On accepting review-bot findings:** the rejection came from a CodeRabbit finding
+  I merged unquestioned ("validates the version matches, errors otherwise"). It was
+  wrong — MCP negotiation requires answering with a version you *do* support. The
+  code already returned its own version, so the concern never existed. Check a bot's
+  premise against the spec before implementing it; a plausible-sounding finding can
+  introduce the regression it claims to prevent.
+
+## 2026-07-26 — notarytool crashes AFTER the upload lands
+- **Symptom:** `xcrun notarytool` died three times in one release — `Bus error: 10`
+  twice (once inside `submit --wait`, once inside plain `submit`) and its `info`
+  subcommand returned nothing for ~14 consecutive polls. Every single time the
+  submission was already in `notarytool history`.
+- **Rule:** treat a non-zero exit from `notarytool submit` as *possibly successful*.
+  Recover the id from `notarytool history` (newest entry matching the artifact name)
+  and poll `notarytool info` separately. Compare newest-id before/after so a genuine
+  upload failure is still detected. Do not use `set -e` around it.
+- **Never pipe `submit` into an early-exiting filter.** `submit | grep -m1` makes grep
+  close the pipe on first match, SIGPIPEs notarytool, and `pipefail` turns that into
+  exit 141 — reporting failure on work that completed. Capture to a variable, parse
+  with awk that reads to EOF.
+- **Apple wedges submissions.** Two of four cleared in ~45s; the others sat In
+  Progress for 26m and 2h+. Resubmitting cleared each wedge in ~20 seconds. Don't
+  wait longer than a few minutes past baseline — resubmit.
+- **My own error to avoid repeating:** after the first crash I removed `--wait` and
+  assumed the class was fixed. It wasn't; the crash is in the tool exiting, not in
+  waiting. One data point wasn't enough to generalize from.
