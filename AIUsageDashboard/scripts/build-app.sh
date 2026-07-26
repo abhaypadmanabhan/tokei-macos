@@ -54,6 +54,14 @@ if [ "$SIGN_ID" != "-" ]; then
   if [ -d "$SPARKLE_FRAMEWORK" ]; then
     codesign --force --deep $SIGN_FLAGS --sign "$SIGN_ID" "$SPARKLE_FRAMEWORK"
   fi
+  # The bundled tokei CLI (#57) is copied in by a build phase, so signing the app
+  # below (deliberately not --deep) leaves it with xcodebuild's own signature —
+  # Developer ID and hardened runtime, but no secure timestamp. Notarization
+  # rejects that, so re-sign it here with the same flags as everything else.
+  HELPER="$APP/Contents/Helpers/tokei"
+  if [ -f "$HELPER" ]; then
+    codesign --force $SIGN_FLAGS --sign "$SIGN_ID" "$HELPER"
+  fi
   codesign --force $SIGN_FLAGS --sign "$SIGN_ID" "$APP"
 fi
 

@@ -116,6 +116,24 @@ would buy nothing). Exactly two tools, to keep an agent's context cost low:
 When the snapshot is stale, tool text is prefixed with a `⚠︎` warning line. When the
 file is missing, the tool call returns `isError: true` with launch instructions.
 
+#### Making an agent call it unprompted
+
+A tool an agent never reaches for is dead weight, so the "when" is encoded in two
+places rather than left to chance:
+
+1. **`instructions` in the `initialize` result** (`MCPServer.instructions`) — the MCP
+   server-level directive. Clients surface it to the model **once at connect time**, so
+   it persists for the whole session instead of being re-read per call. It names the
+   triggers (before spawning/delegating/orchestrating another agent, before a long or
+   fan-out run), the 85% threshold, and the rule that `local_estimate` /
+   `unavailable` are floors, not ceilings.
+2. **Trigger-first tool descriptions** — each `description` opens with *when to call*,
+   not what it returns. An agent decides whether to invoke from the opening clause; a
+   description that leads with "Returns …" answers a question it wasn't asking.
+
+Belt and braces, since neither is guaranteed: the §3 steering line in
+`CLAUDE.md` / `AGENTS.md` covers clients that ignore `instructions`.
+
 ## 3. Registration (agent side)
 
 **Claude Code:**
