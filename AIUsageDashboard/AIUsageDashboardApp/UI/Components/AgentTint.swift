@@ -20,6 +20,7 @@ public enum AgentTint {
         case .antigravity: return Color(hex: "D2A15C")
         case .gemini:      return Color(hex: "6D93DB")
         case .opencode:    return Color(hex: "B98BD0")
+        case .copilot:     return Color(hex: "9AA0AA")
         }
     }
 }

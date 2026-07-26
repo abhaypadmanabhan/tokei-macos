@@ -6,6 +6,7 @@ public actor SyncEngine {
     private let registry: ProviderRegistry
     private let store: UsageStore
     private let quotaSeriesStore: QuotaSeriesStore
+    private let agentSnapshotWriter: AgentSnapshotWriter
     private let watcher: FileWatcher
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
@@ -16,11 +17,13 @@ public actor SyncEngine {
         registry: ProviderRegistry = .default(),
         store: UsageStore = .shared,
         quotaSeriesStore: QuotaSeriesStore = .shared,
+        agentSnapshotWriter: AgentSnapshotWriter = .shared,
         watcher: FileWatcher = .shared
     ) {
         self.registry = registry
         self.store = store
         self.quotaSeriesStore = quotaSeriesStore
+        self.agentSnapshotWriter = agentSnapshotWriter
         self.watcher = watcher
         var continuation: AsyncStream<[ProviderSnapshot]>.Continuation!
         self.updates = AsyncStream { cont in
@@ -35,6 +38,9 @@ public actor SyncEngine {
         await quotaSeriesStore.append(from: snapshots)
         await NotificationEngine.shared.evaluateThresholds(for: snapshots)
         updatesContinuation?.yield(snapshots)
+        // Last: nothing in-process reads this back (only the external `tokei` CLI/MCP
+        // helper does), so it shouldn't gate notification delivery or the UI-facing yield.
+        await agentSnapshotWriter.write(from: snapshots)
         return snapshots
     }
 

@@ -143,4 +143,28 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(claudeHistory.first?.tokenUsage.inputTokens, 100)
         XCTAssertEqual(codexHistory.first?.tokenUsage.inputTokens, 200)
     }
+
+    func testNewStoreFileCreatedWithOwnerOnlyPermissions() async {
+        let store = UsageStore(directory: tempDirectory)
+        await store.save(snapshot: makeSnapshot(todayInput: 1))
+
+        let fileURL = tempDirectory.appendingPathComponent("usage-store.json")
+        let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let permissions = (attrs?[.posixPermissions] as? NSNumber)?.intValue
+        XCTAssertEqual(permissions, 0o600, "new store file should be readable only by the owner")
+    }
+
+    func testExistingStoreFilePermissionsAreNotChanged() async {
+        let fileURL = tempDirectory.appendingPathComponent("usage-store.json")
+        let existingJSON = "{\"snapshots\":{},\"dailyUsages\":{}}"
+        try? existingJSON.write(to: fileURL, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: fileURL.path)
+
+        let store = UsageStore(directory: tempDirectory)
+        await store.save(snapshot: makeSnapshot(todayInput: 2))
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let permissions = (attrs?[.posixPermissions] as? NSNumber)?.intValue
+        XCTAssertEqual(permissions, 0o644, "existing store file permissions should not be modified")
+    }
 }

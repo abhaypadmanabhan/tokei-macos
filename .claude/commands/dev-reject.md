@@ -1,7 +1,7 @@
 ---
-description: Handle failed manual testing safely — capture the failure, trace it to the responsible commits/worktrees, keep dev off main, build a fix plan, spin a focused fix worktree or revert the bad merge, update the Patch Bible, and emit a prompt for the fixing agent.
+description: Handle failed manual testing safely — capture the failure, trace it to the responsible commits/worktrees, keep dev off main, build a fix plan, spin a focused fix worktree or revert the bad merge, dispatch the fixing agent via herdr, and automatically re-collect once it finishes.
 argument-hint: "[failure description, or leave blank to be asked]"
-allowed-tools: Bash(git*), Bash(bash .claude/gates/*), Bash(xcodegen*), Bash(xcodebuild*), Bash(rg*), Bash(grep*), Bash(cp*), Bash(chmod*), Bash(mkdir*), Read, Write, Edit, Skill
+allowed-tools: Bash(git*), Bash(bash .claude/gates/*), Bash(xcodegen*), Bash(xcodebuild*), Bash(rg*), Bash(grep*), Bash(cp*), Bash(chmod*), Bash(mkdir*), Bash(herdr*), Read, Write, Edit, Skill, Agent
 ---
 
 # /dev-reject — manual testing failed; recover safely
@@ -63,11 +63,27 @@ Prefer whichever restores a known-good `dev` fastest with least risk. State the 
 Update Patch Bible §8 (rejection reason, decision, new branch/revert sha) and
 `tasks/relay/BATON.md` current-state so the next session sees the true state.
 
-## Step 7 — Emit the fixing-agent prompt (if a fix pass is needed)
+## Step 7 — Dispatch the fixing agent (if a fix pass is needed)
 
-Same self-contained shape as `/morning-patch` Step 8: worktree path, branch, Bible path +
-WP reference, the bug summary, scope in/out, frozen contracts, the regression test to add,
-tests to run, commit-in-worktree-only, no-merge/no-push, append completion note.
+Same self-contained prompt shape as `/morning-patch` Step 8: worktree path, branch,
+Bible path + WP reference, the bug summary, scope in/out, frozen contracts, the
+regression test to add, tests to run, commit-in-worktree-only, no-merge/no-push,
+append completion note. Dispatch it the same way morning-patch Step 8 does: check
+`HERDR_ENV=1`, resolve the fixing agent's kind to its verified auto-approve flag
+(see the table in `/morning-patch` Step 8 / `herdr-agent-fleet-test` memory), split
+a pane at the fix worktree, `agent start`, submit the prompt (marker-based
+completion check for cline, long timeout for opencode), then wait/poll for
+done/blocked the same way as morning-patch Step 8.5 — including reading pane output
+before treating `idle` as done (herdr's `agent_status` can miss a real blocked-on-
+question state). If `HERDR_ENV` is unset or the kind is GLM, fall back to printing
+the copy-paste block instead.
+
+If the fix was herdr-dispatched and confirmed done, automatically run
+`.claude/commands/agents-done.md` Steps 1–7 inline (same as `/morning-patch` Step 9)
+to re-verify and merge the fix — do not stop and tell the user to type
+`/agents-done` themselves. **If the fix fell back to the copy-paste block**, do NOT
+assume it's committed — stop and ask the human to confirm before running the
+collection step; only then re-verify and merge.
 
 ## Output
 
@@ -75,5 +91,5 @@ tests to run, commit-in-worktree-only, no-merge/no-push, append completion note.
 2. Suspected root cause + responsible package/merge.
 3. Fix vs revert decision and why.
 4. New fix worktree (path/branch) or revert sha.
-5. Prompt for the fixing agent.
-6. **Next command after the fix is committed:** `/agents-done`.
+5. Dispatch outcome for the fixing agent (herdr pane/kind, or fallback prompt block).
+6. Auto-collection results (re-run of `/agents-done`'s output) once the fix lands.

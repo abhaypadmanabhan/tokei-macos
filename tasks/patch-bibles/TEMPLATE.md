@@ -77,7 +77,7 @@ full set runs at merge (`/agents-done`); release/strict set at `/dev-approved`.
 - `dev` is disposable; `main` is the safety net. Nothing reaches `main` without `/dev-approved`.
 - Worktrees and `patch/*` branches are retained until the day's patch ships, then pruned.
 
-## 8. Completion log (agents append; `/agents-done` reads)
+## 8. Completion log (agents append; auto-read by the orchestrator's collection step)
 
 <!-- Each agent appends on finish:
 ### WP-N — {{agent}} — {{time}}
