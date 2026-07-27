@@ -100,11 +100,26 @@ targets:
       # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
       # run without pulling the whole app target into the test target.
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
+      # Same mechanism, for the `tokei` CLI/MCP surface (issue #59). Those files ship in
+      # the standalone `tokei` tool target, which does not link Core — so compile the
+      # PURE-LOGIC ones in here to get them under `-scheme AIUsageDashboardCore test`.
+      # The TOKEI_CLI_TESTS condition below flips on their `import AIUsageDashboardCore`,
+      # which the tool target must NOT have (it compiles AgentSnapshot.swift directly).
+      # main.swift and StatusCommand.swift stay out: they own process entry / stdout.
+      - path: TokeiCLI/MCPServer.swift
+      - path: TokeiCLI/SnapshotReader.swift
+      - path: TokeiCLI/StatusFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.CoreTests
+        # Only this bundle's copy of the TokeiCLI files imports the Core framework.
+        # Per-file COMPILER_FLAGS cannot do this — Xcode ignores them for Swift, which
+        # compiles a module in one invocation — so the condition is target-wide.
+        # NOT a signing setting: this block is disjoint from the Core/App/tokei
+        # settings: and configs: that the release-signing package owns.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) TOKEI_CLI_TESTS
   # Read-only agent CLI + stdio MCP server (issue #57). Standalone executable —
   # does NOT link the Core framework; it compiles in the shared public schema file
   # directly so it can decode the snapshot with no app-internal dependencies.
