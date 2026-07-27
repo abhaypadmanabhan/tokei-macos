@@ -64,8 +64,26 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     /// *forces* a client to downgrade confidence when it serves cached data (each one does
     /// it by hand), so this catches an officially-labelled reading that is simply old.
     /// A `nil` `observedAt` means "age unknown", which is not the same as "old" and does
-    /// not block routing.
+    /// not block routing. A *future-dated* `observedAt` is a different case again — see
+    /// `maxClockSkew`.
     public var maxRoutableAge: TimeInterval
+
+    /// How far **ahead** of our clock a reading may be stamped and still be judged on its
+    /// age. Beyond this it is treated as untrustworthy, not as fresh.
+    ///
+    /// Zero tolerance would be wrong: `observedAt` is stamped from a provider's clock, and
+    /// two NTP-synced machines still disagree by a second or so, plus timestamps get
+    /// rounded on the way through an API. Rejecting a reading a second into the future
+    /// would drop good data for no safety gain. 60s absorbs that benign jitter.
+    ///
+    /// Past the tolerance the two clocks disagree by more than jitter explains, so
+    /// `now - observedAt` is no longer a meaningful age and the gate built on it means
+    /// nothing. Crucially, an unclamped age check *fails open*: a reading dated ahead of
+    /// the clock is never "older than `maxRoutableAge`", so a provider stamping a skewed
+    /// or wrong-timezone timestamp would stay routable **forever** — the exact failure
+    /// the age gate exists to prevent. A trust gate must fail closed, so a materially
+    /// future-dated reading is not routable.
+    public static let maxClockSkew: TimeInterval = 60
 
     /// At or above this utilization a provider is one to avoid, and can never be a route
     /// target. The issue's own steering guidance is "avoid providers above 85%".
@@ -152,12 +170,17 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     }
 
     /// Whether a reading may be used as evidence of *headroom* — confirmed by the
-    /// provider and not known to be old. Only ever gates `routeTo`; `avoid`
-    /// intentionally considers every reading.
+    /// provider, not known to be old, and not stamped in the future. Only ever gates
+    /// `routeTo`; `avoid` intentionally considers every reading.
     public func isRoutable(_ utilization: Utilization, now: Date) -> Bool {
         guard routableConfidences.contains(utilization.confidence) else { return false }
         guard let observedAt = utilization.observedAt else { return true } // age unknown ≠ old
-        return now.timeIntervalSince(observedAt) <= maxRoutableAge
+        let age = now.timeIntervalSince(observedAt)
+        // Negative age = stamped ahead of our clock. Past the jitter tolerance that is a
+        // broken clock, not a fresh reading — and it would otherwise pass the age check
+        // forever (see `maxClockSkew`).
+        guard age >= -Self.maxClockSkew else { return false }
+        return age <= maxRoutableAge
     }
 
     /// Each provider reduced to its tightest (highest-used) window, in a stable

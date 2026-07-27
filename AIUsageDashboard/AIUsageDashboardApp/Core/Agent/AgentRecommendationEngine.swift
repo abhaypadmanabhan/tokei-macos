@@ -132,8 +132,11 @@ public enum AgentRecommendationEngine {
             return "no reading available"
         case .exact, .providerReported:
             guard let observedAt = utilization.observedAt else { return "not a confirmed reading" }
-            let age = AgentSnapshot.compactDuration(max(0, now.timeIntervalSince(observedAt)))
-            return "reading is \(age) old"
+            let seconds = now.timeIntervalSince(observedAt)
+            // A future stamp is a clock problem, not an age. Saying "0s old" about a
+            // reading we just refused to route to would read as a contradiction.
+            guard seconds >= 0 else { return "reading is timestamped in the future" }
+            return "reading is \(AgentSnapshot.compactDuration(seconds)) old"
         }
     }
 

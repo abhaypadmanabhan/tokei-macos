@@ -100,6 +100,50 @@ final class RouteTargetPolicyTests: XCTestCase {
         XCTAssertEqual(decision.routeTo?.providerID, .codex)
     }
 
+    /// A trust gate has to fail closed. An unclamped age check treats a future-dated
+    /// reading as never older than `maxRoutableAge`, so a provider with a skewed or
+    /// wrong-timezone clock would stay routable forever — infinitely fresh instead of
+    /// suspect. It must be excluded, not preferred.
+    func testMateriallyFutureDatedReadingIsNotRoutable() {
+        let future = util(.claudeCode, 0, observedAt: now.addingTimeInterval(2 * 3_600))
+        XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(future, now: now))
+
+        let decision = RouteTargetPolicy.agent.evaluate([future, util(.codex, 75, observedAt: now)],
+                                                        now: now)
+        XCTAssertNil(decision.routeTo)
+        XCTAssertEqual(decision.excluded.map(\.providerID), [.claudeCode])
+    }
+
+    /// …but not at the cost of good data: `observedAt` is stamped from a provider's clock,
+    /// so a second or two of NTP jitter must not drop a live reading.
+    func testBenignClockJitterIsTolerated() {
+        let jittered = util(.codex, 31, observedAt: now.addingTimeInterval(30))
+        XCTAssertTrue(RouteTargetPolicy.agent.isRoutable(jittered, now: now))
+
+        let decision = RouteTargetPolicy.agent.evaluate([jittered, util(.claudeCode, 60, observedAt: now)],
+                                                        now: now)
+        XCTAssertEqual(decision.routeTo?.providerID, .codex)
+    }
+
+    /// The boundary itself, both sides, so the tolerance can't drift unnoticed.
+    func testClockSkewToleranceBoundary() {
+        let atLimit = util(.codex, 31, observedAt: now.addingTimeInterval(RouteTargetPolicy.maxClockSkew))
+        let pastLimit = util(.codex, 31, observedAt: now.addingTimeInterval(RouteTargetPolicy.maxClockSkew + 1))
+        XCTAssertTrue(RouteTargetPolicy.agent.isRoutable(atLimit, now: now))
+        XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(pastLimit, now: now))
+    }
+
+    /// The UI tuning shares the gate, so the chip can't be fooled by a skewed clock either.
+    func testUITuningAlsoRejectsFutureDatedReadings() {
+        let target = MaxxerMath.routeTarget(in: [
+            Utilization(providerID: .claudeCode, window: .weekly, usedPercent: 5,
+                        confidence: .providerReported, observedAt: now.addingTimeInterval(86_400)),
+            Utilization(providerID: .cursor, window: .monthly, usedPercent: 60,
+                        confidence: .providerReported, observedAt: now),
+        ], now: now)
+        XCTAssertNil(target)
+    }
+
     func testReadingInsideMaxRoutableAgeStaysRoutable() {
         let decision = RouteTargetPolicy.agent.evaluate([
             util(.codex, 31, observedAt: now.addingTimeInterval(-29 * 60)),
