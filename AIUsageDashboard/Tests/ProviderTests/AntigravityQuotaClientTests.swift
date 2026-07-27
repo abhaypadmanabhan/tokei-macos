@@ -223,7 +223,8 @@ final class AntigravityQuotaClientTests: XCTestCase {
         }
         
         let testNow = isoDate("2026-07-06T12:00:00Z")!
-        let cached = ExpectedCachedQuota(timestamp: testNow, rawPayload: payloadData)
+        let cachedAt = testNow.addingTimeInterval(-3600)
+        let cached = ExpectedCachedQuota(timestamp: cachedAt, rawPayload: payloadData)
         let encoded = try JSONEncoder().encode(cached)
         try encoded.write(to: cacheFile)
 
@@ -240,8 +241,15 @@ final class AntigravityQuotaClientTests: XCTestCase {
         XCTAssertEqual(windows.count, 4)
 
         for window in windows {
-            XCTAssertEqual(window.source, "antigravity-local-rpc (stale)")
+            // Handoff P2: staleness is a number, not a `" (stale)"` suffix on `source`.
+            // `source` says where the reading came from; `observedAt` says how old it is.
+            XCTAssertEqual(window.source, "antigravity-local-rpc")
+            XCTAssertFalse(window.source.contains("stale"))
             XCTAssertEqual(window.confidence, .estimated)
+            XCTAssertEqual(
+                window.observedAt, cachedAt,
+                "a replayed reading is as old as the cache, not as old as the call"
+            )
         }
     }
 
@@ -312,14 +320,14 @@ final class AntigravityQuotaClientTests: XCTestCase {
     }
 }
 
-private struct MockDiscoverer: AntigravityQuotaEndpointDiscovering {
+struct MockDiscoverer: AntigravityQuotaEndpointDiscovering {
     let endpoint: AntigravityQuotaEndpoint?
     func discoverEndpoint() async -> AntigravityQuotaEndpoint? {
         endpoint
     }
 }
 
-private final class MockURLProtocol: URLProtocol {
+final class MockURLProtocol: URLProtocol {
     static var mockResponse: (data: Data, statusCode: Int)?
     static var mockError: Error?
 
