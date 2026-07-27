@@ -236,6 +236,46 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(second.lifetime.totalTokens, 45)
   }
 
+  /// One parser instance is shared by every Claude account, and `ClaudeCodeProvider`
+  /// calls `parse` once per account — so a call's source list is one account's slice of
+  /// the corpus, never all of it. Cache eviction must not treat "absent from this call"
+  /// as "gone", or each account's parse wipes the others' entries and every account
+  /// re-reads its whole corpus on every refresh (measured: 0 cache hits, ~600 MB
+  /// re-parsed every 2 s, one core pegged).
+  ///
+  /// The probe rewrites account A's log in place with the same byte count and the same
+  /// modification date, so the cache key is unchanged: a served-from-cache read still
+  /// reports the old total, while a re-parse would pick up the new one.
+  func testCacheSurvivesAnInterleavedParseOfAnotherAccount() async throws {
+    let parser = makeParser()
+    func line(id: String, output: Int) -> String {
+      #"{"message":{"id":"\#(id)","usage":{"input_tokens":0,"output_tokens":\#(output),"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"type":"assistant","timestamp":"2026-07-06T10:00:00.000Z"}"#
+    }
+
+    let accountA = writeFixture(line(id: "msg_a", output: 100), named: "account-a.jsonl")
+    let accountB = writeFixture(line(id: "msg_b", output: 200), named: "account-b.jsonl")
+    let sourceA = makeSourceWithModificationDate(url: accountA)
+    let modifiedAt = try XCTUnwrap(sourceA.lastModified)
+
+    let firstA = await parser.parse(logSources: [sourceA])
+    XCTAssertEqual(firstA.lifetime.totalTokens, 100)
+    // The other account's refresh: same parser, a disjoint source list.
+    let firstB = await parser.parse(logSources: [makeSourceWithModificationDate(url: accountB)])
+    XCTAssertEqual(firstB.lifetime.totalTokens, 200)
+
+    // Same length, same mtime — indistinguishable to the cache key, different if re-read.
+    let rewritten = line(id: "msg_a", output: 999)
+    XCTAssertEqual(rewritten.utf8.count, line(id: "msg_a", output: 100).utf8.count)
+    try rewritten.write(to: accountA, atomically: false, encoding: .utf8)
+    try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: accountA.path)
+
+    let reread = await parser.parse(logSources: [makeSourceWithModificationDate(url: accountA)])
+    XCTAssertEqual(
+      reread.lifetime.totalTokens, 100,
+      "account A's cache entry was evicted by account B's parse, forcing a full re-read"
+    )
+  }
+
   func testParseErrorWarningContainsFilenameNotFullPath() async throws {
     let parser = makeParser()
     let dirURL = tempDirectory.appendingPathComponent("notAFile.jsonl", isDirectory: true)

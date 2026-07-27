@@ -30,6 +30,7 @@ public actor ClaudeJSONLParser {
         var warnings: [ProviderWarning] = []
         var windows = UsageWindows(calendar: calendar, referenceDate: now())
         var hourlyTotals: [Date: Int] = [:]
+        var stats = ParseStats()
 
         for source in logSources {
             let path = source.url.path
@@ -39,6 +40,7 @@ public actor ClaudeJSONLParser {
             if let cached = fileCache[path],
                cached.modificationDate == currentMod,
                cached.byteOffset == currentSize {
+                stats.hits += 1
                 seenIDs.formUnion(cached.seenIDs)
                 apply(cached.aggregate, to: &windows, hourlyTotals: &hourlyTotals)
                 if cached.malformedCount > 0 {
@@ -62,6 +64,8 @@ public actor ClaudeJSONLParser {
                     // The file grew since the last parse (or was appended while we were
                     // not watching). Resume from the previous offset instead of re-reading
                     // the entire file.
+                    stats.appends += 1
+                    stats.bytesRead += currentSize - cached.byteOffset
                     seenIDs.formUnion(cached.seenIDs)
                     parseResult = try await parseFile(
                         at: source.url,
@@ -96,6 +100,8 @@ public actor ClaudeJSONLParser {
                 } else {
                     // First sync, rotated, truncated, or touched without growing: parse the
                     // whole file and replace any stale cache entry.
+                    stats.fullParses += 1
+                    stats.bytesRead += currentSize
                     parseResult = try await parseFile(at: source.url, startingAtByte: 0) { [self] record in
                         if let key = record.dedupeKey {
                             guard seenIDs.insert(key).inserted else { return }
@@ -132,8 +138,22 @@ public actor ClaudeJSONLParser {
 
         // Evict cache entries for files no longer present so the cache can't grow
         // unbounded across a long-running session as Claude rotates project logs.
+        //
+        // Eviction is by **existence on disk**, not by membership in this call's source
+        // list. One parser instance is shared across every Claude account and
+        // `ClaudeCodeProvider.fetchSnapshot()` calls this once per account, so a source
+        // list is one account's slice of the corpus — never the whole of it. Filtering on
+        // that slice made each account's parse evict the other accounts' entries, so every
+        // account missed the cache on every refresh and re-read the entire ~800 MB corpus
+        // every two seconds. Existence is the property the eviction actually cares about
+        // and it does not depend on who is calling.
         let activePaths = Set(logSources.map(\.url.path))
-        fileCache = fileCache.filter { activePaths.contains($0.key) }
+        fileCache = fileCache.filter { path, _ in
+            // Anything in this call's list was just stat'd; only the rest needs checking.
+            activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
+        }
+
+        stats.emit(sources: logSources.count, cacheSize: fileCache.count, seenIDs: seenIDs.count)
 
         let snapshot = windows.snapshot()
         return AggregateUsage(
@@ -145,6 +165,28 @@ public actor ClaudeJSONLParser {
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             warnings: warnings
         )
+    }
+
+    // MARK: - Diagnostics
+
+    /// Per-call cache accounting, printed to stderr when `TOKEI_PARSE_DEBUG=1`. The parse
+    /// cache is the difference between an idle menu-bar app and a pegged core, so its hit
+    /// rate needs to be observable on a real corpus rather than inferred from the code.
+    private struct ParseStats {
+        var hits = 0
+        var appends = 0
+        var fullParses = 0
+        var bytesRead: UInt64 = 0
+        let startedAt = DispatchTime.now()
+
+        func emit(sources: Int, cacheSize: Int, seenIDs: Int) {
+            guard ProcessInfo.processInfo.environment["TOKEI_PARSE_DEBUG"] == "1" else { return }
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds) / 1_000_000
+            let line = "[parse] sources=\(sources) hits=\(hits) appends=\(appends) "
+                + "full=\(fullParses) bytesRead=\(bytesRead / 1024)KiB cacheEntries=\(cacheSize) "
+                + "seenIDs=\(seenIDs) elapsed=\(String(format: "%.1f", ms))ms\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
     }
 
     // MARK: - Caching
