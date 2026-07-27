@@ -41,11 +41,27 @@ move finished items to DONE with date + commit.
       [needs-decision]
 - [ ] **Multi-machine aggregation** — sync usage-store.json via iCloud Drive
       container; dedupe by day+provider.
-- [ ] **App Store / notarization** — Developer ID signing (re-enable ENABLE_HARDENED_RUNTIME then — disabled 2026-07-06 because hardened runtime + adhoc framework signing breaks dyld library validation), sandbox
-      entitlements (read-only home dirs won't fly in sandbox — needs
-      security-scoped bookmarks UX), notarized DMG pipeline.
+- [ ] **App Store distribution** — the Developer ID half is done; this item is now only
+      about the Mac App Store. Needs App Sandbox entitlements (the repo currently ships
+      no `.entitlements` file and `project.yml` declares none) and a security-scoped
+      bookmarks UX, because reading provider logs out of `~` won't survive the sandbox.
+      [needs-decision: is the App Store worth the sandbox rework at all, given direct
+      distribution already works?]
 
 ## DONE
+- 2026-07-27 — **Release build launchability** (patch `patch/2026-07-27/release-signing`,
+  `2ddec45` + `23897fd`): hardened runtime is now stated explicitly on
+  `AIUsageDashboardCore`'s Release config instead of arriving as a side effect of the app's
+  embed re-sign, and `build-app.sh` picks it per path — ON for `TOKEI_RELEASE=1`, forced OFF
+  for ad-hoc dev builds. That pairing was the 2026-07-06 dyld failure: hardened runtime
+  enables library validation, which demands a Team ID an ad-hoc signature does not carry.
+  `scripts/verify-app.sh` now asserts a staged app can actually load, so an unlaunchable
+  bundle can no longer exit 0.
+- 2026-07-08 — **Developer ID signing + hardened runtime + notarization** (`966bebd`,
+  Sparkle in `e5ff8a2`): `scripts/release.sh` submits via `notarytool`, polls, and staples
+  both the app and the DMG; `scripts/make-dmg.sh` builds and signs the DMG. Shipped for real
+  — 0.7.0 released notarized (`f787756`), 0.7.1 published a signed appcast (`a90fdd1`).
+  Direct distribution is therefore complete; only Mac App Store sandboxing remains open.
 - 2026-07-27 — **Quota trust gating + multi-account Claude Code** (dev @ `f725bac`):
   `routeTo` gated on trusted, recent readings while `avoid` still uses every reading;
   `observedAt` on every quota window; partially-expired caches return nothing rather than
