@@ -35,20 +35,20 @@ struct DashboardView: View {
         viewModel.snapshot(for: viewModel.selectedProvider)
     }
 
-    /// The visible, quota-bearing provider with the most headroom — the lowest
-    /// tightest-window used% (mirrors `OverviewView.headroomProviderID`). `nil`
-    /// unless at least two providers have a live window, so "route here" always
-    /// implies a real choice. Drives the drill-in's green route chip.
+    /// The visible provider worth routing new work to. Delegates to the ONE canonical
+    /// rule (`RouteTargetPolicy.ui` via `MaxxerMath.routeTarget`) — the same rule
+    /// `OverviewView.headroomProviderID` and the agent snapshot use, so no two
+    /// surfaces can point at different providers. `nil` until at least two providers
+    /// have a *trusted* live reading, so this can no longer nominate a stale
+    /// `local_estimate`. Drives the drill-in's green route chip.
     private var routeTargetProviderID: ProviderID? {
-        var tightestByProvider: [ProviderID: Double] = [:]
-        for util in viewModel.utilization {
-            tightestByProvider[util.providerID] = max(tightestByProvider[util.providerID] ?? 0, util.usedPercent)
-        }
-        let quotaBearing: [(id: ProviderID, pct: Double)] = ProviderID.allCases
-            .filter { !ProviderVisibility.isHidden($0) }
-            .compactMap { id in tightestByProvider[id].map { (id, $0) } }
-        guard quotaBearing.count >= 2 else { return nil }
-        return quotaBearing.min(by: { $0.pct < $1.pct })?.id
+        MaxxerMath.routeTarget(in: visibleUtilizations, now: Date())?.providerID
+    }
+
+    /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
+    /// opinion on visibility, so the filtering happens here.
+    private var visibleUtilizations: [Utilization] {
+        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 
     /// First non-hidden provider in chip-strip order — the chip that down-arrow

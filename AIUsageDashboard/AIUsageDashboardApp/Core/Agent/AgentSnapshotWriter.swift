@@ -57,9 +57,20 @@ public actor AgentSnapshotWriter {
             snapshots.map { ($0.providerID, $0.displayName) },
             uniquingKeysWith: { first, _ in first }
         )
+        // Per-provider account breakdown, so the recommendation's `reason` can name the
+        // account its headline number came from (multi-account Claude) rather than
+        // leaving the reader to guess which `CLAUDE_CONFIG_DIR` the % belongs to.
+        let accounts = Dictionary(
+            snapshots.compactMap { snapshot -> (ProviderID, [AgentAccount])? in
+                guard let accounts = snapshot.accounts else { return nil }
+                return (snapshot.providerID, accounts.map(agentAccount(from:)))
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
         let recommendation = AgentRecommendationEngine.recommend(
             from: utilizations,
             displayNames: displayNames,
+            accounts: accounts,
             now: generatedAt
         )
         return AgentSnapshot(
