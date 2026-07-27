@@ -77,15 +77,20 @@ struct OverviewView: View {
         return result
     }
 
-    /// The single provider with the most quota headroom (lowest max-used% among
-    /// providers that have quota) — earns the green "route new work here" dot. Only
-    /// when at least two agents have quota, so the hint always implies a choice.
+    /// The provider that earns the green "route new work here" dot. Delegates to the
+    /// ONE canonical rule (`RouteTargetPolicy.ui` via `MaxxerMath.routeTarget`) — the
+    /// same rule the drill-in chip and the agent snapshot use, so no two surfaces can
+    /// nominate different providers. `nil` until at least two providers have a
+    /// *trusted* live reading with a real spread between them, so the dot can no
+    /// longer land on a stale `local_estimate`.
     private var headroomProviderID: ProviderID? {
-        let quotaBearing: [(id: ProviderID, pct: Double)] = visibleProviders.compactMap { id in
-            tightestByProvider[id].map { (id, $0.usedPercent) }
-        }
-        guard quotaBearing.count >= 2 else { return nil }
-        return quotaBearing.min(by: { $0.pct < $1.pct })?.id
+        MaxxerMath.routeTarget(in: visibleUtilizations, now: Date())?.providerID
+    }
+
+    /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
+    /// opinion on visibility, so the filtering happens here.
+    private var visibleUtilizations: [Utilization] {
+        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 
     // MARK: Quota state (FIX 2 + FIX 3)
