@@ -93,10 +93,16 @@ final class StatusFormattingTests: XCTestCase {
   /// and the engine only avoids at `>= avoidThreshold` — so if Codex's percentage ever
   /// drops below the frozen line, `full` becomes a snapshot production could never emit
   /// and every test reading it starts teaching the wrong rule.
+  ///
+  /// Read through `AgentRecommendationEngine.policy` rather than off `RouteTargetPolicy`
+  /// directly: the fixture is an *agent snapshot*, so the number it must agree with is
+  /// whichever tuning the engine that writes those snapshots actually applies. If the
+  /// engine is ever pointed at a different tuning, this guard follows it instead of
+  /// silently checking a threshold nothing produces.
   func testFixtureAvoidDecisionMatchesTheFrozenThreshold() {
     XCTAssertGreaterThanOrEqual(
       Double(AgentSnapshotFixtures.codexUsedPercent),
-      AgentRecommendationEngine.avoidThreshold,
+      AgentRecommendationEngine.policy.avoidThreshold,
       "fixture avoids codex, so its usedPercent must be at or above the avoid threshold"
     )
   }
