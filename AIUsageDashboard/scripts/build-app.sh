@@ -33,6 +33,15 @@ else
 fi
 echo "Signing identity: $SIGN_ID (hardened runtime: $HARDENED)"
 
+# Keep the two signing modes in separate derived-data trees. They were sharing
+# one persistent tree, so the first ad-hoc build after a signed build copied in
+# a still-Developer-ID-signed Contents/Helpers/tokei: xcodebuild considers that
+# target up to date and does not re-sign it, even though the identity changed.
+# The result is a cross-contaminated bundle whose helper carries a Team ID the
+# app does not. Splitting the path makes each mode's incremental state its own.
+if [ "$HARDENED" = "YES" ]; then DERIVED="$ROOT/build/DerivedData-release"
+else DERIVED="$ROOT/build/DerivedData-adhoc"; fi
+
 command -v xcodegen >/dev/null || { echo "xcodegen missing: brew install xcodegen" >&2; exit 1; }
 
 # 1. Generate Xcode project (idempotent; AIUsageDashboard.xcodeproj is gitignored)
@@ -40,13 +49,13 @@ command -v xcodegen >/dev/null || { echo "xcodegen missing: brew install xcodege
 
 # 2. Build app headless
 xcodebuild -project "$ROOT/AIUsageDashboard.xcodeproj" -scheme AIUsageDashboardApp -configuration "$CONFIG" \
-  -derivedDataPath "$ROOT/build/DerivedData" \
+  -derivedDataPath "$DERIVED" \
   CODE_SIGN_IDENTITY="$SIGN_ID" CODE_SIGNING_ALLOWED=YES \
   ENABLE_HARDENED_RUNTIME="$HARDENED" \
   build | tail -5
 
 # 3. Stage output
-APP_SRC="$ROOT/build/DerivedData/Build/Products/$CONFIG/Tokei.app"
+APP_SRC="$DERIVED/Build/Products/$CONFIG/Tokei.app"
 mkdir -p "$ROOT/dist"
 rm -rf "$ROOT/dist/Tokei.app"
 ditto "$APP_SRC" "$ROOT/dist/Tokei.app"
@@ -83,9 +92,13 @@ fi
 # 5. Verify seal
 codesign --verify --strict --deep "$ROOT/dist/Tokei.app"
 
-# 6. Verify the app can actually LOAD. A valid seal is not a launchable app:
-# a hardened-runtime + ad-hoc build passes step 5 and still dies in dyld. This
-# assertion is what stops an unlaunchable bundle from exiting 0.
+# 6. Verify the app can actually LOAD and STAY UP. A valid seal is not a
+# launchable app: a hardened-runtime + ad-hoc build passes step 5 and still dies
+# in dyld. verify-app.sh checks signing metadata on every nested executable and
+# then requires the app to survive a liveness window — any early exit fails.
+# The launch half needs an Aqua session; with no GUI session it is SKIPPED and
+# says so explicitly (the static half still runs). Set
+# TOKEI_VERIFY_REQUIRE_LAUNCH=1 to turn that skip into a hard failure.
 bash "$ROOT/scripts/verify-app.sh" "$ROOT/dist/Tokei.app"
 
 echo "Built: $ROOT/dist/Tokei.app"
