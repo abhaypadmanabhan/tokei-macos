@@ -76,7 +76,19 @@ public actor AgentSnapshotWriter {
             displayName: snapshot.displayName,
             windows: snapshot.quotaWindows.compactMap(agentWindow(from:)),
             tokensToday: snapshot.todayUsage.totalTokens,
-            lastUpdated: snapshot.lastSyncedAt
+            lastUpdated: snapshot.lastSyncedAt,
+            // Absent rather than empty for single-account providers, so nothing changes
+            // for readers that never had this field.
+            accounts: snapshot.accounts.map { $0.map(agentAccount(from:)) }
+        )
+    }
+
+    private static func agentAccount(from account: ProviderAccountUsage) -> AgentAccount {
+        AgentAccount(
+            id: account.id,
+            label: account.label,
+            windows: account.quotaWindows.compactMap(agentWindow(from:)),
+            tokensToday: account.todayUsage.totalTokens
         )
     }
 
@@ -90,7 +102,8 @@ public actor AgentSnapshotWriter {
             usedPercent: percent,
             resetsAt: window.resetAt,
             confidence: publicConfidence(window.confidence),
-            source: window.source
+            source: window.source,
+            observedAt: window.observedAt
         )
     }
 

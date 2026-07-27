@@ -34,6 +34,12 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
     /// Reader-computed, **omitted on disk** (the writer never sets them). The `tokei`
     /// helper populates these when emitting a response so agents never treat old data
     /// as live. See `withStaleness(asOf:)`.
+    ///
+    /// SCOPE: this measures **only how long ago the app wrote this file** — nothing about
+    /// the age of the readings inside it. A snapshot written seconds ago (`stale: false`)
+    /// can carry hour-old provider numbers. For per-reading freshness use
+    /// `AgentWindow.observedAt`; the two answer different questions and are not
+    /// interchangeable.
     public var stale: Bool?
     public var ageSeconds: Int?
 
@@ -66,19 +72,48 @@ public struct AgentProvider: Codable, Sendable, Equatable {
     public let tokensToday: Int?
     /// When this provider last synced (UTC), if known.
     public let lastUpdated: Date?
+    /// Per-account breakdown, for providers where one machine can hold several signed-in
+    /// accounts — currently only Claude Code, via `CLAUDE_CONFIG_DIR`. Absent (not empty)
+    /// for single-account providers, so existing readers see no change.
+    ///
+    /// `windows` and `tokensToday` above stay the provider-level view: tokens are the
+    /// **sum** across accounts, quota is the account with the **most headroom** (work can
+    /// be pointed at whichever account you like). Use this array to pick one.
+    public let accounts: [AgentAccount]?
 
     public init(
         id: String,
         displayName: String,
         windows: [AgentWindow],
         tokensToday: Int?,
-        lastUpdated: Date?
+        lastUpdated: Date?,
+        accounts: [AgentAccount]? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.windows = windows
         self.tokensToday = tokensToday
         self.lastUpdated = lastUpdated
+        self.accounts = accounts
+    }
+}
+
+/// One signed-in account within a provider. Same security invariant as the rest of this
+/// schema: percentages, token counts, and a label — never a credential. The `id` is the
+/// account's config-directory path, which is what a caller sets `CLAUDE_CONFIG_DIR` to.
+public struct AgentAccount: Codable, Sendable, Equatable {
+    /// Config-directory path identifying the account (e.g. `/Users/me/.claude-account-1`).
+    public let id: String
+    /// Short label, e.g. `"default"` or `"account-1"`.
+    public let label: String
+    public let windows: [AgentWindow]
+    public let tokensToday: Int?
+
+    public init(id: String, label: String, windows: [AgentWindow], tokensToday: Int?) {
+        self.id = id
+        self.label = label
+        self.windows = windows
+        self.tokensToday = tokensToday
     }
 }
 
@@ -95,19 +130,28 @@ public struct AgentWindow: Codable, Sendable, Equatable {
     public let confidence: String
     /// Where the reading came from (diagnostic label, e.g. `"oauth_usage_api"`).
     public let source: String
+    /// When this reading was actually taken (UTC), when the provider reports it.
+    ///
+    /// Agents should judge freshness from this, not from `AgentSnapshot.stale` — that
+    /// flag only says how long ago *the app wrote the file*, so a snapshot can be
+    /// seconds old (`stale: false`) and still carry hour-old readings. A number whose
+    /// `observedAt` is far in the past is absence of data, not a low utilization.
+    public let observedAt: Date?
 
     public init(
         type: String,
         usedPercent: Double,
         resetsAt: Date?,
         confidence: String,
-        source: String
+        source: String,
+        observedAt: Date? = nil
     ) {
         self.type = type
         self.usedPercent = usedPercent
         self.resetsAt = resetsAt
         self.confidence = confidence
         self.source = source
+        self.observedAt = observedAt
     }
 }
 

@@ -199,3 +199,40 @@
 - **My own error to avoid repeating:** after the first crash I removed `--wait` and
   assumed the class was fixed. It wasn't; the crash is in the tool exiting, not in
   waiting. One data point wasn't enough to generalize from.
+
+## 2026-07-27 — absence of data is not a good number
+- **Symptom:** `tokei status --json` recommended routing fan-out work to `claude_code`
+  because its only window read `usedPercent: 0` — a cached reading served during a 429
+  cooldown, `confidence: local_estimate`, `source: "… (stale)"`. Codex, with a real 75%,
+  lost. Agents act on that field.
+- **Root cause was the consumer, not the data.** `AgentRecommendationEngine.recommend`
+  ranked purely on `usedPercent`. `Utilization` already carried `confidence` — the engine
+  simply never read it. Every other finding degraded data *quality*; only this one turned
+  bad data into a bad *action*. Fix the decision point first.
+- **Rule: rank on trust, then value.** Route only to confirmed, recent readings; require
+  ≥2 of them. Keep `avoid` computed from *all* readings — asymmetric on purpose, because
+  an unconfirmed number is not evidence of headroom but a high one is still evidence of
+  pressure. And name the exclusion in the reason: a silently-dropped provider reads as
+  "considered and rejected on the numbers", which is a different claim.
+- **Staleness in a string is staleness nobody can use.** `" (stale)"` was appended by hand
+  in each client and `.estimated` conflated "old server number" with "fresh local estimate".
+  Added `observedAt` so age is a number. If a consumer must regex a diagnostic label to make
+  a decision, the field is missing.
+- **Two different things were both called "stale".** Top-level `stale` meant "how long ago
+  the app wrote the file" (27s → false) while the reading inside was 81 minutes old. Same
+  word, unrelated questions. Name the *question*, not the vibe.
+- **Dropping expired items silently is directionally biased.** `cachedWindows` deleted
+  windows past their reset — and short windows expire first, and short windows are the tight
+  ones. Every stale serve decayed toward the loosest number, i.e. always flattering. Half a
+  reading now returns nothing at all.
+- **Honour Retry-After.** The loop slept its own 30s ceiling and retried 3× against a
+  `Retry-After: 3537`, hammering an endpoint that had just asked for an hour — plausibly
+  extending the cooldown it was reacting to.
+- **My own error to avoid repeating:** my "wait for the app to restart" loop tested
+  `mtime > now-3min`, which a *pre-existing* recent file already satisfied. It reported
+  success while the app had actually failed to launch (dyld Team ID mismatch), and I nearly
+  read the old binary's output as my new build's. Anchor a wait to a timestamp captured
+  *before* the action, never to a relative window.
+- **Verification note that paid off:** the fix labels warnings per account. First real run
+  immediately distinguished "[default] cooling down" from "[account-1] credentials expired"
+  — a distinction the single-account build structurally could not express.

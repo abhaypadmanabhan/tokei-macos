@@ -86,7 +86,10 @@ struct ProviderDetailView: View {
     private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection }
+    /// Only worth a section when there's genuinely more than one account — a single-account
+    /// setup would just be repeating the headline numbers under a different heading.
+    private var showAccounts: Bool { (snapshot.accounts?.count ?? 0) > 1 }
+    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
 
     private static let syncFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -540,9 +543,67 @@ struct ProviderDetailView: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 30) {
+            if showAccounts { accountsSection }
             if showHistory { dailyHistorySection }
             if showSplitSection { tokenSplitSection }
         }
+    }
+
+    // MARK: 6b · Accounts (multi-account providers)
+
+    /// Per-account breakdown for providers where one machine holds several signed-in
+    /// accounts (Claude Code, via `CLAUDE_CONFIG_DIR`). The headline quota above is the
+    /// account with the most headroom; this says which account that is, and what the
+    /// others look like.
+    private var accountsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Accounts")
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(snapshot.accounts ?? []) { account in
+                    accountRow(account)
+                }
+            }
+        }
+    }
+
+    private func accountRow(_ account: ProviderAccountUsage) -> some View {
+        let peak = account.quotaWindows
+            .filter { $0.type != .credits }
+            .compactMap { usedPercent($0) }
+            .max()
+
+        return HStack(spacing: 14) {
+            Text(account.label)
+                .font(.sans(size: 12.5))
+                .foregroundColor(PadzyTheme.ink3)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(minWidth: 88, maxWidth: 140, alignment: .leading)
+
+            quotaFillBar(pct: peak ?? 0, elapsedFraction: nil, ahead: false)
+                .frame(minWidth: 120, maxWidth: .infinity)
+                .opacity(peak == nil ? 0.35 : 1)
+
+            Text(peak.map { "\(Int($0.rounded()))%" } ?? "\u{2014}")
+                .font(.mono(size: 14, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(peak == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                .frame(width: 44, alignment: .trailing)
+
+            Text(account.todayUsage.totalTokens.map(Self.compactTokens) ?? "\u{2014}")
+                .font(.mono(size: 10.5))
+                .foregroundColor(PadzyTheme.ink5)
+                .frame(width: 52, alignment: .trailing)
+        }
+        .padding(.vertical, 5)
+    }
+
+    /// "1.2M" / "340K" / "512" — the account rows are a secondary read, so they get a
+    /// compact count rather than the full grouped number the stat tiles use.
+    private static func compactTokens(_ value: Int) -> String {
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return "\(value / 1_000)K" }
+        return "\(value)"
     }
 
     // MARK: 6 · Quota windows

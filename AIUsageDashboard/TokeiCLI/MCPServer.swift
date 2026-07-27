@@ -109,6 +109,16 @@ struct MCPServer {
         least-utilized one that reported real quota.
         • `confidence: official` is provider-reported. Never treat `local_estimate` \
         or `unavailable` as a hard limit — they are floors, not ceilings.
+        • A low number you do not trust is NOT free capacity. A stale or estimated 0% \
+        means "no reading", not "wide open" — absence of data is not headroom.
+        • `observedAt` on a window is when that reading was taken. The top-level \
+        `stale` flag is a different thing: it only says how long ago Tokei wrote the \
+        file, so `stale: false` can still contain hour-old numbers. Judge freshness \
+        per window.
+        • `accounts` (Claude Code) lists each signed-in account separately. The \
+        provider's own `windows` show the account with the most headroom and \
+        `tokensToday` is the sum across accounts; use `accounts[].id` as \
+        `CLAUDE_CONFIG_DIR` to target a specific one.
         • If a response is prefixed with a stale warning, Tokei may not be running. \
         Say so instead of presenting the numbers as current.
 

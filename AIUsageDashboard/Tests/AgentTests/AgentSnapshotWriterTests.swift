@@ -28,7 +28,8 @@ final class AgentSnapshotWriterTests: XCTestCase {
         remaining: Double? = nil,
         confidence: MetricConfidence = .exact,
         source: String = "test_source",
-        resetAt: Date? = nil
+        resetAt: Date? = nil,
+        observedAt: Date? = nil
     ) -> QuotaWindow {
         QuotaWindow(
             providerID: .claudeCode,
@@ -38,7 +39,8 @@ final class AgentSnapshotWriterTests: XCTestCase {
             remaining: remaining,
             resetAt: resetAt,
             confidence: confidence,
-            source: source
+            source: source,
+            observedAt: observedAt
         )
     }
 
@@ -119,6 +121,61 @@ final class AgentSnapshotWriterTests: XCTestCase {
         XCTAssertEqual(provider.windows.count, 2)
         XCTAssertEqual(provider.windows.map(\.type).sorted(), ["daily", "monthly"])
         XCTAssertEqual(provider.windows.first(where: { $0.type == "daily" })?.usedPercent, 70)
+    }
+
+    /// The public schema must expose *when* a reading was taken, so an agent can judge
+    /// freshness itself instead of parsing `"(stale)"` out of a diagnostic string.
+    /// Additive, so `schemaVersion` stays 1.
+    func testObservedAtIsExposedOnPublicWindows() {
+        let observed = generatedAt.addingTimeInterval(-3600)
+        let snap = snapshot(
+            .claudeCode,
+            displayName: "Claude Code",
+            windows: [window(.weekly, used: 0, confidence: .estimated, observedAt: observed)]
+        )
+        let built = AgentSnapshotWriter.buildSnapshot(from: [snap], generatedAt: generatedAt)
+        XCTAssertEqual(built.providers[0].windows[0].observedAt, observed)
+        XCTAssertEqual(built.schemaVersion, 1)
+    }
+
+    /// Multi-account providers must expose the breakdown, not just an aggregate. An
+    /// orchestrator deciding where to fan out needs to know *which* Claude account has
+    /// headroom — that's the whole point of tracking more than one.
+    func testPerAccountUsageIsExposedInThePublicSchema() throws {
+        let snap = ProviderSnapshot(
+            providerID: .claudeCode,
+            displayName: "Claude Code",
+            authStatus: .authenticated,
+            quotaWindows: [window(.weekly, used: 10)],
+            todayUsage: TokenUsage(outputTokens: 300, confidence: .localParsed),
+            weekUsage: TokenUsage(outputTokens: 300, confidence: .localParsed),
+            accounts: [
+                ProviderAccountUsage(
+                    id: "/Users/x/.claude", label: "default",
+                    quotaWindows: [window(.weekly, used: 90)],
+                    todayUsage: TokenUsage(outputTokens: 100, confidence: .localParsed)
+                ),
+                ProviderAccountUsage(
+                    id: "/Users/x/.claude-account-1", label: "account-1",
+                    quotaWindows: [window(.weekly, used: 10)],
+                    todayUsage: TokenUsage(outputTokens: 200, confidence: .localParsed)
+                )
+            ]
+        )
+
+        let provider = AgentSnapshotWriter.buildSnapshot(from: [snap], generatedAt: generatedAt).providers[0]
+
+        XCTAssertEqual(provider.accounts?.map(\.label), ["default", "account-1"])
+        XCTAssertEqual(provider.accounts?.first?.windows.first?.usedPercent, 90)
+        XCTAssertEqual(provider.accounts?.last?.tokensToday, 200)
+    }
+
+    /// Single-account providers must not grow an empty `accounts` array — the field is
+    /// absent, not empty, so existing readers see no change at all.
+    func testSingleAccountProvidersOmitTheAccountsField() {
+        let snap = snapshot(.codex, displayName: "Codex", windows: [window(.weekly, used: 55)])
+        let provider = AgentSnapshotWriter.buildSnapshot(from: [snap], generatedAt: generatedAt).providers[0]
+        XCTAssertNil(provider.accounts)
     }
 
     func testUsedPercentClampsToHundred() {

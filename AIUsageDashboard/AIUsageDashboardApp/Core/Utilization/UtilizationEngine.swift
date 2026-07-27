@@ -64,7 +64,8 @@ public enum UtilizationEngine {
             resetAt: window.resetAt,
             plan: plan,
             confidence: window.confidence,
-            coverage: .complete
+            coverage: .complete,
+            observedAt: window.observedAt
         )
     }
 

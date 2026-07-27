@@ -30,6 +30,9 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
     public let confidence: MetricConfidence
     /// Whether the percentage is a full reading or derived from partial data.
     public let coverage: UtilizationCoverage
+    /// When the underlying reading was taken, propagated from the source `QuotaWindow`.
+    /// `nil` when the provider doesn't report one. See `QuotaWindow.observedAt`.
+    public let observedAt: Date?
 
     /// Stable identity: one utilization per provider × window.
     public var id: String { "\(providerID.rawValue)_\(window.rawValue)" }
@@ -41,7 +44,8 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         resetAt: Date? = nil,
         plan: String? = nil,
         confidence: MetricConfidence,
-        coverage: UtilizationCoverage = .complete
+        coverage: UtilizationCoverage = .complete,
+        observedAt: Date? = nil
     ) {
         self.providerID = providerID
         self.window = window
@@ -50,6 +54,7 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         self.plan = plan
         self.confidence = confidence
         self.coverage = coverage
+        self.observedAt = observedAt
     }
 }
 

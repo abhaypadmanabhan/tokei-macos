@@ -9,7 +9,8 @@ public actor ProviderRegistry {
 
     public static func `default`() -> ProviderRegistry {
         ProviderRegistry(providers: [
-            ClaudeCodeProvider(),
+            // Every Claude account on this machine, not just `~/.claude` — see `ClaudeAccount`.
+            ClaudeCodeProvider(accounts: ClaudeAccount.discover()),
             CodexProvider(),
             CursorProvider(),
             ClineProvider(),

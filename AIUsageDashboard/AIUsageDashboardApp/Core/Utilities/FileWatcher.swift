@@ -2,14 +2,15 @@ import Foundation
 
 public actor FileWatcher {
     public static let shared = FileWatcher()
-    public static let defaultWatchPaths: [URL] = [
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects", isDirectory: true),
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true),
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cline/data/sessions", isDirectory: true)
-    ]
+    public static let defaultWatchPaths: [URL] =
+        // One per Claude account — watching only `~/.claude/projects` meant edits in the
+        // other accounts' logs never triggered a refresh.
+        ClaudeAccount.discover().map(\.projectsDirectory) + [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex/sessions", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cline/data/sessions", isDirectory: true)
+        ]
     public static let defaultWatchPath: URL = defaultWatchPaths[0]
 
     public struct Event: Sendable, Equatable {
