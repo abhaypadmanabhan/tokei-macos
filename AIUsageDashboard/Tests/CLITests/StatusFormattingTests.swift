@@ -83,7 +83,22 @@ final class StatusFormattingTests: XCTestCase {
 
     let recommendation = try line(containing: "Recommendation:", in: output)
     XCTAssertTrue(recommendation.contains("avoid codex"))
-    XCTAssertTrue(output.contains("83%"), "the number that earned the avoid is visible")
+    XCTAssertTrue(
+      rows(of: output).contains("\(AgentSnapshotFixtures.codexUsedPercent)%"),
+      "the number that earned the avoid is visible in the table"
+    )
+  }
+
+  /// Guards the fixture itself, not the formatter. `full` hard-codes `avoid: ["codex"]`,
+  /// and the engine only avoids at `>= avoidThreshold` — so if Codex's percentage ever
+  /// drops below the frozen line, `full` becomes a snapshot production could never emit
+  /// and every test reading it starts teaching the wrong rule.
+  func testFixtureAvoidDecisionMatchesTheFrozenThreshold() {
+    XCTAssertGreaterThanOrEqual(
+      Double(AgentSnapshotFixtures.codexUsedPercent),
+      AgentRecommendationEngine.avoidThreshold,
+      "fixture avoids codex, so its usedPercent must be at or above the avoid threshold"
+    )
   }
 
   // MARK: - Freshness header
@@ -133,7 +148,9 @@ final class StatusFormattingTests: XCTestCase {
   }
 
   func testAggregateUtilizationIsRendered() throws {
-    XCTAssertTrue(try table().contains("Aggregate utilization: 26%"))
+    XCTAssertTrue(
+      try table().contains("Aggregate utilization: \(AgentSnapshotFixtures.aggregateUtilizationPercent)%")
+    )
   }
 
   func testFutureResetRendersAsACountdownAndAbsentResetRendersAsADash() throws {

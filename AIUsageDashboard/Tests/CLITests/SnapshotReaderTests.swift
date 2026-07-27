@@ -158,7 +158,10 @@ final class SnapshotReaderTests: XCTestCase {
     let snapshot = try reader.read()
 
     XCTAssertEqual(snapshot.generatedAt, AgentSnapshotFixtures.generatedAt)
-    XCTAssertEqual(snapshot.aggregateUtilizationPercent, 26)
+    XCTAssertEqual(
+      snapshot.aggregateUtilizationPercent,
+      Double(AgentSnapshotFixtures.aggregateUtilizationPercent)
+    )
     XCTAssertEqual(snapshot.providers.map(\.id), ["claude_code", "codex", "cursor", "antigravity"])
     XCTAssertEqual(snapshot.recommendation?.routeTo, "claude_code")
     XCTAssertEqual(snapshot.recommendation?.avoid, ["codex"])

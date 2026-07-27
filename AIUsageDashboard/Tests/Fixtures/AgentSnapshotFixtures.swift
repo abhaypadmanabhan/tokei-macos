@@ -11,15 +11,35 @@ import Foundation
 ///                      "—", never as 0%, and must never be a routing target
 ///   • `antigravity`  — a `local_estimate` 0% window: a low number you do not trust is
 ///                      not free capacity, so it must not be the routing target either
+///
+/// **`full` must stay a snapshot the real engine could actually emit.** A fixture that
+/// pairs an impossible number with a real decision teaches the wrong contract to every
+/// test that reads it, so the two derived values below are pinned to their sources:
+/// `codexUsedPercent` to `AgentRecommendationEngine.avoidThreshold`, and
+/// `aggregateUtilizationPercent` to the mean of the per-provider peaks.
 enum AgentSnapshotFixtures {
   /// `generatedAt` of `full` / `minimal` / `newerSchemaVersion`, as a Date.
   static let generatedAt = Date(timeIntervalSince1970: 1_785_153_600) // 2026-07-27T12:00:00Z
+
+  /// Codex's `usedPercent` in `full`. Must stay **at or above**
+  /// `AgentRecommendationEngine.avoidThreshold` (85), because the same fixture hard-codes
+  /// `avoid: ["codex"]` — the engine only avoids at `>= 85`, so a lower number here would
+  /// make `full` an output production could never produce. 88, not 85, so the fixture is
+  /// never sitting on the boundary. Asserted against the live constant in
+  /// `StatusFormattingTests.testAvoidedProviderIsNamed`.
+  static let codexUsedPercent = 88
+
+  /// `full`'s `aggregateUtilizationPercent`. `UtilizationEngine.aggregate` is the mean of
+  /// each provider's **peak** window: Claude 5 (max of 4/5), Codex 88, Antigravity 0.
+  /// Cursor has no windows at all, so it is absent from `peakByProvider` and is not
+  /// averaged in. (5 + 88 + 0) / 3 = 31.
+  static let aggregateUtilizationPercent = 31
 
   static let full = """
     {
       "schemaVersion": 1,
       "generatedAt": "2026-07-27T12:00:00Z",
-      "aggregateUtilizationPercent": 26,
+      "aggregateUtilizationPercent": 31,
       "providers": [
         {
           "id": "claude_code",
@@ -48,7 +68,7 @@ enum AgentSnapshotFixtures {
           "tokensToday": 4100000,
           "lastUpdated": "2026-07-27T11:57:00Z",
           "windows": [
-            {"type": "weekly", "usedPercent": 83, "confidence": "official",
+            {"type": "weekly", "usedPercent": 88, "confidence": "official",
              "source": "codex_rate_limits", "observedAt": "2026-07-27T11:57:00Z"}
           ]
         },
