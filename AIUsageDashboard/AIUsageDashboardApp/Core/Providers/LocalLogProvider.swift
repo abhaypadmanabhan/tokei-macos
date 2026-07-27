@@ -6,7 +6,9 @@ public protocol LocalLogProvider: Sendable {
     ///
     /// Partial failure is absorbed; total failure is not. An implementation that reads
     /// several roots returns the union of the roots that worked, and throws only when
-    /// **every** root failed. Callers therefore get exactly three outcomes:
+    /// **every root that exists** failed. A root that isn't there is *absent*, not broken:
+    /// it is skipped silently, so a tool the user never installed reads as "nothing to
+    /// report" rather than as an error. Callers therefore get exactly three outcomes:
     ///
     /// - a non-empty array — these sessions exist (some roots may have failed silently);
     /// - an empty array — discovery succeeded and there is genuinely nothing to read;
