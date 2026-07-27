@@ -1,5 +1,10 @@
 import Foundation
 
+// See the note in MCPServer.swift: set only on this file's copy in the test bundle.
+#if TOKEI_CLI_TESTS
+import AIUsageDashboardCore
+#endif
+
 /// Renders an `AgentSnapshot` as a readable, monospace-friendly table for humans and
 /// Bash-capable agents (`tokei status`).
 enum StatusFormatting {

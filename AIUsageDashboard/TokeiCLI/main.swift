@@ -40,7 +40,7 @@ case "status":
     let wantsJSON = arguments.dropFirst().contains("--json")
     exit(StatusCommand.run(json: wantsJSON))
 case "mcp":
-    MCPServer().run()
+    MCPServer(version: TokeiCLI.version).run()
     exit(0)
 case "help", "--help", "-h":
     printUsage()
