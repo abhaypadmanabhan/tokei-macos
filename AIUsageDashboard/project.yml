@@ -40,6 +40,13 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application: Abhay Padmanabhan (A47GG9FV27)"
           CODE_SIGN_STYLE: Manual
           DEVELOPMENT_TEAM: A47GG9FV27
+          # Must match AIUsageDashboardApp. Hardened runtime enables library
+          # validation, so the app can only load this framework if both carry the
+          # same Team ID and the same runtime flag. This framework shipped with
+          # the runtime flag even while this said NO, because the app's embed
+          # phase re-signs it with the app's options — stating it here makes the
+          # invariant explicit instead of a side effect of embedding.
+          ENABLE_HARDENED_RUNTIME: YES
     scheme:
       testTargets:
         - AIUsageDashboardCoreTests
