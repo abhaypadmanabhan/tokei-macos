@@ -11,16 +11,6 @@ move finished items to DONE with date + commit.
 3. Branch `feat/<slug>`, build+test green (`cd AIUsageDashboard && xcodegen generate` first), merge --no-ff, move the item to DONE here.
 
 ## P1 — high value, unblocked
-- [ ] **Cursor real metrics** — hardest one. Two paths from research
-      (`research/provider-research.md` L90-110): (a) local `state.vscdb` SQLite
-      read-only copy → parse usage keys; (b) dashboard API with
-      `WorkosCursorSessionToken` cookie extracted from state.vscdb (auth
-      fragile, undocumented). Start with (a); confidence `.localParsed` for (a),
-      `.providerReported` for (b). [needs-decision: is cookie extraction
-      acceptable?]
-- [ ] **Codex cost estimate** — tokens exist; multiply by plan/model pricing
-      table (static, versioned in code, confidence `.estimated`). Shows $ next
-      to Codex like Cline.
 - [ ] **WidgetKit target** — small/medium widgets showing today total + quota %.
       Needs App Group (`group.ai.padzy.tokei`) + UsageStore reading from the
       shared container; widget target added to project.yml. Deferred twice
@@ -43,11 +33,10 @@ move finished items to DONE with date + commit.
       exact tokens (macOS hover affordance).
 
 ## P3 — research / speculative
-- [ ] **Antigravity data source** — `~/.antigravity` + Application Support
-      exist but format unknown (research stalled). Needs a scout pass first.
-- [ ] **Claude quota windows** — session/weekly limits not in local logs;
-      requires OAuth usage endpoint (`research/provider-research.md` L40-60).
-      [needs-decision: OAuth scope/comfort]
+- [ ] **Antigravity token counts** — the connector ships (plan + credits offline,
+      per-model quota via the app's local RPC), but Antigravity writes no local
+      per-message log, so today/week tokens stay `unavailable`. Needs a new data
+      source, not more parsing of `state.vscdb`.
 - [ ] **Cline credits balance** — app.cline.bot internal API, undocumented.
       [needs-decision]
 - [ ] **Multi-machine aggregation** — sync usage-store.json via iCloud Drive
@@ -57,6 +46,19 @@ move finished items to DONE with date + commit.
       security-scoped bookmarks UX), notarized DMG pipeline.
 
 ## DONE
+- 2026-07-27 — **Quota trust gating + multi-account Claude Code** (dev @ `f725bac`):
+  `routeTo` gated on trusted, recent readings while `avoid` still uses every reading;
+  `observedAt` on every quota window; partially-expired caches return nothing rather than
+  the loosest surviving window; `Retry-After` honoured without a retry storm; Claude Code
+  discovered per `CLAUDE_CONFIG_DIR` (sibling `~/.claude-*` dirs holding `projects/`),
+  tokens summed and headline quota taken from the account with most headroom.
+- 2026-07-27 — **`tokei` CLI / MCP test coverage (#59)**: MCP stdio framing, `SnapshotReader`
+  and `StatusFormatting` under the standard `AIUsageDashboardCore` scheme; README "What Is
+  Stubbed" corrected against the provider code. 382 → 427 tests.
+- 2026-07-08 — **Claude quota windows** (`7f18c85`): session/weekly limits via the opt-in
+  OAuth usage endpoint (`ClaudeUsageClient`), `official` confidence, cooldown/cache handling.
+- 2026-07-08 — **Codex cost estimate** (`9cce468`): static per-model pricing table,
+  `.estimated` confidence; unknown model slugs yield no cost rather than a guessed number.
 - 2026-07-06 — **Cursor real metrics (#3)** + **Antigravity data source (#4/#13)** connectors
   (patch Round 2, dev @ f78c1f8): Cursor A offline plan/tier + accepted-lines / B network
   quota behind `cursorNetworkUsageEnabled` toggle (default off); Antigravity offline protobuf
