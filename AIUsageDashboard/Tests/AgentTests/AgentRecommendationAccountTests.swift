@@ -8,7 +8,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
     private let names: [ProviderID: String] = [
-        .claudeCode: "Claude Code", .codex: "OpenAI Codex",
+        .claudeCode: "Claude Code", .codex: "OpenAI Codex"
     ]
 
     private func util(_ providerID: ProviderID, _ percent: Double) -> Utilization {
@@ -40,7 +40,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
         let reason = recommend(accounts: [.claudeCode: [
             account("/Users/me/.claude", "default", 64),
             account("/Users/me/.claude-account-1", "account-1", 7),
-            account("/Users/me/.claude-account-2", "account-2", 41),
+            account("/Users/me/.claude-account-2", "account-2", 41)
         ]])?.reason ?? ""
 
         XCTAssertTrue(reason.contains("route to Claude Code"), reason)
@@ -58,7 +58,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
     func testAccountWithNoReadingIsNeverNamed() {
         let reason = recommend(accounts: [.claudeCode: [
             account("/Users/me/.claude-broken", "broken", nil),
-            account("/Users/me/.claude-account-1", "account-1", 7),
+            account("/Users/me/.claude-account-1", "account-1", 7)
         ]])?.reason ?? ""
 
         XCTAssertTrue(reason.contains("account-1"), reason)
@@ -69,7 +69,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
     /// default, so the clause would be noise.
     func testSingleAccountIsNotNamed() {
         let reason = recommend(accounts: [.claudeCode: [
-            account("/Users/me/.claude", "default", 7),
+            account("/Users/me/.claude", "default", 7)
         ]])?.reason ?? ""
 
         XCTAssertTrue(reason.contains("route to Claude Code (tightest window 7%)"), reason)
@@ -113,7 +113,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
                                                limit: 100, confidence: .providerReported,
                                                source: "test")],
                     todayUsage: .unavailable
-                ),
+                )
             ]
         )
         let codex = ProviderSnapshot(

@@ -27,7 +27,7 @@ final class RouteTargetPolicyTests: XCTestCase {
         let peaks = RouteTargetPolicy.peaks(in: [
             util(.codex, 20, window: .daily),
             util(.codex, 95, window: .weekly),
-            util(.claudeCode, 40),
+            util(.claudeCode, 40)
         ])
         XCTAssertEqual(peaks.map(\.providerID), [.claudeCode, .codex])
         XCTAssertEqual(peaks.first(where: { $0.providerID == .codex })?.usedPercent, 95)
@@ -35,7 +35,7 @@ final class RouteTargetPolicyTests: XCTestCase {
 
     func testPeaksAreInStableProviderOrder() {
         let peaks = RouteTargetPolicy.peaks(in: [
-            util(.antigravity, 10), util(.cursor, 10), util(.claudeCode, 10),
+            util(.antigravity, 10), util(.cursor, 10), util(.claudeCode, 10)
         ])
         XCTAssertEqual(peaks.map(\.providerID), [.claudeCode, .cursor, .antigravity])
     }
@@ -50,7 +50,7 @@ final class RouteTargetPolicyTests: XCTestCase {
             util(.claudeCode, 10, window: .weekly),
             util(.claudeCode, 30, window: .fiveHour, confidence: .estimated),
             util(.codex, 40),
-            util(.cursor, 55),
+            util(.cursor, 55)
         ], now: now)
         XCTAssertEqual(decision.routeTo?.providerID, .codex)
         XCTAssertEqual(decision.excluded.map(\.providerID), [.claudeCode])
@@ -63,7 +63,7 @@ final class RouteTargetPolicyTests: XCTestCase {
             util(.antigravity, 92, confidence: .estimated),
             util(.claudeCode, 5, confidence: .estimated),
             util(.codex, 31),
-            util(.cursor, 60),
+            util(.cursor, 60)
         ], now: now)
         XCTAssertEqual(decision.avoid.map(\.providerID), [.antigravity])
         XCTAssertEqual(decision.routeTo?.providerID, .codex)
@@ -78,7 +78,7 @@ final class RouteTargetPolicyTests: XCTestCase {
             let decision = RouteTargetPolicy.agent.evaluate([
                 util(.claudeCode, 0, confidence: confidence),
                 util(.codex, 75),
-                util(.cursor, 60),
+                util(.cursor, 60)
             ], now: now)
             XCTAssertEqual(decision.routeTo?.providerID, .cursor,
                            "\(confidence) must not be routable")
@@ -88,14 +88,14 @@ final class RouteTargetPolicyTests: XCTestCase {
     func testOfficialButStaleReadingIsNotRoutable() {
         let decision = RouteTargetPolicy.agent.evaluate([
             util(.claudeCode, 0, observedAt: now.addingTimeInterval(-2 * 3_600)),
-            util(.codex, 75, observedAt: now),
+            util(.codex, 75, observedAt: now)
         ], now: now)
         XCTAssertNil(decision.routeTo)
     }
 
     func testReadingWithUnknownAgeStaysRoutable() {
         let decision = RouteTargetPolicy.agent.evaluate([
-            util(.codex, 31), util(.claudeCode, 60),
+            util(.codex, 31), util(.claudeCode, 60)
         ], now: now)
         XCTAssertEqual(decision.routeTo?.providerID, .codex)
     }
@@ -139,7 +139,7 @@ final class RouteTargetPolicyTests: XCTestCase {
             Utilization(providerID: .claudeCode, window: .weekly, usedPercent: 5,
                         confidence: .providerReported, observedAt: now.addingTimeInterval(86_400)),
             Utilization(providerID: .cursor, window: .monthly, usedPercent: 60,
-                        confidence: .providerReported, observedAt: now),
+                        confidence: .providerReported, observedAt: now)
         ], now: now)
         XCTAssertNil(target)
     }
@@ -147,7 +147,7 @@ final class RouteTargetPolicyTests: XCTestCase {
     func testReadingInsideMaxRoutableAgeStaysRoutable() {
         let decision = RouteTargetPolicy.agent.evaluate([
             util(.codex, 31, observedAt: now.addingTimeInterval(-29 * 60)),
-            util(.claudeCode, 60, observedAt: now),
+            util(.claudeCode, 60, observedAt: now)
         ], now: now)
         XCTAssertEqual(decision.routeTo?.providerID, .codex)
     }
@@ -156,14 +156,14 @@ final class RouteTargetPolicyTests: XCTestCase {
 
     func testNoTargetWhenFewerThanTwoTrustedProviders() {
         let decision = RouteTargetPolicy.agent.evaluate([
-            util(.claudeCode, 0, confidence: .estimated), util(.codex, 75),
+            util(.claudeCode, 0, confidence: .estimated), util(.codex, 75)
         ], now: now)
         XCTAssertNil(decision.routeTo)
     }
 
     func testNoTargetWhenLeastFilledIsAtTheAvoidThreshold() {
         let decision = RouteTargetPolicy.agent.evaluate([
-            util(.codex, 85), util(.claudeCode, 92),
+            util(.codex, 85), util(.claudeCode, 92)
         ], now: now)
         XCTAssertNil(decision.routeTo)
         XCTAssertEqual(decision.avoid.map(\.providerID), [.claudeCode, .codex])
@@ -176,7 +176,7 @@ final class RouteTargetPolicyTests: XCTestCase {
     func testSpreadGateAppliesToUITuningOnly() {
         let bunched = [util(.codex, 60), util(.claudeCode, 68)]
         XCTAssertEqual(RouteTargetPolicy.agent.evaluate(bunched, now: now).routeTo?.providerID, .codex)
-        XCTAssertNil(RouteTargetPolicy.ui.evaluate(bunched, now: now).routeTo)
+        XCTAssertNil(RouteTargetPolicy.human.evaluate(bunched, now: now).routeTo)
     }
 
     /// Likewise the stricter 70% chip ceiling: 75% is routable for an agent (below the
@@ -184,13 +184,13 @@ final class RouteTargetPolicyTests: XCTestCase {
     func testRouteTargetCeilingAppliesToUITuningOnly() {
         let readings = [util(.codex, 75), util(.claudeCode, 98)]
         XCTAssertEqual(RouteTargetPolicy.agent.evaluate(readings, now: now).routeTo?.providerID, .codex)
-        XCTAssertNil(RouteTargetPolicy.ui.evaluate(readings, now: now).routeTo)
+        XCTAssertNil(RouteTargetPolicy.human.evaluate(readings, now: now).routeTo)
     }
 
     func testUITuningKeepsTheAgentTrustGate() {
-        XCTAssertEqual(RouteTargetPolicy.ui.routableConfidences,
+        XCTAssertEqual(RouteTargetPolicy.human.routableConfidences,
                        RouteTargetPolicy.agent.routableConfidences)
-        XCTAssertEqual(RouteTargetPolicy.ui.maxRoutableAge,
+        XCTAssertEqual(RouteTargetPolicy.human.maxRoutableAge,
                        RouteTargetPolicy.agent.maxRoutableAge)
     }
 

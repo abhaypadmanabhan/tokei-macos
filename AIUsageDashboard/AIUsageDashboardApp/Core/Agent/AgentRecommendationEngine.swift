@@ -9,7 +9,7 @@ import Foundation
 /// (85% avoid line, no spread gate, no extra ceiling). The human-facing surfaces
 /// (`MaxxerMath.routeTarget` → the "route work here" chip, `OverviewView`'s headroom
 /// dot and `DashboardView`'s drill-in chip) call the same type with
-/// `RouteTargetPolicy.ui`, which adds a ≥15-point spread gate and a stricter 70%
+/// `RouteTargetPolicy.human`, which adds a ≥15-point spread gate and a stricter 70%
 /// ceiling so a chip does not nag over a 2-point difference. Same rule, two tunings —
 /// read `RouteTargetPolicy`'s doc comment for the rule and the invariants behind it.
 ///

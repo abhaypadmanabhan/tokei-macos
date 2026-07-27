@@ -8,7 +8,7 @@ final class AgentRecommendationReasonTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
     private let names: [ProviderID: String] = [
-        .claudeCode: "Claude Code", .codex: "OpenAI Codex",
+        .claudeCode: "Claude Code", .codex: "OpenAI Codex"
     ]
 
     /// A future-dated reading is excluded as a clock problem, so the reason must say
@@ -22,7 +22,7 @@ final class AgentRecommendationReasonTests: XCTestCase {
                             confidence: .providerReported,
                             observedAt: now.addingTimeInterval(3 * 3_600)),
                 Utilization(providerID: .codex, window: .weekly, usedPercent: 75,
-                            confidence: .providerReported, observedAt: now),
+                            confidence: .providerReported, observedAt: now)
             ],
             displayNames: names,
             now: now

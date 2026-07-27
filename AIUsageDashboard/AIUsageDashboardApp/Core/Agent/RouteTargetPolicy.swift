@@ -36,7 +36,7 @@ import Foundation
 ///   of pressure, and steering away from a provider we are unsure about is the safe
 ///   failure mode. Do not collapse these into one filter.
 /// - **The spread gate stayed a parameter, not a rule.** `minSpread` (15 points in
-///   `.ui`) exists so the chip does not nag a human over a 2-point difference. It is a
+///   `.human`) exists so the chip does not nag a human over a 2-point difference. It is a
 ///   *presentation* choice and must never become the agent rule — an agent asking
 ///   "where should this run" wants the best available answer even when the field is
 ///   tight, so `.agent` sets it to 0. Same for `maxRouteTargetPercent`: the UI holds a
@@ -124,7 +124,10 @@ public struct RouteTargetPolicy: Sendable, Equatable {
 
     /// The human-facing tuning: a suggestion has to be worth interrupting for, so it
     /// needs a ≥15-point spread and a target with real headroom (≤70%).
-    public static let ui = RouteTargetPolicy(
+    ///
+    /// Named `human` rather than `ui` to pair with `agent` by *who is reading the
+    /// answer*, which is the only thing that differs between the two.
+    public static let human = RouteTargetPolicy(
         maxRouteTargetPercent: 70,
         minSpread: 15
     )

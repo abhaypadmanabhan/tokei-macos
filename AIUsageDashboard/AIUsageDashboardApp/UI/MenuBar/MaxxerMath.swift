@@ -134,7 +134,7 @@ public enum MaxxerMath {
     /// chip, the Overview headroom dot and the agent snapshot can never disagree
     /// about what "route here" means again.
     ///
-    /// `.ui` is the human tuning of that rule: at least two providers with a
+    /// `.human` is the human tuning of that rule: at least two providers with a
     /// *trusted* peak reading, a target with genuine headroom (≤70%), and a ≥15-point
     /// spread from the tightest reading anywhere — so the chip never nags over a
     /// 2-point difference. `nil` (no chip) whenever any of those fails, which now
@@ -147,12 +147,12 @@ public enum MaxxerMath {
     ///
     /// - Parameters:
     ///   - utilizations: live readings; the caller filters hidden providers first.
-    ///   - policy: the tuning to apply. Defaults to `.ui`; injectable for tests.
+    ///   - policy: the tuning to apply. Defaults to `.human`; injectable for tests.
     ///   - now: current instant — injected, never read from the wall clock here, so
     ///     this file stays pure (the age half of the trust gate needs it).
     public static func routeTarget(
         in utilizations: [Utilization],
-        policy: RouteTargetPolicy = .ui,
+        policy: RouteTargetPolicy = .human,
         now: Date
     ) -> Utilization? {
         policy.routeTarget(in: utilizations, now: now)
