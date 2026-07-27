@@ -218,14 +218,29 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         }
     }
 
-    /// Every account's log sources, unioned — this is the `LocalLogProvider` contract, and
-    /// callers (file watching, log counts) want all of them.
+    /// Every account's log sources, unioned — callers (file watching, log counts) want all
+    /// of them.
+    ///
+    /// Follows the `LocalLogProvider` partial-failure contract: one unreadable account is
+    /// absorbed (the others' sessions are still worth watching), but if **every** account
+    /// fails the first error is rethrown. Returning `[]` there would make a machine whose
+    /// log directories are all broken look exactly like one that simply has no sessions
+    /// yet — the regression introduced when this method started unioning with `try?`.
+    /// `fetchSnapshot` does not go through here; it warns per account on its own path.
     public func discoverLogSources() async throws -> [LogSource] {
         var sources: [LogSource] = []
+        var failures: [Error] = []
         for account in accounts {
-            sources.append(contentsOf: (try? await Self.logSources(
-                in: account, id: id, fileManager: fileManager
-            )) ?? [])
+            do {
+                sources.append(contentsOf: try await Self.logSources(
+                    in: account, id: id, fileManager: fileManager
+                ))
+            } catch {
+                failures.append(error)
+            }
+        }
+        if let failure = failures.first, failures.count == accounts.count {
+            throw failure
         }
         return sources
     }
