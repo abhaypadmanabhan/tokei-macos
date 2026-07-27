@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Reads Cursor's web dashboard usage. Both calls authenticate with the WorkOS
 /// session cookie (`CursorSession`) — never a Bearer token — matching the paths
@@ -118,21 +119,40 @@ public actor CursorUsageClientImpl: CursorUsageClient {
                 throw CursorUsageError.unexpectedResponse
             }
 
+            // SECURITY: every log line below carries status codes and intervals only —
+            // never the cookie, and never a response body (which can echo account data).
             switch httpResponse.statusCode {
             case 200..<300:
                 return data
+            case 401:
+                Self.logger.warning("usage rejected our session cookie (401)")
+                throw CursorUsageError.httpStatus(httpResponse.statusCode)
             case 429:
                 let cooldownStore = self.cooldownStore(for: cookie)
                 let retryAfter = cooldownStore.retryAfter(from: httpResponse)
                 lastRetryAfter = retryAfter
-                if attempt < Self.maxAttempts {
-                    await sleep(min(retryAfter ?? cooldownStore.defaultCooldownInterval, Self.maxRetrySleepInterval))
+                let detail = "retry-after \(retryAfter.map { String(Int($0)) } ?? "unset")s, attempt \(attempt)"
+                Self.logger.warning("usage rate limited (429), \(detail, privacy: .public)")
+                switch UsageClientPolicy.rateLimitAction(
+                    retryAfter: retryAfter,
+                    attempt: attempt,
+                    maxAttempts: Self.maxAttempts,
+                    defaultCooldownInterval: cooldownStore.defaultCooldownInterval
+                ) {
+                case .sleepThenRetry(let interval):
+                    await sleep(interval)
+                case .giveUp(let retryAfter):
+                    cooldownStore.record(duration: retryAfter)
+                    throw CursorUsageError.rateLimited(retryAfter: retryAfter)
                 }
             default:
+                Self.logger.warning("usage returned HTTP \(httpResponse.statusCode, privacy: .public)")
                 throw CursorUsageError.httpStatus(httpResponse.statusCode)
             }
         }
 
+        // Unreachable: on the final attempt the policy returns `.giveUp`, which records the
+        // cooldown and throws inside the loop. Kept because the compiler can't prove that.
         cooldownStore(for: cookie).record(duration: lastRetryAfter)
         throw CursorUsageError.rateLimited(retryAfter: lastRetryAfter)
     }
@@ -204,8 +224,8 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     private static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    private static let logger = Logger(subsystem: "ai.padzy.tokei", category: "CursorUsageClient")
     private static let maxAttempts = 3
-    private static let maxRetrySleepInterval: TimeInterval = 30
 }
 
 // MARK: - Token events (CSV)
