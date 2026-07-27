@@ -236,3 +236,59 @@
 - **Verification note that paid off:** the fix labels warnings per account. First real run
   immediately distinguished "[default] cooling down" from "[account-1] credentials expired"
   — a distinction the single-account build structurally could not express.
+
+## 2026-07-27 — parallel patch: where downstream checks overturned upstream claims
+
+Four packages built in parallel, adversarially reviewed, then merged. Twelve agent tasks,
+all `done`. The value was almost entirely in the checks that *disagreed* with what came
+before them, including three that disagreed with me.
+
+- **My root-cause hypothesis was right in mechanism, wrong in detail — and the detail
+  mattered.** I diagnosed the unlaunchable Release app as "app has hardened runtime, Core
+  framework doesn't". Wrong: the app's embed phase re-signs the framework with the app's
+  options, so both carried `adhoc,runtime`. The real fault was **ad-hoc vs ad-hoc** —
+  `TeamIdentifier` absent on *both* sides, and under library validation *absent ≠ absent*.
+  Handing it over as "leading hypothesis, verify first, follow the evidence if it
+  disagrees" is what let the agent correct it instead of confirming it.
+- **I asserted a failure was loud; it was silent.** I said `gen-appcast.sh` would exit 1
+  with a friendly message. Under `set -euo pipefail`, `X="$(find <missing> | grep -v … |
+  head -1)"` aborts *at the assignment* — `find` exits non-zero, `grep` gets no input and
+  exits 1, pipefail propagates, `set -e` kills the script before the next line's guard can
+  print. Third instance of this pipefail-plus-short-pipeline family in this repo. **Fix the
+  pipeline, not the guard.**
+- **I over-attributed lint debt twice.** I charged four violations to WP-3 (only one was)
+  and one to WP-2 (pre-existing at base, 427 lines already flagged; WP-2 grew it by 20).
+  Both agents measured against the base commit and said so. **Attribute by measurement
+  against the base tree, never by "this file appears in that diff".**
+- **A stricter gate finds bugs the thing it gates never had.** Rebuilding the launch
+  assertion exposed a genuine pre-existing defect: both signing modes shared one
+  `DerivedData`, so the first ad-hoc build after a signed one staged a still-Developer-ID-
+  signed helper — a bundle `codesign --verify --strict --deep` passes. Only visible on a
+  *mode transition*; testing each path from clean can never see it.
+- **A gate that infers success from silence is not a gate.** The first launch assertion
+  discarded the exit status and printed OK whenever the process died, unless stderr matched
+  one of five English regexes. Require a *positive* signal, and make an allowed skip read
+  differently from a pass.
+- **Green-alone is not green-together.** WP-3 moved `avoidThreshold` onto a new type; WP-4
+  independently added a guard test reading the old symbol. Both branches passed their own
+  suites; only the merge failed to compile. **The full gate on the integrated branch is the
+  only run that means anything** — per-branch green is a prerequisite, not evidence.
+- **Tell an agent what was already cleared, not just what to fix.** Each fix task carried
+  the reviewer's explicit "confirmed clean, do not churn" list. Nobody re-litigated settled
+  work, and one agent (WP-4) *declined* a review suggestion after verifying notarization,
+  stapling and DMG already shipped — refusing to replace one false statement with another.
+- **Routing on an untrusted number is the bug this repo exists to prevent.** Mid-run,
+  Tokei's own reading went `local_estimate (stale)` and the engine correctly refused to
+  route. The honest move was to say quota was unverifiable and reuse warm agents — not to
+  treat a stale 5% as headroom. A floor is not a ceiling.
+
+Herdr/orchestration:
+- **`herd spawn` races its own pane.** It splits and calls `agent start` immediately, losing
+  to shell init (`agent_pane_busy`). The pane *is* created — read it for a clean prompt,
+  `herdr agent start` by hand, then patch `agent_name`/`pane_id`/`status` into `run.json`.
+- **Use `--isolation pane` with an explicit `--cwd` when the worktrees already exist**;
+  `worktree` mode makes herd create competing ones.
+- **`herd spawn` splits `--current`,** i.e. `$HERDR_PANE_ID`. Override that env var to
+  anchor the fleet into another tab instead of shredding the orchestrator's own pane.
+- **Results through files, never terminal scraping.** Lifecycle state said `running` for
+  tasks whose result files had already landed. The file is the truth.
