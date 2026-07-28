@@ -86,9 +86,18 @@ struct ProviderDetailView: View {
     private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    /// Only worth a section when there's genuinely more than one account — a single-account
-    /// setup would just be repeating the headline numbers under a different heading.
-    private var showAccounts: Bool { (snapshot.accounts?.count ?? 0) > 1 }
+    private var accounts: [ProviderAccountUsage] { snapshot.accounts ?? [] }
+
+    /// Worth a section when there's genuinely more than one account — a single-account setup
+    /// would just repeat the headline numbers under a different heading, and its per-account
+    /// chart would be the daily-history chart redrawn.
+    ///
+    /// The one exception: a lone account with a directory we could not read. Then the row is
+    /// the only place that says the number above it is missing a piece, which matters more
+    /// than not repeating ourselves.
+    private var showAccounts: Bool {
+        accounts.count > 1 || accounts.contains { !$0.unreadableDirectories.isEmpty }
+    }
     private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
 
     private static let syncFormatter: DateFormatter = {
@@ -106,6 +115,7 @@ struct ProviderDetailView: View {
                 metaGrid
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
+                if accounts.count > 1 { accountScopeNote }
                 if isPlanOnly { planCreditsSection }
                 bottomRegion
             }
@@ -375,6 +385,58 @@ struct ProviderDetailView: View {
         return "\(MaxxerMath.formatUSD(value?.apiEquivalentUSD))/mo API-equiv"
     }
 
+    // MARK: - 4b · Which numbers are all accounts, which are one
+
+    /// The stats above deliberately mix two rules: token counts are a **sum over every
+    /// account**, while the gauge and the quota windows are **one account's** — whichever has
+    /// the most headroom, because work can be routed there with `CLAUDE_CONFIG_DIR`. Both are
+    /// right, and side by side with nothing said they read as one picture: a card showing 50%
+    /// while an account sat at 88% is the confusion this line exists to end.
+    private var accountScopeNote: some View {
+        Text(scopeSentence)
+            .font(.sans(size: 15))
+            .foregroundColor(PadzyTheme.ink3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 640, alignment: .leading)
+    }
+
+    private var scopeSentence: String {
+        let sum = "Token counts above add up all \(accounts.count) accounts."
+        guard tightestWindow != nil else {
+            return "\(sum) Per-account numbers are in Accounts below."
+        }
+        if let account = headlineAccount {
+            return "\(sum) The gauge and quota windows are one account — \(account.label), "
+                + "the one with the most headroom right now. Per-account numbers are in Accounts below."
+        }
+        return "\(sum) The gauge and quota windows are a single account's — whichever has the "
+            + "most headroom — not all \(accounts.count). Per-account numbers are in Accounts below."
+    }
+
+    /// Which account the headline quota came from, re-deriving the provider's "most headroom"
+    /// rule — then **checked against** the headline actually on screen, and abandoned if it
+    /// doesn't match or if two accounts tie. Naming the wrong account would be worse than
+    /// naming none, and this view must not quietly become a second definition of the rule.
+    private var headlineAccount: ProviderAccountUsage? {
+        let readings = accounts.compactMap { account in
+            accountPeak(account).map { (account: account, peak: $0) }
+        }
+        guard let best = readings.min(by: { $0.peak < $1.peak }),
+              let headline = nonCreditsWindows.compactMap({ usedPercent($0) }).max(),
+              abs(best.peak - headline) < 0.5,
+              readings.filter({ abs($0.peak - best.peak) < 0.5 }).count == 1
+        else { return nil }
+        return best.account
+    }
+
+    /// An account's own utilization: the tightest of its non-credits windows.
+    private func accountPeak(_ account: ProviderAccountUsage) -> Double? {
+        account.quotaWindows
+            .filter { $0.type != .credits }
+            .compactMap { usedPercent($0) }
+            .max()
+    }
+
     // MARK: - 5 · Plan & credits (plan-only)
 
     private var planCreditsSection: some View {
@@ -551,59 +613,216 @@ struct ProviderDetailView: View {
 
     // MARK: 6b · Accounts (multi-account providers)
 
-    /// Per-account breakdown for providers where one machine holds several signed-in
-    /// accounts (Claude Code, via `CLAUDE_CONFIG_DIR`). The headline quota above is the
-    /// account with the most headroom; this says which account that is, and what the
-    /// others look like.
+    /// Per-account breakdown for providers where one machine holds several signed-in accounts
+    /// (Claude Code, via `CLAUDE_CONFIG_DIR`): one line per account **over time**, on one
+    /// shared scale, plus each account's own totals and its own quota.
+    ///
+    /// The chart is the point of the section. A single row of current numbers can say which
+    /// account is bigger today; it cannot say which one has been climbing all week, which is
+    /// what "who is spending more" actually means to someone deciding where to work next.
     private var accountsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let rows = accountRows
+        let series = rows.compactMap(\.series)
+
+        return VStack(alignment: .leading, spacing: PadzySpace.m) {
             SectionLabel("Accounts")
+
+            Text(accountsSectionNote)
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if accounts.count > 1 {
+                if series.isEmpty {
+                    Text("No per-account history yet \u{2014} Claude's local logs haven't recorded a full day for these accounts.")
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink4)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    AccountTrendChart(series: series)
+                        .frame(height: 170)
+                }
+            }
+
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(snapshot.accounts ?? []) { account in
-                    accountRow(account)
+                ForEach(rows) { row in
+                    accountRow(row)
                 }
             }
         }
     }
 
-    private func accountRow(_ account: ProviderAccountUsage) -> some View {
-        let peak = account.quotaWindows
-            .filter { $0.type != .credits }
-            .compactMap { usedPercent($0) }
-            .max()
-
-        return HStack(spacing: 14) {
-            Text(account.label)
-                .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink3)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(minWidth: 88, maxWidth: 140, alignment: .leading)
-
-            quotaFillBar(pct: peak ?? 0, elapsedFraction: nil, ahead: false)
-                .frame(minWidth: 120, maxWidth: .infinity)
-                .opacity(peak == nil ? 0.35 : 1)
-
-            Text(peak.map { "\(Int($0.rounded()))%" } ?? "\u{2014}")
-                .font(.mono(size: 14, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(peak == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
-                .frame(width: 44, alignment: .trailing)
-
-            Text(account.todayUsage.totalTokens.map(Self.compactTokens) ?? "\u{2014}")
-                .font(.mono(size: 10.5))
-                .foregroundColor(PadzyTheme.ink5)
-                .frame(width: 52, alignment: .trailing)
+    private var accountsSectionNote: String {
+        guard accounts.count > 1 else {
+            return "One account, and one of its directories could not be read \u{2014} the totals above are missing whatever is in it."
         }
-        .padding(.vertical, 5)
+        return "Each line is one account's own tokens per day, on a shared scale. "
+            + "Daily history below adds every account together."
     }
 
-    /// "1.2M" / "340K" / "512" — the account rows are a secondary read, so they get a
-    /// compact count rather than the full grouped number the stat tiles use.
-    private static func compactTokens(_ value: Int) -> String {
-        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
-        if value >= 1_000 { return "\(value / 1_000)K" }
-        return "\(value)"
+    /// One account's row: its identity (and the directories folded into it), its tokens over
+    /// the same window as the chart, its share of the accounts' total, and its **own** quota
+    /// — the number the gauge above is not, unless this happens to be the freest account.
+    private func accountRow(_ row: AccountRow) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 10) {
+                StrokeSwatch(color: row.color, dash: row.dash)
+                    .opacity(row.series == nil ? 0.35 : 1)
+                Text(row.account.label)
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                Text(TokenFormatter.format(row.rangeTokens))
+                    .font(.mono(size: 15, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(row.rangeTokens == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                Text(row.shareLabel)
+                    .font(.mono(size: 13.5))
+                    .monospacedDigit()
+                    .foregroundColor(PadzyTheme.ink5)
+                    .frame(width: 48, alignment: .trailing)
+            }
+
+            HStack(spacing: 10) {
+                Text(row.directoriesLabel)
+                    .font(.mono(size: 13.5))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text("own quota")
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink5)
+                Text(row.peak.map { "\(Int($0.rounded()))%" } ?? "\u{2014}")
+                    .font(.mono(size: 15, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundColor(row.peak == nil ? PadzyTheme.ink5 : PadzyTheme.ink2)
+                    .frame(width: 44, alignment: .trailing)
+            }
+
+            if !row.account.unreadableDirectories.isEmpty {
+                Text(Self.unreadableNotice(row.account.unreadableDirectories))
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, PadzySpace.s)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Names the directory, not just the fact — "something failed" sends nobody anywhere.
+    private static func unreadableNotice(_ paths: [String]) -> String {
+        let names = paths.map(Self.abbreviated).joined(separator: ", ")
+        let subject = paths.count == 1 ? "its usage is" : "their usage is"
+        return "\(names) couldn't be read on this refresh, so \(subject) missing from these numbers."
+    }
+
+    // MARK: 6b · Per-account series
+
+    private struct AccountRow: Identifiable {
+        let account: ProviderAccountUsage
+        let color: Color
+        let dash: [CGFloat]
+        let series: AccountTrendChart.Series?
+        /// Tokens inside the chart's window. `nil` when this account has no series at all.
+        let rangeTokens: Int?
+        let share: Double?
+        let peak: Double?
+
+        var id: String { account.id }
+
+        var shareLabel: String {
+            guard let share else { return "\u{2014}" }
+            return "\(Int((share * 100).rounded()))%"
+        }
+
+        /// The `CLAUDE_CONFIG_DIR`s folded into this one identity. Two of them is exactly why
+        /// three directories on this machine list as two accounts, and without it the second
+        /// row looks like a directory that vanished.
+        var directoriesLabel: String {
+            let names = account.configDirectories.map(ProviderDetailView.abbreviated)
+            if names.isEmpty { return ProviderDetailView.abbreviated(account.id) }
+            return names.joined(separator: " \u{00B7} ")
+        }
+    }
+
+    /// `~/.claude-account-2` rather than `/Users/me/.claude-account-2` — the home prefix is
+    /// the same on every row and eats the width the distinguishing part needs.
+    private static func abbreviated(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard path.hasPrefix(home) else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
+    /// The day span the per-account chart covers: the aggregate `trend`'s own span, so this
+    /// chart and the daily-history chart below it always describe the same window — including
+    /// when the user moves the range control, which this view never sees directly. Falls back
+    /// to whatever the accounts recorded when the aggregate has no history to align to.
+    private var accountWindow: ClosedRange<Date>? {
+        let calendar = Calendar.current
+        if let first = trend.first?.date, let last = trend.last?.date, first <= last {
+            return calendar.startOfDay(for: first)...calendar.startOfDay(for: last)
+        }
+        let days = accounts
+            .flatMap { ($0.dailyTotals ?? [:]).keys }
+            .map { calendar.startOfDay(for: $0) }
+        guard let first = days.min(), let last = days.max() else { return nil }
+        return first...last
+    }
+
+    /// Per-account rows, biggest spender first — the answer to the question is the reading
+    /// order. Colours stay keyed to the provider's own account order, so a row's line does
+    /// not change colour when the ranking flips.
+    private var accountRows: [AccountRow] {
+        let calendar = Calendar.current
+        let tint = AgentTint.color(snapshot.providerID)
+        let window = accountWindow
+
+        let rows: [AccountRow] = accounts.enumerated().map { index, account in
+            let color = AccountSeriesStyle.color(index, tint: tint)
+            let dash = AccountSeriesStyle.dash(index)
+            guard let window, let totals = account.dailyTotals, !totals.isEmpty else {
+                return AccountRow(account: account, color: color, dash: dash, series: nil,
+                                  rangeTokens: nil, share: nil, peak: accountPeak(account))
+            }
+
+            var byDay: [Date: Int] = [:]
+            for (date, tokens) in totals {
+                byDay[calendar.startOfDay(for: date), default: 0] += tokens
+            }
+
+            var points: [AccountTrendChart.Point] = []
+            var day = window.lowerBound
+            while day <= window.upperBound {
+                points.append(AccountTrendChart.Point(date: day, tokens: byDay[day] ?? 0))
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+
+            let total = points.reduce(0) { $0 + $1.tokens }
+            // An account with nothing inside the window gets no line: a flat zero drawn
+            // across the whole chart reads as "measured, and it was zero" — which we know,
+            // but it also buries the account that did the work under a second stroke.
+            let series = total > 0
+                ? AccountTrendChart.Series(id: account.id, label: account.label,
+                                           color: color, dash: dash, points: points)
+                : nil
+            return AccountRow(account: account, color: color, dash: dash, series: series,
+                              rangeTokens: total, share: nil, peak: accountPeak(account))
+        }
+
+        let grandTotal = rows.compactMap(\.rangeTokens).reduce(0, +)
+        return rows
+            .map { row in
+                guard grandTotal > 0, let tokens = row.rangeTokens else { return row }
+                return AccountRow(account: row.account, color: row.color, dash: row.dash,
+                                  series: row.series, rangeTokens: tokens,
+                                  share: Double(tokens) / Double(grandTotal), peak: row.peak)
+            }
+            .sorted { ($0.rangeTokens ?? -1) > ($1.rangeTokens ?? -1) }
     }
 
     // MARK: 6 · Quota windows
@@ -988,6 +1207,84 @@ private func previewSnapshot() -> ProviderSnapshot {
         planLabel: "$5/mo · Google student"
     )
     .frame(width: 720, height: 900)
+}
+
+/// Two accounts with genuinely different daily shapes and different quota — the machine this
+/// was built for. `default` spends more but has the headroom; `account-1` is the 88% the card
+/// used to hide behind a 50%.
+private func previewAccounts(_ count: Int, days: Int) -> [ProviderAccountUsage] {
+    let today = Calendar.current.startOfDay(for: Date())
+    let shapes: [[Int]] = [
+        [12_000_000, 31_000_000, 8_400_000, 44_000_000, 27_000_000, 51_000_000, 19_000_000],
+        [4_100_000, 3_200_000, 9_800_000, 2_400_000, 14_000_000, 6_100_000, 11_200_000],
+        [900_000, 2_100_000, 400_000, 3_300_000, 1_200_000, 2_800_000, 700_000],
+    ]
+    let peaks: [Double] = [50, 88, 31]
+    return (0..<count).map { index in
+        var totals: [Date: Int] = [:]
+        for back in 0..<days {
+            let date = Calendar.current.date(byAdding: .day, value: -back, to: today) ?? today
+            totals[date] = shapes[index % shapes.count][back % 7]
+        }
+        return ProviderAccountUsage(
+            id: index == 0 ? "/Users/preview/.claude" : "/Users/preview/.claude-account-\(index)",
+            label: index == 0 ? "default" : "account-\(index)",
+            quotaWindows: [
+                QuotaWindow(providerID: .claudeCode, type: .weekly, used: peaks[index % peaks.count],
+                            limit: 100, resetAt: Date().addingTimeInterval(3 * 86_400),
+                            confidence: .providerReported, source: "preview", label: "Weekly"),
+            ],
+            todayUsage: TokenUsage(inputTokens: 1_000_000, outputTokens: 400_000,
+                                   confidence: .providerReported),
+            dailyTotals: totals,
+            configDirectories: index == 0
+                ? ["/Users/preview/.claude", "/Users/preview/.claude-account-2"]
+                : ["/Users/preview/.claude-account-\(index)"],
+            unreadableDirectories: []
+        )
+    }
+}
+
+private func previewMultiAccountSnapshot(_ count: Int, unreadable: Bool = false) -> ProviderSnapshot {
+    var accounts = previewAccounts(count, days: 14)
+    if unreadable, let first = accounts.first {
+        accounts[0] = ProviderAccountUsage(
+            id: first.id, label: first.label, quotaWindows: first.quotaWindows,
+            todayUsage: first.todayUsage, dailyTotals: first.dailyTotals,
+            configDirectories: first.configDirectories,
+            unreadableDirectories: ["/Users/preview/.claude-account-2"]
+        )
+    }
+    let base = previewSnapshot()
+    return ProviderSnapshot(
+        providerID: base.providerID,
+        displayName: base.displayName,
+        authStatus: base.authStatus,
+        quotaWindows: base.quotaWindows,
+        todayUsage: base.todayUsage,
+        weekUsage: base.weekUsage,
+        accounts: accounts
+    )
+}
+
+#Preview("Two accounts") {
+    ProviderDetailView(
+        snapshot: previewMultiAccountSnapshot(2),
+        trend: previewTrend(days: 14),
+        peakHour: (hour: 15, tokens: 6_800_000),
+        lastSyncedAt: Date(),
+        planLabel: "$200/mo \u{00B7} 2\u{00D7} Max accounts"
+    )
+    .frame(width: 980, height: 1200)
+}
+
+#Preview("Three accounts · narrow") {
+    ProviderDetailView(
+        snapshot: previewMultiAccountSnapshot(3, unreadable: true),
+        trend: previewTrend(days: 14),
+        lastSyncedAt: Date()
+    )
+    .frame(width: 640, height: 1300)
 }
 
 #Preview("Narrow 640") {

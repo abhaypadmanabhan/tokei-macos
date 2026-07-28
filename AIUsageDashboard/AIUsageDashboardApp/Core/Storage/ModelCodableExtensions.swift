@@ -75,6 +75,9 @@ extension ProviderAccountUsage: Codable {
         case label
         case quotaWindows
         case todayUsage
+        case dailyTotals
+        case configDirectories
+        case unreadableDirectories
     }
 
     public init(from decoder: Decoder) throws {
@@ -83,6 +86,12 @@ extension ProviderAccountUsage: Codable {
         label = try container.decode(String.self, forKey: .label)
         quotaWindows = try container.decode([QuotaWindow].self, forKey: .quotaWindows)
         todayUsage = try container.decode(TokenUsage.self, forKey: .todayUsage)
+        // The three below arrived with per-account history; snapshots written before it
+        // simply lack the keys, so they decode as "no series, no directories known"
+        // rather than failing the whole cache.
+        dailyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .dailyTotals)
+        configDirectories = try container.decodeIfPresent([String].self, forKey: .configDirectories) ?? []
+        unreadableDirectories = try container.decodeIfPresent([String].self, forKey: .unreadableDirectories) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -91,6 +100,13 @@ extension ProviderAccountUsage: Codable {
         try container.encode(label, forKey: .label)
         try container.encode(quotaWindows, forKey: .quotaWindows)
         try container.encode(todayUsage, forKey: .todayUsage)
+        try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
+        if !configDirectories.isEmpty {
+            try container.encode(configDirectories, forKey: .configDirectories)
+        }
+        if !unreadableDirectories.isEmpty {
+            try container.encode(unreadableDirectories, forKey: .unreadableDirectories)
+        }
     }
 }
 

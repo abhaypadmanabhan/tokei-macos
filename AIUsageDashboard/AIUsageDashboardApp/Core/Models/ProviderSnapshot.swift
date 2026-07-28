@@ -68,11 +68,35 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
     public let label: String
     public let quotaWindows: [QuotaWindow]
     public let todayUsage: TokenUsage
+    /// This account's own tokens per calendar day (start-of-day key) — the series the
+    /// provider merges into `ProviderSnapshot.dailyTotals`, kept unmerged so a surface can
+    /// draw one line per account. `nil` when the provider derives no per-account series.
+    public let dailyTotals: [Date: Int]?
+    /// Every config directory this account owns, as absolute paths. One Anthropic identity
+    /// can be signed in from several `CLAUDE_CONFIG_DIR`s, and this row's numbers are the
+    /// union of all of them — without this the UI cannot say *why* three directories show
+    /// up as two accounts.
+    public let configDirectories: [String]
+    /// Directories that exist but could not be read on this refresh. Their usage is missing
+    /// from `todayUsage` and `dailyTotals`, so a surface can mark the row incomplete instead
+    /// of presenting a confident number with a hole in it. Empty is the normal case.
+    public let unreadableDirectories: [String]
 
-    public init(id: String, label: String, quotaWindows: [QuotaWindow], todayUsage: TokenUsage) {
+    public init(
+        id: String,
+        label: String,
+        quotaWindows: [QuotaWindow],
+        todayUsage: TokenUsage,
+        dailyTotals: [Date: Int]? = nil,
+        configDirectories: [String] = [],
+        unreadableDirectories: [String] = []
+    ) {
         self.id = id
         self.label = label
         self.quotaWindows = quotaWindows
         self.todayUsage = todayUsage
+        self.dailyTotals = dailyTotals
+        self.configDirectories = configDirectories
+        self.unreadableDirectories = unreadableDirectories
     }
 }

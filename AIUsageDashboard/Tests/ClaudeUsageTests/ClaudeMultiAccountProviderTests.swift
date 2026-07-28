@@ -302,6 +302,116 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(siblingCalls, 1, "and the sibling only because it failed")
     }
 
+    // MARK: - Per-account history
+
+    /// The per-account daily series is the whole basis of "which account is spending more
+    /// *over time*". It used to be computed and then thrown away in the provider-level merge,
+    /// so each account must keep its own copy — and the merged total must still be the sum.
+    func testEachAccountKeepsItsOwnDailySeries() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 100)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 200)
+
+        let provider = ClaudeCodeProvider(
+            accounts: [base, one],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        let byLabel = Dictionary(
+            uniqueKeysWithValues: (snapshot.accounts ?? []).map { ($0.label, $0) }
+        )
+        let today = Calendar.current.startOfDay(for: Date())
+        XCTAssertEqual(byLabel["default"]?.dailyTotals?[today], 101)
+        XCTAssertEqual(byLabel["account-1"]?.dailyTotals?[today], 201)
+        XCTAssertEqual(snapshot.dailyTotals?[today], 302, "the provider-level series is still the merge")
+    }
+
+    /// A merged identity's row has to be able to say *which* directories folded into it —
+    /// otherwise three config directories listing as two accounts looks like a bug.
+    func testAMergedAccountReportsEveryDirectoryItOwns() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 100)
+        try makeAccountDirectory(".claude-account-2", outputTokens: 200)
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [home.appendingPathComponent(".claude-account-2", isDirectory: true)],
+            accountUUID: "uuid-a",
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        let directories = (snapshot.accounts?.first?.configDirectories ?? [])
+            .map { URL(fileURLWithPath: $0).lastPathComponent }
+        XCTAssertEqual(directories, [".claude", ".claude-account-2"])
+    }
+
+    /// A directory that exists but refuses to be read leaves a hole in the account's totals.
+    /// The row has to be able to say so — a confident number that silently omits most of an
+    /// identity's usage is exactly the failure this surface is meant to make visible.
+    func testAnUnreadableDirectoryIsNamedOnTheAccount() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 100)
+        try makeAccountDirectory(".claude-account-2", outputTokens: 200)
+        let blocked = home.appendingPathComponent(".claude-account-2/projects", isDirectory: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: blocked.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blocked.path)
+        }
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [home.appendingPathComponent(".claude-account-2", isDirectory: true)],
+            accountUUID: "uuid-a",
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+        let account = try XCTUnwrap(snapshot.accounts?.first)
+
+        XCTAssertEqual(
+            account.unreadableDirectories.map { URL(fileURLWithPath: $0).lastPathComponent },
+            [".claude-account-2"]
+        )
+        XCTAssertEqual(account.todayUsage.totalTokens, 101, "and the readable directory still counts")
+    }
+
+    /// Absent is not broken. A directory that has simply never run a session has no `projects`
+    /// folder, and marking that as unreadable would put a permanent warning on an ordinary
+    /// machine — Tokei tracks eight tools and most of them are idle.
+    func testAMissingProjectsDirectoryIsNotReportedAsUnreadable() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 100)
+        let empty = home.appendingPathComponent(".claude-account-3", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [empty],
+            accountUUID: "uuid-a",
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(snapshot.accounts?.first?.unreadableDirectories, [])
+    }
+
     /// One account failing must not erase the other's reading.
     func testOneAccountFailingLeavesTheOtherReported() async throws {
         let base = try makeAccountDirectory(".claude", outputTokens: 10)

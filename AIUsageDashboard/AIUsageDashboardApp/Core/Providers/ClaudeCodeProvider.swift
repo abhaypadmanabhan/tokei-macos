@@ -93,6 +93,10 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             // union of theirs, parsed in a single call so a record present in both — a
             // session copied between directories — is deduped rather than counted twice.
             var logs: [LogSource] = []
+            // Directories this account owns that exist but refused to be read. They are the
+            // difference between "this identity used 300 tokens" and "this identity used 300
+            // tokens *that we could see*", so the row carries them and can say so.
+            var unreadableDirectories: [String] = []
             for projectsDirectory in account.projectsDirectories {
                 do {
                     logs += try await Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
@@ -100,8 +104,9 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                     // Name the directory when the account owns more than one, so two
                     // failures under the same label stay distinguishable. A single-directory
                     // account keeps the message it always had.
+                    let configDirectory = projectsDirectory.deletingLastPathComponent()
                     let directory = account.configDirectories.count > 1
-                        ? " in \(projectsDirectory.deletingLastPathComponent().lastPathComponent)"
+                        ? " in \(configDirectory.lastPathComponent)"
                         : ""
                     warnings.append(ProviderWarning(
                         message: Self.prefixed(
@@ -110,6 +115,12 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                         ),
                         level: .warning
                     ))
+                    // Absent is not broken: a directory that has never run a session has no
+                    // `projects` folder, and a machine that tracks eight tools has plenty of
+                    // those. Only a directory that is there and unreadable leaves a hole.
+                    if !Self.isMissing(error), !unreadableDirectories.contains(configDirectory.path) {
+                        unreadableDirectories.append(configDirectory.path)
+                    }
                 }
             }
 
@@ -145,7 +156,13 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                 id: account.id,
                 label: account.label,
                 quotaWindows: accountWindows,
-                todayUsage: usage.today
+                todayUsage: usage.today,
+                // The same daily series that goes into the provider-level merge below, kept
+                // per account so a surface can answer "which account is spending more" over
+                // time instead of only right now.
+                dailyTotals: usage.dailyTotals,
+                configDirectories: account.configDirectories.map(\.path),
+                unreadableDirectories: unreadableDirectories
             ))
         }
 
@@ -222,6 +239,14 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
 
     private static func peakPercent(_ windows: [QuotaWindow]) -> Double {
         windows.compactMap { UtilizationEngine.usedPercent(from: $0) }.max() ?? 0
+    }
+
+    /// A path that is simply not there, as opposed to one that refused to be read. Both
+    /// throw from `contentsOfDirectory`; only the second means an account's numbers are
+    /// incomplete.
+    private static func isMissing(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError
     }
 
     private static func prefixed(_ message: String, account: ClaudeAccount, multiAccount: Bool) -> String {
