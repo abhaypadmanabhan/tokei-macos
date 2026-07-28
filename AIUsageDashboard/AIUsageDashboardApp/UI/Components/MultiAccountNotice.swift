@@ -65,8 +65,12 @@ struct MultiAccountNotice: View {
     // MARK: Copy
     //
     // Every sentence here has to survive the question "can the app actually do that?".
-    // It says discovery is per-*directory* rather than per-account, because that is the
-    // real mechanism and the reason the second case exists at all.
+    // The mechanism it describes is the one discovery actually uses: directories are read,
+    // each is asked which Anthropic account it is signed into, and directories answering
+    // with the same identity become **one** account. So "one account per directory" is not
+    // true and must not be written here — three directories can legitimately be two
+    // accounts. What follows from the real mechanism is the limitation the second case
+    // exists for: a directory only ever reports the identity it is *currently* signed into.
 
     private var title: String {
         switch kind {
@@ -79,15 +83,18 @@ struct MultiAccountNotice: View {
 
     private var message: String {
         switch kind {
-        case let .discovered(provider, accounts):
-            return "Nothing to set up — Tokei counts one account per Claude config directory "
-                + "and found \(accounts). Token totals add every account together; a quota gauge "
-                + "is one account's, whichever has the most headroom right now. "
-                + "Open \(provider) to see each account's own usage and quota."
+        case let .discovered(provider, _):
+            return "Nothing to set up — Tokei asks each Claude config directory which Anthropic "
+                + "account it is signed into, then folds directories on the same account into "
+                + "one. Several directories can be a single account. Token totals add every "
+                + "account together; a quota gauge is one account's, whichever has the most "
+                + "headroom right now. Open \(provider) to see each account's own usage, quota, "
+                + "and directories."
         case .claudeSetup:
-            return "Tokei tells accounts apart by their config directory, so two logins taking "
-                + "turns in ~/.claude look like one account to it — nothing on disk separates "
-                + "them. Give each account a directory of its own and both get tracked:"
+            return "A config directory reports the one account it is currently signed into, so "
+                + "two logins taking turns in ~/.claude look like a single account — nothing on "
+                + "disk separates them. Give each account a directory of its own and both get "
+                + "tracked:"
         }
     }
 

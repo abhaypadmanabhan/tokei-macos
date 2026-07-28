@@ -11,8 +11,11 @@ aggregation detail.
 ## 1. The short version
 
 - Discovery is **automatic**. You do not configure anything.
-- Tokei counts **one account per Claude config directory**. That is the whole
-  mechanism, and it is also the whole limitation.
+- Tokei finds every Claude config directory, asks each **which Anthropic account it
+  is signed into**, and groups directories that answer with the same account into
+  one. So several directories can be a single account — see §3.
+- It can only see an account that **has** a directory. A directory reports the one
+  account it is currently signed into, and that is the whole limitation.
 - If it finds more than one, it says so once, on the Overview, and puts each
   account's own usage under **Accounts** in the Claude Code view.
 - If you have two Anthropic logins but use them **one at a time out of the same
