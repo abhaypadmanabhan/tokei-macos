@@ -156,6 +156,12 @@ enum ClaudeFixtures {
     """
   }
 
+  /// One assistant line with a known dedupe key and an unambiguous token total, for tests
+  /// that place the same ID in more than one file.
+  static func usageLine(id: String, output: Int, timestamp: String = "2026-07-06T10:00:00.000Z") -> String {
+    #"{"message":{"id":"\#(id)","usage":{"input_tokens":0,"output_tokens":\#(output),"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"type":"assistant","timestamp":"\#(timestamp)"}"#
+  }
+
   static func validWithMalformed() -> String {
     """
     {"message":{"id":"msg_ok","usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"requestId":"req_ok","type":"assistant","uuid":"uuid-ok","timestamp":"2026-07-06T10:00:00.000Z"}
