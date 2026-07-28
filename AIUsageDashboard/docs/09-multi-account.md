@@ -144,11 +144,14 @@ window; the tiles at the top of the page are today. Both are labelled.
 
 - **More than one account found** → a one-time notice on the Overview naming the
   count and pointing at the Claude Code view. Dismiss it and it stays dismissed
-  (`tokei.notice.multiAccount.discovered.v1`).
+  (`tokei.notice.multiAccount.discovered.v1`). It only appears for a provider you
+  still have on your canvas — if you removed Claude Code from the Agents tab,
+  Tokei does not reintroduce it through a notice.
 - **One account found, in the Claude Code view** → a one-time notice where the
-  Accounts section would be, explaining that accounts are told apart by directory
-  and giving the `CLAUDE_CONFIG_DIR` line from section 4. Dismiss it and it stays
-  dismissed (`tokei.notice.multiAccount.claudeSetup.v1`).
+  Accounts section would be, explaining that a directory can only report the one
+  account it is signed into, and giving the `CLAUDE_CONFIG_DIR` line from section
+  4. Dismiss it and it stays dismissed
+  (`tokei.notice.multiAccount.claudeSetup.v1`).
 
 There is no launch modal and neither notice returns. To see one again, clear its
 key:

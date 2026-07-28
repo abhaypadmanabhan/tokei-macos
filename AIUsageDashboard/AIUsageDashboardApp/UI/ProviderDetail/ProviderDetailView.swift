@@ -617,11 +617,17 @@ struct ProviderDetailView: View {
 
     /// The other half of multi-account discovery, and the half no detector can reach.
     ///
-    /// Accounts are told apart by their config directory. Two Anthropic logins used one at a
+    /// Accounts are keyed on the Anthropic identity a directory is signed into, never on the
+    /// directory itself (`ClaudeAccount.group`) — so a config directory can only ever report
+    /// the **one** account it is currently signed into. Two Anthropic logins used one at a
     /// time out of a single `~/.claude` leave **nothing** on disk to tell them apart, so this
     /// person sees one account and no Accounts section, and there is no cleverness that fixes
     /// it — only saying so. This takes the slot the Accounts section would occupy, which is
     /// exactly where someone asking "why is only one of my accounts here?" is already looking.
+    ///
+    /// If you are here to change the setup notice's copy, read the `// MARK: Copy` block in
+    /// `MultiAccountNotice.swift` first: "one account per directory" is wrong and must not
+    /// come back.
     ///
     /// Gated on Claude Code (`CLAUDE_CONFIG_DIR` is its mechanism, not a general one) and on
     /// there being local data at all, so a machine that does not run Claude is never told how

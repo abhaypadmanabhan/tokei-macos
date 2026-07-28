@@ -126,38 +126,48 @@ struct MultiAccountNotice: View {
 
     private var plate: some View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
-            Text(title)
-                .font(.sans(size: 15, weight: .semibold))
-                .foregroundColor(PadzyTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(message)
-                .font(.sans(size: 15))
-                .foregroundColor(PadzyTheme.ink3)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let command {
-                Text(command)
-                    .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink2)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, PadzySpace.s)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                            .fill(PadzyTheme.ground)
-                    )
-            }
-
-            if let footnote {
-                Text(footnote)
-                    .font(.sans(size: 15))
-                    .foregroundColor(PadzyTheme.ink4)
+            // The prose is ONE VoiceOver stop, the buttons stay their own. `.combine` merges
+            // these four into a single element; `.contain` (what this used to be) leaves them
+            // individually accessible *and* adds a container label and hint on top, so the
+            // title and the whole paragraph get announced twice. The buttons are deliberately
+            // outside this element: `.combine` demotes child buttons to actions on the
+            // rotor, and "dismissible" is a stated requirement of this notice, so `Got it`
+            // stays a directly focusable button.
+            VStack(alignment: .leading, spacing: PadzySpace.s) {
+                Text(title)
+                    .font(.sans(size: 15, weight: .semibold))
+                    .foregroundColor(PadzyTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text(message)
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let command {
+                    Text(command)
+                        .font(.mono(size: 13.5))
+                        .foregroundColor(PadzyTheme.ink2)
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, PadzySpace.s)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
+                                .fill(PadzyTheme.ground)
+                        )
+                }
+
+                if let footnote {
+                    Text(footnote)
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .accessibilityElement(children: .combine)
 
             HStack(spacing: PadzySpace.s) {
                 if let actionLabel, let onAction {
@@ -181,9 +191,6 @@ struct MultiAccountNotice: View {
             RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
                 .stroke(PadzyTheme.hairline, lineWidth: 1)
         )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
-        .accessibilityHint(message)
     }
 
     /// Text buttons in the hairline idiom. Deliberately **no accent**: the accent is
