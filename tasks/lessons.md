@@ -292,3 +292,39 @@ Herdr/orchestration:
   anchor the fleet into another tab instead of shredding the orchestrator's own pane.
 - **Results through files, never terminal scraping.** Lifecycle state said `running` for
   tasks whose result files had already landed. The file is the truth.
+
+## 2026-07-27 (later) — the CPU regression, and "latent" as a failure word
+
+Manual QA of the patch surfaced the dev build pegging a core. Two fixes followed, and both
+overturned a confident earlier assessment.
+
+- **"Latent, not active" was wrong, and it cost real numbers.** The cross-file dedup bug was
+  assessed as unreachable-in-practice because an independent recomputation of the corpus
+  matched. Writing the failing test first showed **237 tokens where 137 was correct**, plus a
+  mirror defect (30 where 130 was correct). On the real corpus: **95 duplicated dedupe keys
+  across two forked sessions, 14.6M tokens** misattributed in month and lifetime figures —
+  invisible in today/this-week only because that session was 8–30 days old. *A recomputation
+  that matches the buggy code proves the two agree, not that either is right.* Reproduce
+  before classifying severity.
+- **The same word is now attached to the next one.** Cross-*account* dedup does not happen at
+  all (`seenIDs` is per `parse()` call, one call per account), and is "currently unreachable
+  because Claude does not share message IDs across accounts." That is the exact sentence
+  used about this bug yesterday. Treat "unreachable" as "untested".
+- **A cache that never hits hides the bugs in its hit path.** The parse cache evicted down to
+  the calling account's slice, so with multi-account every account missed every refresh
+  (~590 MB re-parsed every 2s, 58% of a core, 821 MB RSS). Fixing eviction made cache hits
+  happen *for the first time* — which is what made the dormant dedup bug live. Fixing an
+  upstream defect activates whatever was downstream of it and never ran. Third instance
+  today.
+- **Measure convergence, don't sample it.** I twice declared RSS from a 3-minute window:
+  first "605 MB, worse than claimed", then "~551 MB, a possible 400 MB regression". It
+  converges to **~90 MB**, it just takes 6–8 minutes on an 800 MB corpus. A falling number is
+  not a settled number.
+- **An agent refusing to fill in a metric is a good signal.** The dedup task left
+  `PERF_RISK_PLACEHOLDER` and marked its perf criterion `[ ]` rather than invent a
+  before/after, because my own agent fleet was writing Claude logs throughout and its
+  attempt to measure the pre-fix build failed. The orchestrator could get the clean number —
+  by shutting the fleet down — precisely because it controls what the agents cannot.
+- **Profile before theorising.** `sample <pid>` put 86% of samples on one call path in
+  seconds. My prior guess (`seenIDs.formUnion` cost) was wrong; so was my first root-cause
+  guess for the P0 that morning. Three hypotheses, three corrections by measurement.
