@@ -24,8 +24,9 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     /// see `canonicalDirectory(among:)` for the rule.
     public let configDirectory: URL
     /// The identity's *other* config directories, if it is signed in from more than one.
-    /// Their logs count toward this account; their credentials and quota are the same
-    /// account's, so only `configDirectory`'s Keychain item is read.
+    /// Their logs count toward this account, and their Keychain items hold credentials for
+    /// the same Anthropic account — so they are the fallback when the canonical directory's
+    /// item cannot be read. See `credentialCandidates`.
     public let additionalDirectories: [URL]
     /// `oauthAccount.accountUuid` from the config JSON — the Anthropic account this
     /// directory is signed in to. `nil` when it could not be read (never signed in, config
@@ -55,6 +56,29 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
 
     /// Every config directory this identity owns, canonical first.
     public var configDirectories: [URL] { [configDirectory] + additionalDirectories }
+
+    /// Each of this identity's directories as a standalone account, canonical first — the
+    /// order to try when reading credentials.
+    ///
+    /// Every directory authenticates to the same Anthropic account, but each one has its
+    /// **own** Keychain item, and the canonical's may hold nothing: `discover()` lists
+    /// `~/.claude` whether or not that directory exists (its identity comes from
+    /// `~/.claude.json`, which sits outside it), so a merged identity can be canonicalized on
+    /// a directory that was deleted while the sibling holding the credentials is still signed
+    /// in. Asking a sibling is the same question about the same quota, not a second one.
+    ///
+    /// `home` is recovered from each directory's parent, which is what it is by construction:
+    /// every discovered directory is `<home>/.claude*`. So a member that really is `~/.claude`
+    /// still resolves to the unsuffixed service name.
+    public var credentialCandidates: [ClaudeAccount] {
+        [self] + additionalDirectories.map {
+            ClaudeAccount(
+                configDirectory: $0,
+                accountUUID: accountUUID,
+                home: $0.deletingLastPathComponent()
+            )
+        }
+    }
 
     /// Short human label: `"default"`, or the suffix of a `.claude-*` directory
     /// (`.claude-account-2` → `"account-2"`). Falls back to the directory name. It names the
@@ -151,7 +175,7 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
 
         return order.map { key in
             let group = members[key] ?? []
-            let canonical = canonicalDirectory(among: group, home: home, fileManager: fileManager)
+            let canonical = canonicalDirectory(among: group, home: home)
             return ClaudeAccount(
                 configDirectory: canonical,
                 additionalDirectories: group.filter {
@@ -167,14 +191,18 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     ///
     /// `~/.claude` when it is a member: it is the directory Claude Code uses with no
     /// environment variable set, so it addresses this account from any shell, including ones
-    /// that never learned about the others. Otherwise the most recently active directory —
-    /// a dormant one is the likelier of the two to have been signed out or reconfigured
-    /// since. Path order breaks exact ties so discovery is deterministic run to run.
-    static func canonicalDirectory(
-        among directories: [URL],
-        home: URL,
-        fileManager: FileManager = .default
-    ) -> URL {
+    /// that never learned about the others. Otherwise the **first directory in discovery
+    /// order** — default first, then siblings by label.
+    ///
+    /// This used to be "the most recently active directory", by `projects/` mtime. That made
+    /// the account's whole persistent identity — `id`, `storageKey`, `keychainService` and
+    /// the label the user reads — a function of the most volatile stat on the machine: one
+    /// session written under a sibling `CLAUDE_CONFIG_DIR` moved all four, which destroyed
+    /// and rebuilt the SwiftUI row, renamed `claude-usage-cooldown<storageKey>.json` (so the
+    /// app could re-hit the Anthropic usage endpoint inside its own backoff window), and
+    /// orphaned the quota cache. Discovery order is derived from directory names, which do
+    /// not move, so the identity is stable for the lifetime of the group.
+    static func canonicalDirectory(among directories: [URL], home: URL) -> URL {
         let defaultPath = home.appendingPathComponent(defaultDirectoryName, isDirectory: true)
             .standardizedFileURL.path
         if let defaultDirectory = directories.first(where: {
@@ -182,25 +210,7 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
         }) {
             return defaultDirectory
         }
-        return directories.sorted { lhs, rhs in
-            let left = lastActivity(of: lhs, fileManager: fileManager)
-            let right = lastActivity(of: rhs, fileManager: fileManager)
-            if left != right { return left > right }
-            return lhs.path < rhs.path
-        }.first ?? home.appendingPathComponent(defaultDirectoryName, isDirectory: true)
-    }
-
-    /// When this directory last saw work: the modification date of its `projects/` (which
-    /// changes as sessions are written), falling back to the directory itself.
-    private static func lastActivity(of directory: URL, fileManager: FileManager) -> Date {
-        let projects = directory.appendingPathComponent("projects", isDirectory: true)
-        for candidate in [projects, directory] {
-            if let attributes = try? fileManager.attributesOfItem(atPath: candidate.path),
-               let modified = attributes[.modificationDate] as? Date {
-                return modified
-            }
-        }
-        return .distantPast
+        return directories.first ?? home.appendingPathComponent(defaultDirectoryName, isDirectory: true)
     }
 
     // MARK: - Identity

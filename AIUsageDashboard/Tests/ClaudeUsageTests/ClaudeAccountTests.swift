@@ -158,32 +158,57 @@ final class ClaudeAccountTests: XCTestCase {
         XCTAssertTrue(accounts.first?.isDefault == true, "so it keeps the unsuffixed Keychain service")
     }
 
-    /// When the default directory is not one of the members there is no such fallback, so
-    /// the most recently active directory is the safer bet — a dormant one is the likelier
-    /// of the two to have been signed out since.
-    func testMergedAccountWithoutTheDefaultPrefersTheMostRecentlyActiveDirectory() throws {
+    /// When the default directory is not one of the members, the canonical is the first
+    /// directory discovery returned — not the most recently active one. Activity is
+    /// `projects/` mtime, which advances every time Claude writes a session; see
+    /// `testASessionInAnotherDirectoryDoesNotMoveTheAccountsIdentity` for what that cost.
+    func testMergedAccountWithoutTheDefaultTakesTheFirstDirectoryInDiscoveryOrder() throws {
         let home = tempDirectory!
         try makeConfigDirectory(".claude-account-1", identity: "uuid-b", configInside: true)
         try makeConfigDirectory(".claude-account-2", identity: "uuid-b", configInside: true)
-        // account-2's logs are a day newer than account-1's.
-        try FileManager.default.setAttributes(
-            [.modificationDate: Date().addingTimeInterval(-86_400)],
-            ofItemAtPath: home.appendingPathComponent(".claude-account-1/projects").path
-        )
-        try FileManager.default.setAttributes(
-            [.modificationDate: Date()],
-            ofItemAtPath: home.appendingPathComponent(".claude-account-2/projects").path
-        )
+        // account-2's logs are a day newer than account-1's — under the old rule that was
+        // enough to make account-2 the canonical.
+        try setProjectsModified(".claude-account-1", to: Date().addingTimeInterval(-86_400))
+        try setProjectsModified(".claude-account-2", to: Date())
 
         let accounts = ClaudeAccount.discover(home: home)
 
         // The synthetic default (no config, no identity) plus the one merged account.
         XCTAssertEqual(accounts.count, 2)
-        XCTAssertEqual(accounts.last?.configDirectory.lastPathComponent, ".claude-account-2")
+        XCTAssertEqual(accounts.last?.configDirectory.lastPathComponent, ".claude-account-1")
         XCTAssertEqual(
             accounts.last?.additionalDirectories.map(\.lastPathComponent),
-            [".claude-account-1"]
+            [".claude-account-2"]
         )
+    }
+
+    /// The account's whole persistent identity — `id` (which is `Identifiable`, and what an
+    /// agent exports as `CLAUDE_CONFIG_DIR`), `storageKey`, `keychainService` and the label
+    /// the user reads — is derived from the canonical directory. Deriving the canonical from
+    /// `projects/` mtime made all four a function of which directory was written to last:
+    /// one session under a sibling `CLAUDE_CONFIG_DIR` destroyed and rebuilt the SwiftUI row,
+    /// renamed `claude-usage-cooldown<storageKey>.json` (so the app could re-hit the
+    /// Anthropic usage endpoint inside its own backoff window), abandoned the quota cache,
+    /// and changed the label with no action from the user.
+    func testASessionInAnotherDirectoryDoesNotMoveTheAccountsIdentity() throws {
+        try makeConfigDirectory(".claude-account-1", identity: "uuid-b", configInside: true)
+        try makeConfigDirectory(".claude-account-3", identity: "uuid-b", configInside: true)
+        try setProjectsModified(".claude-account-1", to: Date())
+        try setProjectsModified(".claude-account-3", to: Date().addingTimeInterval(-86_400))
+        let before = try XCTUnwrap(
+            ClaudeAccount.discover(home: tempDirectory).first { $0.accountUUID == "uuid-b" }
+        )
+
+        // The user runs one session under `CLAUDE_CONFIG_DIR=~/.claude-account-3`.
+        try setProjectsModified(".claude-account-3", to: Date().addingTimeInterval(60))
+        let after = try XCTUnwrap(
+            ClaudeAccount.discover(home: tempDirectory).first { $0.accountUUID == "uuid-b" }
+        )
+
+        XCTAssertEqual(before.id, after.id, "id is Identifiable and a usable CLAUDE_CONFIG_DIR")
+        XCTAssertEqual(before.storageKey, after.storageKey, "cache and cooldown filenames")
+        XCTAssertEqual(before.keychainService, after.keychainService)
+        XCTAssertEqual(before.label, after.label)
     }
 
     func testDifferentAccountUUIDsStayTwoAccounts() throws {
@@ -253,5 +278,13 @@ final class ClaudeAccountTests: XCTestCase {
             ? directory.appendingPathComponent(".claude.json")
             : home.appendingPathComponent("\(name).json")
         try Data(config.utf8).write(to: url)
+    }
+
+    /// Stands in for "Claude wrote a session here" — `projects/` mtime is what moves.
+    private func setProjectsModified(_ name: String, to date: Date) throws {
+        try FileManager.default.setAttributes(
+            [.modificationDate: date],
+            ofItemAtPath: tempDirectory.appendingPathComponent("\(name)/projects").path
+        )
     }
 }

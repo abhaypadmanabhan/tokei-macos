@@ -59,9 +59,17 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         )
     }
 
+    /// Installed when **any** config directory of any account exists — an account is an
+    /// identity, not a directory, and its canonical directory is not guaranteed to be the one
+    /// on disk. `discover()` lists `~/.claude` whether or not it exists (its identity is read
+    /// from `~/.claude.json`, which sits outside it and survives `rm -rf ~/.claude`), and the
+    /// default wins the canonical pick, so checking only the canonical reported "not
+    /// installed" for a machine whose logs `fetchSnapshot()` was parsing correctly.
     public func detectAvailability() async -> ProviderAvailability {
-        accounts.contains { fileManager.fileExists(atPath: $0.configDirectory.path) }
-            ? .installed : .notInstalled
+        let installed = accounts.contains { account in
+            account.configDirectories.contains { fileManager.fileExists(atPath: $0.path) }
+        }
+        return installed ? .installed : .notInstalled
     }
 
     public func authenticate() async throws -> AuthStatus {
@@ -112,7 +120,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             var accountWindows = Self.unavailableQuotaWindows(providerID: id)
             if networkEnabled {
                 do {
-                    let liveWindows = try await usageClientFactory(account).fetchQuotaWindows()
+                    let liveWindows = try await liveQuotaWindows(for: account)
                     if !liveWindows.isEmpty {
                         accountWindows = liveWindows
                         // A successful non-empty live-quota fetch means the OAuth usage
@@ -163,6 +171,31 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             hourlyTotals: Self.merged(perAccountUsage.compactMap(\.hourlyTotals)),
             accounts: accountUsages
         )
+    }
+
+    /// This identity's live quota, from the first of its config directories that answers.
+    ///
+    /// The happy path stays **one request**: the canonical directory is tried first and, when
+    /// its credentials work, nothing else is asked. A sibling is reached only when the
+    /// canonical produced nothing — its Keychain item absent (the canonical directory is not
+    /// required to exist on disk), signed out, or expired. Every directory of an identity
+    /// authenticates to the same Anthropic account, so the fallback re-asks the same question
+    /// about the same quota rather than adding a second account's worth of load.
+    private func liveQuotaWindows(for account: ClaudeAccount) async throws -> [QuotaWindow] {
+        var firstFailure: Error?
+        for candidate in account.credentialCandidates {
+            do {
+                let windows = try await usageClientFactory(candidate).fetchQuotaWindows()
+                if !windows.isEmpty { return windows }
+            } catch {
+                // Report the canonical's failure, not the last sibling's: the fallback is an
+                // internal retry, and naming a directory the user never pointed Tokei at
+                // would make the warning harder to act on, not easier.
+                if firstFailure == nil { firstFailure = error }
+            }
+        }
+        if let firstFailure { throw firstFailure }
+        return []
     }
 
     /// The quota the provider reports as its headline: the windows of the account with the
