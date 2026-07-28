@@ -67,10 +67,23 @@ xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -des
 Claude Code supports several accounts on one Mac by pointing `CLAUDE_CONFIG_DIR` at
 different directories. Tokei discovers and reports all of them — no configuration needed.
 
+**If you are setting this up, read `docs/09-multi-account.md`** — it is the user-facing
+guide: what discovery can and cannot see, how to split two logins into two tracked
+accounts, and how to read the numbers once you have several. The notes below are the
+engineering detail behind it.
+
 - **Discovery:** the default `~/.claude`, plus any sibling `~/.claude-*` directory that
   actually contains a `projects/` folder. The `projects/` requirement is what separates a
   real account from unrelated dotfiles — `~/.claude-worktrees` is a scratch area, not an
-  account, and is not counted as one.
+  account, and is not counted as one. Directories are then grouped by the Anthropic
+  identity they are signed into (`oauthAccount.accountUuid`), so two directories on the
+  same account collapse to **one** account that lists both paths.
+- **What discovery cannot see:** two Anthropic logins used one at a time out of the *same*
+  directory. Logging out and back in leaves no per-identity trace on disk, so there is
+  nothing to read and nothing to detect — they are one account as far as Tokei is
+  concerned, and their usage is added together. The only fix is to give each account its
+  own directory (`docs/09-multi-account.md` §4). The app says this in the Claude Code
+  view rather than claiming a detection it cannot perform.
 - **Credentials:** each config directory has its own Keychain item. The default directory
   uses the bare service name; every other one uses
   `Claude Code-credentials-<first 8 hex of SHA-256 of the directory path>`. Tokei reads
@@ -193,6 +206,10 @@ The authoritative, always-current list is `tasks/BACKLOG.md`; this is a summary 
 - `docs/04-implementation-roadmap.md` — Phased roadmap.
 - `docs/05-codex-orchestrator.md` — How Codex should orchestrate agents.
 - `docs/06-provider-spec.md` — Provider protocol and data model specification.
+- `docs/07-padzy-theme.md` — Design tokens and the invariants every view holds to.
+- `docs/08-agent-snapshot-schema.md` — The snapshot file and the `tokei` helper CLI.
+- `docs/09-multi-account.md` — Multiple accounts on one Mac: what discovery can and
+  cannot see, and how to split two logins with `CLAUDE_CONFIG_DIR`.
 
 ## License
 

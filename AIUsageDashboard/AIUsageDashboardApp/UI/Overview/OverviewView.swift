@@ -53,6 +53,20 @@ struct OverviewView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xl) {
+                // Multi-account discovery is silent by construction — an Accounts section
+                // appears inside a drill-in and nothing on the way in ever says so. This is
+                // the only surface the user is guaranteed to land on, so this is where they
+                // get told, once.
+                if let provider = multiAccountProvider, let accounts = provider.accounts {
+                    MultiAccountNotice(
+                        kind: .discovered(
+                            provider: provider.displayName, accounts: accounts.count
+                        ),
+                        actionLabel: "Open \(provider.displayName)",
+                        onAction: { onSelectProvider(provider.providerID) }
+                    )
+                }
+
                 OverviewMetricSelector(metric: $metric)
 
                 VStack(alignment: .leading, spacing: PadzySpace.l) {

@@ -214,6 +214,16 @@ extension OverviewView {
         ProviderID.allCases.filter { !ProviderVisibility.isHidden($0) }
     }
 
+    /// The first **visible** provider reporting more than one signed-in account — what the
+    /// one-time discovery notice is about. Hidden providers are excluded deliberately: a
+    /// provider the user removed from their canvas should not reintroduce itself through a
+    /// notice. Only one is ever surfaced; a stack of them is the naggy failure mode.
+    var multiAccountProvider: ProviderSnapshot? {
+        visibleProviders
+            .compactMap { viewModel.snapshot(for: $0) }
+            .first { ($0.accounts?.count ?? 0) > 1 }
+    }
+
     func fallbackName(_ id: ProviderID) -> String {
         id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
     }

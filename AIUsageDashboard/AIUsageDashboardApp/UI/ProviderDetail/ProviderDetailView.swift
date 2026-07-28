@@ -605,10 +605,29 @@ struct ProviderDetailView: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 30) {
-            if showAccounts { accountsSection }
+            if showAccounts {
+                accountsSection
+            } else if showAccountSetupNotice {
+                MultiAccountNotice(kind: .claudeSetup)
+            }
             if showHistory { dailyHistorySection }
             if showSplitSection { tokenSplitSection }
         }
+    }
+
+    /// The other half of multi-account discovery, and the half no detector can reach.
+    ///
+    /// Accounts are told apart by their config directory. Two Anthropic logins used one at a
+    /// time out of a single `~/.claude` leave **nothing** on disk to tell them apart, so this
+    /// person sees one account and no Accounts section, and there is no cleverness that fixes
+    /// it — only saying so. This takes the slot the Accounts section would occupy, which is
+    /// exactly where someone asking "why is only one of my accounts here?" is already looking.
+    ///
+    /// Gated on Claude Code (`CLAUDE_CONFIG_DIR` is its mechanism, not a general one) and on
+    /// there being local data at all, so a machine that does not run Claude is never told how
+    /// to split Claude accounts. Dismissal lives in the notice and is persisted.
+    private var showAccountSetupNotice: Bool {
+        snapshot.providerID == .claudeCode && hasLocalTokenData
     }
 
     // MARK: 6b · Accounts (multi-account providers)
