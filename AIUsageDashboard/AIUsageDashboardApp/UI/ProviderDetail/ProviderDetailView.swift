@@ -645,6 +645,7 @@ struct ProviderDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                if let period = accountPeriodLabel { accountRowsHeader(period) }
                 ForEach(rows) { row in
                     accountRow(row)
                 }
@@ -656,8 +657,43 @@ struct ProviderDetailView: View {
         guard accounts.count > 1 else {
             return "One account, and one of its directories could not be read \u{2014} the totals above are missing whatever is in it."
         }
-        return "Each line is one account's own tokens per day, on a shared scale. "
-            + "Daily history below adds every account together."
+        let shared = "Each line is one account's own tokens per day, on a shared scale."
+        guard let period = accountPeriodLabel else {
+            return "\(shared) Daily history below adds every account together."
+        }
+        // Naming the period twice — here and on the column — is deliberate. The stat tiles at
+        // the top of this page are TODAY and these totals are the window; two numbers on one
+        // card meaning different things is the whole reason this surface was built.
+        return "\(shared) The totals below cover the same \(period) \u{2014} the tiles at the "
+            + "top of this page are today. Daily history below adds every account together."
+    }
+
+    /// Column header for the account rows. The row's big number is that account's total over
+    /// the **chart's** window, and it sits a screen away from a `TOKENS · TODAY` tile — so the
+    /// period is stated on the column rather than left to be inferred.
+    private func accountRowsHeader(_ period: String) -> some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 8)
+            Text("tokens \u{00B7} \(period)")
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink5)
+                .lineLimit(1)
+            Text("share")
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink5)
+                .frame(width: 48, alignment: .trailing)
+        }
+        .padding(.bottom, PadzySpace.xs)
+    }
+
+    /// The span the rows and the chart both cover, in words, derived from the window they are
+    /// actually drawn from — so the label cannot claim a period the numbers do not cover.
+    private var accountPeriodLabel: String? {
+        guard let window = accountWindow else { return nil }
+        let days = (Calendar.current.dateComponents(
+            [.day], from: window.lowerBound, to: window.upperBound
+        ).day ?? 0) + 1
+        return days <= 1 ? "today" : "last \(days) days"
     }
 
     /// One account's row: its identity (and the directories folded into it), its tokens over
@@ -685,12 +721,20 @@ struct ProviderDetailView: View {
                     .frame(width: 48, alignment: .trailing)
             }
 
-            HStack(spacing: 10) {
-                Text(row.directoriesLabel)
-                    .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink5)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            HStack(alignment: .top, spacing: 10) {
+                // One directory per line, never joined. Joined with a separator and truncated
+                // in the middle, two long paths lose exactly the separator and read as one
+                // path — so the merged identity looks like a directory that vanished, which
+                // is the thing this line exists to prevent.
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(row.directoryLabels, id: \.self) { directory in
+                        Text(directory)
+                            .font(.mono(size: 13.5))
+                            .foregroundColor(PadzyTheme.ink5)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
                 Spacer(minLength: 8)
                 Text("own quota")
                     .font(.sans(size: 15))
@@ -742,10 +786,13 @@ struct ProviderDetailView: View {
         /// The `CLAUDE_CONFIG_DIR`s folded into this one identity. Two of them is exactly why
         /// three directories on this machine list as two accounts, and without it the second
         /// row looks like a directory that vanished.
-        var directoriesLabel: String {
+        ///
+        /// A list, not a joined string: rendered one per line, a long path can only truncate
+        /// inside itself. Joined with a separator and truncated in the middle, two long paths
+        /// lose exactly the separator and read as a single directory.
+        var directoryLabels: [String] {
             let names = account.configDirectories.map(ProviderDetailView.abbreviated)
-            if names.isEmpty { return ProviderDetailView.abbreviated(account.id) }
-            return names.joined(separator: " \u{00B7} ")
+            return names.isEmpty ? [ProviderDetailView.abbreviated(account.id)] : names
         }
     }
 

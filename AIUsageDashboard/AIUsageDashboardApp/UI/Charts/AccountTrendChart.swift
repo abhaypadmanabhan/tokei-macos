@@ -250,27 +250,6 @@ struct StrokeSwatch: View {
     }
 }
 
-/// Series styling for N accounts of one provider. The provider's own tint leads (this is
-/// still Claude's data), then a neutral ink, then a dimmed tint — with a distinct dash per
-/// step so the series stay separable without relying on colour alone.
-enum AccountSeriesStyle {
-    static func color(_ index: Int, tint: Color) -> Color {
-        switch index % 3 {
-        case 0: return tint
-        case 1: return PadzyTheme.ink2
-        default: return tint.opacity(0.55)
-        }
-    }
-
-    static func dash(_ index: Int) -> [CGFloat] {
-        switch index % 3 {
-        case 0: return []
-        case 1: return [5, 3]
-        default: return [2, 3]
-        }
-    }
-}
-
 // MARK: - Previews
 
 private func sampleSeries(_ label: String, id: String, index: Int, scale: Double) -> AccountTrendChart.Series {

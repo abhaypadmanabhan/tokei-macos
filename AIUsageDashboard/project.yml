@@ -100,6 +100,13 @@ targets:
       # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
       # run without pulling the whole app target into the test target.
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
+      # Same mechanism again, for the per-account chart palette: whether two accounts can
+      # ever render as the same colour AND the same dash is a pure function of the account
+      # index, and a chart whose series collide cannot answer the question it exists for.
+      # `PadzyTheme.swift` comes along because the palette names its neutral ink; both are
+      # token/logic files with no app-target dependencies.
+      - path: AIUsageDashboardApp/UI/Charts/AccountSeriesStyle.swift
+      - path: AIUsageDashboardApp/UI/Components/PadzyTheme.swift
       # Same mechanism, for the `tokei` CLI/MCP surface (issue #59). Those files ship in
       # the standalone `tokei` tool target, which does not link Core — so compile the
       # PURE-LOGIC ones in here to get them under `-scheme AIUsageDashboardCore test`.
