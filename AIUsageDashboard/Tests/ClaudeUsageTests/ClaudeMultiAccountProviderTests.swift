@@ -143,6 +143,92 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(byLabel["account-1"]?.quotaWindows.first?.used, 10)
     }
 
+    // MARK: - One identity, several config directories
+
+    /// An identity signed in from two config directories owns the work done in both. The
+    /// merged account's total is the sum of its directories' logs — nothing dropped because
+    /// only the canonical directory was read, nothing doubled because both were.
+    func testMergedAccountTotalsTheLogsOfEveryDirectoryItOwns() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 100)
+        try makeAccountDirectory(".claude-account-2", outputTokens: 200)
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [home.appendingPathComponent(".claude-account-2", isDirectory: true)],
+            accountUUID: "uuid-a",
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(snapshot.accounts?.count, 1, "one identity is one row")
+        // (100 + 1) + (200 + 1), from both directories, under the single merged account.
+        XCTAssertEqual(snapshot.accounts?.first?.todayUsage.totalTokens, 302)
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 302)
+    }
+
+    /// The same records reachable through two directories — a session copied between them —
+    /// must be counted once. Both directories are parsed in a single call precisely so the
+    /// parser's dedupe can see across them.
+    func testRecordsPresentInTwoOfAnAccountsDirectoriesAreCountedOnce() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 100)
+        // Byte-identical log, same message id: the dedupe key is shared.
+        let copy = home.appendingPathComponent(".claude-account-2/projects/proj", isDirectory: true)
+        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(
+            at: home.appendingPathComponent(".claude/projects/proj/session.jsonl"),
+            to: copy.appendingPathComponent("session.jsonl")
+        )
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [home.appendingPathComponent(".claude-account-2", isDirectory: true)],
+            accountUUID: "uuid-a",
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 101, "the shared record counts once, not twice")
+    }
+
+    /// Only the canonical directory's credentials are fetched: the other directories are the
+    /// same Anthropic account, so a second request would ask the same question twice and
+    /// return the same shared quota.
+    func testMergedAccountFetchesQuotaOncePerIdentity() async throws {
+        try makeAccountDirectory(".claude", outputTokens: 10)
+        try makeAccountDirectory(".claude-account-2", outputTokens: 10)
+        let merged = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude", isDirectory: true),
+            additionalDirectories: [home.appendingPathComponent(".claude-account-2", isDirectory: true)],
+            accountUUID: "uuid-a",
+            home: home
+        )
+        let client = MockClaudeUsageClient(behavior: .success([weeklyWindow(used: 50)]))
+
+        let provider = ClaudeCodeProvider(
+            accounts: [merged],
+            usageClientFactory: { _ in client },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        let calls = await client.callCount()
+        XCTAssertEqual(calls, 1, "two directories, one identity, one request")
+        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 50)
+    }
+
     /// One account failing must not erase the other's reading.
     func testOneAccountFailingLeavesTheOtherReported() async throws {
         let base = try makeAccountDirectory(".claude", outputTokens: 10)

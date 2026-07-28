@@ -94,4 +94,164 @@ final class ClaudeAccountTests: XCTestCase {
         let accounts = ClaudeAccount.discover(home: tempDirectory)
         XCTAssertEqual(accounts.map(\.label), ["default"])
     }
+
+    // MARK: - Identity
+
+    /// The asymmetry that makes this whole thing a bug rather than a rounding error: the
+    /// default account's config JSON is a **sibling** of its config directory
+    /// (`~/.claude.json`, because `CLAUDE_CONFIG_DIR` is unset for it), while every other
+    /// account keeps it *inside* (`~/.claude-account-2/.claude.json`). Verified on the real
+    /// machine 2026-07-28: there is no `~/.claude/.claude.json`. A lookup that only checks
+    /// inside leaves the default account with an unknown identity — and the default account
+    /// is exactly the one that has to merge here.
+    func testDefaultAccountIdentityIsReadFromTheSiblingConfigFile() throws {
+        let home = tempDirectory!
+        try makeConfigDirectory(".claude", identity: "uuid-a", configInside: false)
+
+        XCTAssertEqual(
+            ClaudeAccount.accountUUID(of: home.appendingPathComponent(".claude")),
+            "uuid-a"
+        )
+    }
+
+    func testNonDefaultAccountIdentityIsReadFromInsideTheConfigDirectory() throws {
+        let home = tempDirectory!
+        try makeConfigDirectory(".claude-account-1", identity: "uuid-b", configInside: true)
+
+        XCTAssertEqual(
+            ClaudeAccount.accountUUID(of: home.appendingPathComponent(".claude-account-1")),
+            "uuid-b"
+        )
+    }
+
+    // MARK: - Identity deduplication
+
+    /// The bug this task exists for. One Anthropic account signed in from two config
+    /// directories was listed twice — its tokens counted from both on the way in, and one
+    /// shared quota drawn as two independent gauges on the way out.
+    func testTwoDirectoriesWithTheSameAccountUUIDCollapseToOneAccount() throws {
+        try makeConfigDirectory(".claude", identity: "uuid-a", configInside: false)
+        try makeConfigDirectory(".claude-account-2", identity: "uuid-a", configInside: true)
+
+        let accounts = ClaudeAccount.discover(home: tempDirectory)
+
+        XCTAssertEqual(accounts.count, 1)
+        XCTAssertEqual(accounts.first?.accountUUID, "uuid-a")
+        XCTAssertEqual(
+            accounts.first?.configDirectories.map(\.lastPathComponent),
+            [".claude", ".claude-account-2"]
+        )
+    }
+
+    /// `accounts[].id` is what an agent exports as `CLAUDE_CONFIG_DIR`, so the merged
+    /// account has to keep pointing at a directory that really addresses it. `~/.claude`
+    /// wins when it is a member: it is the directory Claude Code uses with the variable
+    /// unset, so it works from any shell.
+    func testMergedAccountPrefersTheDefaultDirectoryAsItsConfigDirectory() throws {
+        try makeConfigDirectory(".claude", identity: "uuid-a", configInside: false)
+        try makeConfigDirectory(".claude-account-2", identity: "uuid-a", configInside: true)
+
+        let accounts = ClaudeAccount.discover(home: tempDirectory)
+
+        XCTAssertEqual(accounts.first?.configDirectory.lastPathComponent, ".claude")
+        XCTAssertEqual(accounts.first?.label, "default")
+        XCTAssertTrue(accounts.first?.isDefault == true, "so it keeps the unsuffixed Keychain service")
+    }
+
+    /// When the default directory is not one of the members there is no such fallback, so
+    /// the most recently active directory is the safer bet — a dormant one is the likelier
+    /// of the two to have been signed out since.
+    func testMergedAccountWithoutTheDefaultPrefersTheMostRecentlyActiveDirectory() throws {
+        let home = tempDirectory!
+        try makeConfigDirectory(".claude-account-1", identity: "uuid-b", configInside: true)
+        try makeConfigDirectory(".claude-account-2", identity: "uuid-b", configInside: true)
+        // account-2's logs are a day newer than account-1's.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-86_400)],
+            ofItemAtPath: home.appendingPathComponent(".claude-account-1/projects").path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: home.appendingPathComponent(".claude-account-2/projects").path
+        )
+
+        let accounts = ClaudeAccount.discover(home: home)
+
+        // The synthetic default (no config, no identity) plus the one merged account.
+        XCTAssertEqual(accounts.count, 2)
+        XCTAssertEqual(accounts.last?.configDirectory.lastPathComponent, ".claude-account-2")
+        XCTAssertEqual(
+            accounts.last?.additionalDirectories.map(\.lastPathComponent),
+            [".claude-account-1"]
+        )
+    }
+
+    func testDifferentAccountUUIDsStayTwoAccounts() throws {
+        try makeConfigDirectory(".claude", identity: "uuid-a", configInside: false)
+        try makeConfigDirectory(".claude-account-1", identity: "uuid-b", configInside: true)
+
+        let accounts = ClaudeAccount.discover(home: tempDirectory)
+
+        XCTAssertEqual(accounts.map(\.label), ["default", "account-1"])
+        XCTAssertEqual(accounts.map(\.accountUUID), ["uuid-a", "uuid-b"])
+        XCTAssertTrue(accounts.allSatisfy { $0.additionalDirectories.isEmpty })
+    }
+
+    /// The fallback for a directory whose identity cannot be established: it stays on its
+    /// own. "Unknown" is not a value two directories can share — merging on it would fuse
+    /// two people's usage into one row, which is a worse failure than listing one twice.
+    func testDirectoriesWithNoReadableIdentityAreNeverMergedWithEachOther() throws {
+        try makeConfigDirectory(".claude-account-1", identity: nil, configInside: true)
+        try makeConfigDirectory(".claude-account-2", identity: nil, configInside: true)
+
+        let accounts = ClaudeAccount.discover(home: tempDirectory)
+
+        XCTAssertEqual(accounts.map(\.label), ["default", "account-1", "account-2"])
+        XCTAssertTrue(accounts.allSatisfy { $0.accountUUID == nil })
+        XCTAssertTrue(accounts.allSatisfy { $0.additionalDirectories.isEmpty })
+    }
+
+    /// A malformed config is the same situation as a missing one — unknown, not shared.
+    func testMalformedConfigLeavesTheIdentityUnknownRatherThanCrashing() throws {
+        let home = tempDirectory!
+        try makeConfigDirectory(".claude-account-1", identity: nil, configInside: true)
+        try Data("{not json".utf8).write(
+            to: home.appendingPathComponent(".claude-account-1/.claude.json")
+        )
+
+        XCTAssertNil(ClaudeAccount.accountUUID(of: home.appendingPathComponent(".claude-account-1")))
+    }
+
+    /// A directory that was never signed in has a config file but no `oauthAccount`.
+    func testConfigWithoutAnOAuthAccountLeavesTheIdentityUnknown() throws {
+        let home = tempDirectory!
+        try makeConfigDirectory(".claude-account-1", identity: nil, configInside: true)
+        try Data(#"{"projects":{}}"#.utf8).write(
+            to: home.appendingPathComponent(".claude-account-1/.claude.json")
+        )
+
+        XCTAssertNil(ClaudeAccount.accountUUID(of: home.appendingPathComponent(".claude-account-1")))
+    }
+
+    // MARK: - Fixtures
+
+    /// Creates `<home>/<name>/projects` and, when `identity` is given, the config JSON that
+    /// names it — inside the directory (`CLAUDE_CONFIG_DIR` style) or beside it (the
+    /// default account's `~/.claude.json`).
+    private func makeConfigDirectory(_ name: String, identity: String?, configInside: Bool) throws {
+        let home = tempDirectory!
+        let directory = home.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("projects", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        guard let identity else { return }
+        let config = """
+        {"oauthAccount":{"accountUuid":"\(identity)","emailAddress":"someone@example.com"}}
+        """
+        let url = configInside
+            ? directory.appendingPathComponent(".claude.json")
+            : home.appendingPathComponent("\(name).json")
+        try Data(config.utf8).write(to: url)
+    }
 }

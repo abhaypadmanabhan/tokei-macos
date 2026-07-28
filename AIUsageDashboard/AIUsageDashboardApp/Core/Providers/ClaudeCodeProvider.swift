@@ -80,18 +80,29 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let multiAccount = accounts.count > 1
 
         for account in accounts {
-            let logs: [LogSource]
-            do {
-                logs = try await Self.logSources(in: account, id: id, fileManager: fileManager)
-            } catch {
-                warnings.append(ProviderWarning(
-                    message: Self.prefixed(
-                        "Failed to discover Claude logs: \(error.localizedDescription)",
-                        account: account, multiAccount: multiAccount
-                    ),
-                    level: .warning
-                ))
-                logs = []
+            // One account can own several config directories (the same Anthropic identity
+            // signed in from `~/.claude` and `~/.claude-account-2`, say). Its logs are the
+            // union of theirs, parsed in a single call so a record present in both — a
+            // session copied between directories — is deduped rather than counted twice.
+            var logs: [LogSource] = []
+            for projectsDirectory in account.projectsDirectories {
+                do {
+                    logs += try await Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
+                } catch {
+                    // Name the directory when the account owns more than one, so two
+                    // failures under the same label stay distinguishable. A single-directory
+                    // account keeps the message it always had.
+                    let directory = account.configDirectories.count > 1
+                        ? " in \(projectsDirectory.deletingLastPathComponent().lastPathComponent)"
+                        : ""
+                    warnings.append(ProviderWarning(
+                        message: Self.prefixed(
+                            "Failed to discover Claude logs\(directory): \(error.localizedDescription)",
+                            account: account, multiAccount: multiAccount
+                        ),
+                        level: .warning
+                    ))
+                }
             }
 
             let usage = await parser.parse(logSources: logs)
@@ -236,30 +247,31 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     public func discoverLogSources() async throws -> [LogSource] {
         var sources: [LogSource] = []
         var failures: [Error] = []
-        var existingAccounts = 0
-        for account in accounts {
-            guard fileManager.fileExists(atPath: account.projectsDirectory.path) else { continue }
-            existingAccounts += 1
+        var existingDirectories = 0
+        // The unit here is the config directory, not the account: one identity can own
+        // several, and one of them being broken says nothing about the others.
+        for projectsDirectory in accounts.flatMap(\.projectsDirectories) {
+            guard fileManager.fileExists(atPath: projectsDirectory.path) else { continue }
+            existingDirectories += 1
             do {
                 sources.append(contentsOf: try await Self.logSources(
-                    in: account, id: id, fileManager: fileManager
+                    in: projectsDirectory, id: id, fileManager: fileManager
                 ))
             } catch {
                 failures.append(error)
             }
         }
-        if let failure = failures.first, failures.count == existingAccounts {
+        if let failure = failures.first, failures.count == existingDirectories {
             throw failure
         }
         return sources
     }
 
     private static func logSources(
-        in account: ClaudeAccount,
+        in projectsDir: URL,
         id: ProviderID,
         fileManager: FileManager
     ) async throws -> [LogSource] {
-        let projectsDir = account.projectsDirectory
         var sources: [LogSource] = []
 
         let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.isDirectoryKey])
