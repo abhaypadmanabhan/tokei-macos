@@ -59,6 +59,17 @@ by running the dev build, not by a full click-through of every state.**
 - **A Claude account with no log directory reported "not installed"** while its usage was
   being parsed correctly, and a merged identity's live quota is now read from whichever
   of its directories holds usable credentials.
+- **A stale account could make the whole Claude provider unroutable.** The headline quota
+  picked the account with the most headroom without weighing how trustworthy each reading
+  was, so a stale estimate at 10% beat a confirmed 50% — and since only the winning
+  account's windows reach the snapshot, routing then rejected Claude outright while the
+  confirmed account sat unpublished. Confidence now outranks headroom, using the router's
+  own definition of a routable reading.
+- **A quota window with no measured value printed a confident "0%"** over an empty bar,
+  reading as measured headroom. It shows "—" now, like every other unmeasured value.
+- **The token-split bar left out reasoning tokens** while the total counted them, so on
+  Codex the other four segments were inflated shares of a number that was not the day's
+  total.
 
 ### Changed
 - The provider publishes which account the headline quota came from

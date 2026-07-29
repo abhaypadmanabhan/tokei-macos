@@ -52,6 +52,15 @@ reporting one of them as the whole picture.
 - **A Claude account whose log directory was missing reported "not installed"** while its
   usage was being read correctly, and a merged identity now reads live quota from
   whichever of its directories holds usable credentials.
+- **A stale account could take the whole Claude provider out of routing.** The headline
+  quota picked whichever account had the most headroom without asking how trustworthy the
+  number was — so a stale 10% beat a confirmed 50%, and because only that account's windows
+  are published, routing then dropped Claude entirely while the confirmed account sat
+  unused. Confirmed readings now win outright; headroom only decides between equals.
+- **A quota window with nothing measured showed a confident "0%"** over an empty bar
+  instead of "—".
+- **Reasoning tokens were missing from the token-split bar** even though they count toward
+  the day's total, which inflated every other segment on providers that report them.
 
 ### Known issues
 
