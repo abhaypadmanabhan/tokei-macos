@@ -35,8 +35,8 @@ struct MultiAccountNotice: View {
     let kind: Kind
     /// Optional "take me there" action. `.discovered` uses it to open the provider's
     /// drill-in; `.claudeSetup` has nowhere to go and passes `nil`.
-    var actionLabel: String? = nil
-    var onAction: (() -> Void)? = nil
+    var actionLabel: String?
+    var onAction: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage private var dismissed: Bool
@@ -56,10 +56,6 @@ struct MultiAccountNotice: View {
         case .discovered: return "tokei.notice.multiAccount.discovered.v1"
         case .claudeSetup: return "tokei.notice.multiAccount.claudeSetup.v1"
         }
-    }
-
-    static func isDismissed(_ kind: Kind, defaults: UserDefaults = .standard) -> Bool {
-        defaults.bool(forKey: storageKey(for: kind))
     }
 
     // MARK: Copy

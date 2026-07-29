@@ -58,7 +58,12 @@ struct AccountTrendChart: View {
     // MARK: - Chart
 
     private var chart: some View {
-        Chart {
+        // Derived once per render and captured by the hover handler below: `days` folds
+        // every series' points through a Set and sorts them, and `onContinuousHover`
+        // fires per mouse-move, not per render.
+        let buckets = days
+
+        return Chart {
             ForEach(series) { line in
                 ForEach(line.points) { point in
                     LineMark(
@@ -100,7 +105,7 @@ struct AccountTrendChart: View {
             AxisMarks(values: .automatic(desiredCount: 3)) { value in
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
-                        Text(Self.relativeLabel(date))
+                        Text(ChartDayLabel.relative(date))
                             .font(.mono(size: 13.5))
                             .foregroundStyle(PadzyTheme.ink5)
                     }
@@ -136,7 +141,7 @@ struct AccountTrendChart: View {
                                 hoveredDay = nil
                                 return
                             }
-                            hoveredDay = nearestDay(to: date)
+                            hoveredDay = Self.nearestDay(to: date, in: buckets)
                         case .ended:
                             hoveredDay = nil
                         }
@@ -145,7 +150,7 @@ struct AccountTrendChart: View {
         }
     }
 
-    private func nearestDay(to date: Date) -> Date? {
+    private static func nearestDay(to date: Date, in days: [Date]) -> Date? {
         days.min { abs($0.timeIntervalSince(date)) < abs($1.timeIntervalSince(date)) }
     }
 
@@ -161,7 +166,7 @@ struct AccountTrendChart: View {
             .sorted { $0.tokens > $1.tokens }
 
         return VStack(alignment: .leading, spacing: 5) {
-            Text(Self.calloutFormatter.string(from: day))
+            Text(ChartDayLabel.callout(day))
                 .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
             ForEach(rows) { row in
@@ -200,24 +205,6 @@ struct AccountTrendChart: View {
         let dash: [CGFloat]
         let tokens: Int
     }
-
-    /// Same relative-day idiom as the provider history chart: how long ago, not a calendar.
-    private static func relativeLabel(_ date: Date, now: Date = Date()) -> String {
-        let calendar = Calendar.current
-        let days = calendar.dateComponents(
-            [.day],
-            from: calendar.startOfDay(for: date),
-            to: calendar.startOfDay(for: now)
-        ).day ?? 0
-        return days <= 0 ? "TODAY" : "\(days)D"
-    }
-
-    private static let calloutFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "EEE MMM d"
-        return formatter
-    }()
 
     /// Chart-state contract: the frame stays, a label names the absence, no fake series.
     private var emptyState: some View {
@@ -261,10 +248,10 @@ private func sampleSeries(_ label: String, id: String, index: Int, scale: Double
         label: label,
         color: AccountSeriesStyle.color(index, tint: AgentTint.color(.claudeCode)),
         dash: AccountSeriesStyle.dash(index),
-        points: (0..<10).map { i in
+        points: (0..<10).map { day in
             AccountTrendChart.Point(
-                date: base.addingTimeInterval(Double(i) * 86_400),
-                tokens: Int(Double(values[i]) * scale)
+                date: base.addingTimeInterval(Double(day) * 86_400),
+                tokens: Int(Double(values[day]) * scale)
             )
         }
     )
@@ -273,7 +260,7 @@ private func sampleSeries(_ label: String, id: String, index: Int, scale: Double
 #Preview("Two accounts") {
     AccountTrendChart(series: [
         sampleSeries("default", id: "a", index: 0, scale: 1),
-        sampleSeries("account-1", id: "b", index: 1, scale: 0.35),
+        sampleSeries("account-1", id: "b", index: 1, scale: 0.35)
     ])
     .frame(width: 420, height: 180)
     .padding(24)
@@ -284,7 +271,7 @@ private func sampleSeries(_ label: String, id: String, index: Int, scale: Double
     AccountTrendChart(series: [
         sampleSeries("default", id: "a", index: 0, scale: 1),
         sampleSeries("account-1", id: "b", index: 1, scale: 0.35),
-        sampleSeries("account-2", id: "c", index: 2, scale: 0.7),
+        sampleSeries("account-2", id: "c", index: 2, scale: 0.7)
     ])
     .frame(width: 420, height: 180)
     .padding(24)

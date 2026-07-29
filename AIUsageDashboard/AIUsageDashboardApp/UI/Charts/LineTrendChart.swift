@@ -134,7 +134,7 @@ struct LineTrendChart: View {
             AxisMarks(values: .automatic(desiredCount: 4)) { value in
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
-                        Text(Self.relativeLabel(date))
+                        Text(ChartDayLabel.relative(date))
                             .font(.mono(size: 10))
                             .foregroundStyle(PadzyTheme.ink5)
                     }
@@ -193,7 +193,7 @@ struct LineTrendChart: View {
     private func hoverCallout(for point: Point) -> some View {
         let detail = pointDetails[Calendar.current.startOfDay(for: point.date)]
         return VStack(alignment: .leading, spacing: 3) {
-            Text(Self.calloutDate(point.date))
+            Text(ChartDayLabel.callout(point.date))
                 .font(.mono(size: 9))
                 .tracking(0.3)
                 .foregroundColor(PadzyTheme.ink5)
@@ -224,30 +224,6 @@ struct LineTrendChart: View {
                 .stroke(PadzyTheme.border2, lineWidth: 1)
         )
         .fixedSize()
-    }
-
-    private static func calloutDate(_ date: Date) -> String {
-        Self.calloutFormatter.string(from: date)
-    }
-
-    private static let calloutFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "EEE MMM d"
-        return formatter
-    }()
-
-    /// Relative day label for the x-axis: `TODAY` for the current day, else the
-    /// whole-day distance back (`7D`). Mono ink5, matching the mockup's minimal
-    /// axis — dates read as "how long ago", not a calendar.
-    private static func relativeLabel(_ date: Date, now: Date = Date()) -> String {
-        let calendar = Calendar.current
-        let days = calendar.dateComponents(
-            [.day],
-            from: calendar.startOfDay(for: date),
-            to: calendar.startOfDay(for: now)
-        ).day ?? 0
-        return days <= 0 ? "TODAY" : "\(days)D"
     }
 
     /// Chart-state contract (dataviz): the frame stays, a caps micro label names
