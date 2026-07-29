@@ -20,6 +20,14 @@ public enum UsageClientPolicy {
     /// extend the very cooldown we're reacting to.
     public static let maxRetrySleepInterval: TimeInterval = 30
 
+    /// Ceiling on how old a cached reading may be and still be served at all.
+    ///
+    /// Was 7 days in every client, which let a week-old number stand in for live quota —
+    /// and `RouteTargetPolicy` classifies `avoid` from *every* reading, trusted or not, so
+    /// a week-old cache could still steer work. Two hours is the point past which no
+    /// consumer has a use for the number.
+    public static let maxStaleInterval: TimeInterval = 2 * 60 * 60
+
     /// What to do after a 429.
     public enum RateLimitAction: Equatable, Sendable {
         /// Wait this long, then make one more attempt.

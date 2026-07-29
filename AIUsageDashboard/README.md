@@ -135,7 +135,7 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
   reads those buckets as `.estimated`-confidence windows. Off, or when the app isn't
   running, Tokei says so instead of showing a gauge. Antigravity exposes no local
   per-message log, so token counts stay honestly `unavailable`.
-- 67 unit tests green at MVP (427 today), incl. real-logs smoke tests (skip on machines
+- 67 unit tests green at MVP (507 today), incl. real-logs smoke tests (skip on machines
   without logs).
 - **Value surface (#23) + lifetime (#41)** (2026-07-19): the "am I using the tokens I pay
   for" pane — headline plan-value multiple + Maxxer tier (idle → goblin mode), per-agent

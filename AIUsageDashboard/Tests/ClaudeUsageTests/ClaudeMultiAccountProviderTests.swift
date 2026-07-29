@@ -131,6 +131,31 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 10)
     }
 
+    /// `discover()` lists `~/.claude` whether or not it exists, so a machine that has never
+    /// run Claude Code hits this path on every refresh. A directory that is simply absent
+    /// is not a failure worth a user-visible warning — and the warning displaced the
+    /// accurate "Local logs only; quotas unavailable" that should be there instead.
+    func testAbsentLogDirectoryProducesNoDiscoveryWarning() async throws {
+        let missing = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude-never-used", isDirectory: true),
+            home: home
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [missing],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertFalse(
+            snapshot.warnings.contains { $0.message.contains("Failed to discover Claude logs") },
+            "an absent directory is not a discovery failure, got: \(snapshot.warnings.map(\.message))"
+        )
+        XCTAssertEqual(snapshot.accounts?.first?.unreadableDirectories, [])
+    }
+
     /// The snapshot must say *which* account the headline came from. A surface that wants to
     /// name it (the drill-in's "the gauge is one account — account-1") otherwise has to
     /// re-derive the rule, and a second implementation of "most headroom" is free to disagree

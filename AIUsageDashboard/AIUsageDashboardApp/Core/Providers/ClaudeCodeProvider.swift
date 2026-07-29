@@ -160,6 +160,14 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                 let directory = account.configDirectories.count > 1
                     ? " in \(configDirectory.lastPathComponent)"
                     : ""
+                // Absent is not broken: a directory that has never run a session has no
+                // `projects` folder, and `discover()` always lists `~/.claude` whether or
+                // not it exists — so warning here gave every machine that has never run
+                // Claude Code a permanent "Failed to discover Claude logs" (which also
+                // displaced the accurate "Local logs only; quotas unavailable"). Only a
+                // directory that is there and refuses to be read leaves a hole worth
+                // naming.
+                guard !Self.isMissing(error) else { continue }
                 warnings.append(ProviderWarning(
                     message: Self.prefixed(
                         "Failed to discover Claude logs\(directory): \(error.localizedDescription)",
@@ -167,10 +175,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                     ),
                     level: .warning
                 ))
-                // Absent is not broken: a directory that has never run a session has no
-                // `projects` folder, and a machine that tracks eight tools has plenty of
-                // those. Only a directory that is there and unreadable leaves a hole.
-                if !Self.isMissing(error), !unreadableDirectories.contains(configDirectory.path) {
+                if !unreadableDirectories.contains(configDirectory.path) {
                     unreadableDirectories.append(configDirectory.path)
                 }
             }

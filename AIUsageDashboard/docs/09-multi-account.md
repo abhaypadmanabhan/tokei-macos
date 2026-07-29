@@ -24,9 +24,11 @@ aggregation detail.
 
 ## 2. What Tokei can and cannot see
 
-Claude Code keeps everything about an account — session logs, settings, the
-signed-in identity — under one config directory. `~/.claude` by default, or
-whatever `CLAUDE_CONFIG_DIR` points at.
+Claude Code keeps its state — session logs, settings, the signed-in identity —
+per **config directory**: `~/.claude` by default, or whatever `CLAUDE_CONFIG_DIR`
+points at. An *account* is not a directory, though. Tokei reads the identity out
+of each directory and groups directories by it, so one Anthropic account signed
+in from two directories is one account whose data spans both.
 
 **Can see**
 
@@ -157,7 +159,10 @@ There is no launch modal and neither notice returns. To see one again, clear its
 key:
 
 ```bash
+# the "N accounts found" notice
 defaults delete ai.padzy.tokei tokei.notice.multiAccount.discovered.v1
+# the "a second account may be hidden" setup notice
+defaults delete ai.padzy.tokei tokei.notice.multiAccount.claudeSetup.v1
 ```
 
 ## 7. Troubleshooting

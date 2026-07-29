@@ -154,8 +154,12 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             return nil
         }
 
+        // Same ceiling as every other client. A week-old reading was still being served
+        // here after Claude's dropped to two hours, and `RouteTargetPolicy` builds `avoid`
+        // from untrusted readings too — so a stale Antigravity number could still steer
+        // work days after its fetches started failing.
         let age = now().timeIntervalSince(cached.timestamp)
-        guard age >= 0 && age <= 7 * 24 * 3600 else {
+        guard age >= 0 && age <= UsageClientPolicy.maxStaleInterval else {
             return nil
         }
 

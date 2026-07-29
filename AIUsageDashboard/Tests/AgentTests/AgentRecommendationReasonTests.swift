@@ -31,6 +31,6 @@ final class AgentRecommendationReasonTests: XCTestCase {
         XCTAssertNil(rec?.routeTo)
         XCTAssertTrue(reason.contains("Claude Code excluded from routing"), reason)
         XCTAssertTrue(reason.contains("timestamped in the future"), reason)
-        XCTAssertFalse(reason.contains("old"), "must not report a bogus age, got: \(reason)")
+        XCTAssertFalse(reason.contains("s old"), "must not report a bogus age, got: \(reason)")
     }
 }

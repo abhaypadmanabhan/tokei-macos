@@ -567,9 +567,10 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     private static let source = "api.anthropic.com/api/oauth/usage"
     private static let maxAttempts = 3
     private static let freshCacheInterval: TimeInterval = 10 * 60
-    /// Ceiling on how old a cached reading may be and still be served at all. Was 7 days,
-    /// which let a week-old number stand in for live quota; no consumer has a use for that.
-    private static let maxStaleInterval: TimeInterval = 2 * 60 * 60
+    /// Ceiling on how old a cached reading may be and still be served at all — shared with
+    /// every other usage client, because a week-old Antigravity number was no more useful
+    /// than a week-old Claude one.
+    private static let maxStaleInterval: TimeInterval = UsageClientPolicy.maxStaleInterval
     private static let maxRetrySleepInterval: TimeInterval = 30
 }
 

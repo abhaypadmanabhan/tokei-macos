@@ -245,6 +245,10 @@ extension OverviewView {
     /// active agents" (Antigravity/Gemini with no token data are excluded).
     var activeAgentCount: Int {
         ProviderVisibility.visible(viewModel.snapshots)
+            // Same set `mergedToday` sums. Without the availability filter, a provider
+            // that is unavailable but still reports today's tokens was counted in
+            // "across N active agents" while contributing nothing to the number above it.
+            .filter { viewModel.isAvailable($0.providerID) }
             .filter { $0.todayUsage.totalTokens != nil }
             .count
     }
