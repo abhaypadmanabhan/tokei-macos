@@ -328,3 +328,53 @@ overturned a confident earlier assessment.
 - **Profile before theorising.** `sample <pid>` put 86% of samples on one call path in
   seconds. My prior guess (`seenIDs.formUnion` cost) was wrong; so was my first root-cause
   guess for the P0 that morning. Three hypotheses, three corrections by measurement.
+
+## 2026-07-29 — measuring the wrong binary, and the release that died quietly
+
+The 0.8.0 `/dev-approved` run. Most of the day's cost was not in the code.
+
+- **`build.sh` does not write to `AIUsageDashboard/build/dev/`.** It writes to
+  `~/Library/Developer/Xcode/DerivedData/AIUsageDashboard-<hash>/`. I profiled
+  `build/dev/…/Tokei.app` for six minutes — one core pegged, 810 MB RSS — and was about to
+  report the CPU regression as unfixed. The bundle was from 2026-07-26 and predated the fix
+  by a day. Two things gave it away and both were ignorable-looking: `TOKEI_PARSE_DEBUG=1`
+  produced *no* output (the instrumentation did not exist yet in that binary), and the app
+  binary's mtime was two days old. **Check the artifact's date before believing its
+  numbers**, and treat "my new instrumentation printed nothing" as "wrong binary" before
+  "wrong code". Accidental upside: it is a perfect pre-fix control, and the patch bible now
+  cites it as one.
+- **Never run a second `xcodebuild`/`xcodegen` while `scripts/release.sh` is archiving.**
+  The first release attempt died mid-notarization because I kicked off a Debug `build.sh`
+  in parallel and `xcodegen generate` rewrote the `.xcodeproj` underneath the archive.
+- **`cmd | tail` throws away the exit code.** That same run reported exit 0 because `tail`
+  exited 0; `set -o pipefail` is not on in the Bash tool's shell. It looked like a clean
+  release with no DMG. **Redirect to a file and echo `$?`** — never pipe a long-running
+  script through `tail` when the exit status is the thing you care about.
+- **The app does not sync headless.** Launching the binary directly with no window and no
+  menu click leaves it at 0% CPU forever — `DashboardView`/`MenuBarView` carry the `.task`,
+  `MenuBarLabel` does not. `open -a <app> --env KEY=VAL` gets a real run with the env var.
+  (That is also a real product bug for anyone who keeps the window closed: the snapshot the
+  CLI/MCP read goes stale. Filed in the release notes, not fixed.)
+- **A reviewer's suggested assertion can be wrong for the test's own setup.** CodeRabbit
+  asked the absent-directory test to assert `"Local logs only; quotas unavailable"`. It
+  failed: the suite's `setUp` enables `claudeNetworkUsageEnabled`, so the mock's failure
+  produced a warning that displaced the fallback. The finding was right, the patch was not.
+  Applying it verbatim would have left a red test and a wrong reason for it.
+- **A rule copied for display drifts, and the drift hides in the copy.** The drill-in
+  re-derived "the account with the most headroom" to name it in a sentence, excluding
+  credits windows where the provider does not — so the two could pick different accounts and
+  the only symptom was the sentence going vague. The same rule then turned out to be wrong
+  at the source too (headroom compared across confidence tiers, so a stale 10% beat a
+  confirmed 50% and took the whole provider out of routing). One definition, published as
+  data — `ProviderSnapshot.headlineAccountID` — and asked for, not recomputed.
+- **Judge a security finding by what the attacker already has.** The review flagged an
+  attacker-planted `~/.claude-$(payload)/projects/` reaching the agent snapshot and a
+  shell-shaped `export CLAUDE_CONFIG_DIR=…` line. Every code fact checked out. It is still
+  not a vulnerability: planting that directory needs write access to `$HOME`, which already
+  allows overwriting `agent-snapshot.json` outright — the "attack" is strictly weaker than a
+  capability its own precondition grants. Refuting a finding needs the same rigour as
+  confirming one, and the question that settles it is "what does this add?".
+- **A lint gate can be red for years.** `lint.sh` runs `--strict`, which promotes every
+  warning to an error; `main` carried 370. Comparing against the baseline (rather than
+  reading the red) is what turned "this branch broke lint" into "this branch is +10, here
+  are the 10" — and then into 361, below what it inherited.
