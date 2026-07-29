@@ -247,11 +247,11 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     /// The `~/.claude.json` subset this type reads. Decoding the whole file would pull in
     /// project history and MCP config Tokei has no business holding.
     private struct ConfigIdentity: Decodable {
-        struct OAuthAccount: Decodable {
-            let accountUuid: String?
-        }
+        let oauthAccount: ConfigOAuthAccount?
+    }
 
-        let oauthAccount: OAuthAccount?
+    private struct ConfigOAuthAccount: Decodable {
+        let accountUuid: String?
     }
 
     // MARK: - Internals

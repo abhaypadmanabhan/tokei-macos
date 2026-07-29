@@ -132,21 +132,22 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let authenticated: Bool
     }
 
-    private func fetchAccount(
-        _ account: ClaudeAccount,
-        networkEnabled: Bool,
+    /// This account's log files, plus what went wrong finding them.
+    ///
+    /// One account can own several config directories (the same Anthropic identity signed in
+    /// from `~/.claude` and `~/.claude-account-2`, say). Its logs are the union of theirs,
+    /// returned as one list so the parser dedupes a session copied between directories
+    /// rather than counting it twice.
+    private func discoverLogs(
+        for account: ClaudeAccount,
         multiAccount: Bool
-    ) async -> AccountFetch {
-        var warnings: [ProviderWarning] = []
-        // One account can own several config directories (the same Anthropic identity
-        // signed in from `~/.claude` and `~/.claude-account-2`, say). Its logs are the
-        // union of theirs, parsed in a single call so a record present in both — a
-        // session copied between directories — is deduped rather than counted twice.
+    ) async -> (logs: [LogSource], unreadableDirectories: [String], warnings: [ProviderWarning]) {
         var logs: [LogSource] = []
         // Directories this account owns that exist but refused to be read. They are the
         // difference between "this identity used 300 tokens" and "this identity used 300
         // tokens *that we could see*", so the row carries them and can say so.
         var unreadableDirectories: [String] = []
+        var warnings: [ProviderWarning] = []
 
         for projectsDirectory in account.projectsDirectories {
             do {
@@ -174,6 +175,19 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                 }
             }
         }
+
+        return (logs, unreadableDirectories, warnings)
+    }
+
+    private func fetchAccount(
+        _ account: ClaudeAccount,
+        networkEnabled: Bool,
+        multiAccount: Bool
+    ) async -> AccountFetch {
+        let discovery = await discoverLogs(for: account, multiAccount: multiAccount)
+        var warnings = discovery.warnings
+        let logs = discovery.logs
+        let unreadableDirectories = discovery.unreadableDirectories
 
         let parsed = await parser.parse(logSources: logs)
         warnings.append(contentsOf: parsed.warnings)

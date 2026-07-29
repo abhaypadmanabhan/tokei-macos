@@ -19,7 +19,7 @@ struct LineTrendChart: View {
     /// Per-agent identity tint (WP-5 daily history). `nil` keeps the neutral
     /// `ink2` line + sanctioned neutral area gradient — every existing call site
     /// is pixel-identical. When set, the line + area take the agent's DATA colour.
-    var tint: Color? = nil
+    var tint: Color?
     /// Hover detail keyed by the point's start-of-day date. Empty → the hover callout
     /// shows date + total only (no top-agent line).
     var pointDetails: [Date: TrendPointDetail] = [:]
@@ -247,8 +247,9 @@ private func samplePoints(_ days: Int) -> [(date: Date, tokens: Int)] {
     let values = [4_200_000, 9_800_000, 7_400_000, 15_200_000, 11_100_000,
                   18_600_000, 9_300_000, 21_400_000, 16_800_000, 12_500_000,
                   24_100_000, 19_700_000, 14_300_000, 20_900_000]
-    return (0..<days).map { i in
-        (date: base.addingTimeInterval(Double(i) * 86_400), tokens: values[i % values.count])
+    return (0..<days).map { offset in
+        (date: base.addingTimeInterval(Double(offset) * 86_400),
+         tokens: values[offset % values.count])
     }
 }
 
