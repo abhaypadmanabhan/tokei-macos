@@ -78,93 +78,23 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        var warnings: [ProviderWarning] = []
-        var accountUsages: [ProviderAccountUsage] = []
-        var perAccountUsage: [ClaudeJSONLParser.AggregateUsage] = []
-        var liveQuotaAuthenticated = false
         let networkEnabled = userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled")
         // Only label warnings by account when there is more than one — a single-account
         // setup shouldn't grow noise it never had.
         let multiAccount = accounts.count > 1
 
+        var results: [AccountFetch] = []
         for account in accounts {
-            // One account can own several config directories (the same Anthropic identity
-            // signed in from `~/.claude` and `~/.claude-account-2`, say). Its logs are the
-            // union of theirs, parsed in a single call so a record present in both — a
-            // session copied between directories — is deduped rather than counted twice.
-            var logs: [LogSource] = []
-            // Directories this account owns that exist but refused to be read. They are the
-            // difference between "this identity used 300 tokens" and "this identity used 300
-            // tokens *that we could see*", so the row carries them and can say so.
-            var unreadableDirectories: [String] = []
-            for projectsDirectory in account.projectsDirectories {
-                do {
-                    logs += try await Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
-                } catch {
-                    // Name the directory when the account owns more than one, so two
-                    // failures under the same label stay distinguishable. A single-directory
-                    // account keeps the message it always had.
-                    let configDirectory = projectsDirectory.deletingLastPathComponent()
-                    let directory = account.configDirectories.count > 1
-                        ? " in \(configDirectory.lastPathComponent)"
-                        : ""
-                    warnings.append(ProviderWarning(
-                        message: Self.prefixed(
-                            "Failed to discover Claude logs\(directory): \(error.localizedDescription)",
-                            account: account, multiAccount: multiAccount
-                        ),
-                        level: .warning
-                    ))
-                    // Absent is not broken: a directory that has never run a session has no
-                    // `projects` folder, and a machine that tracks eight tools has plenty of
-                    // those. Only a directory that is there and unreadable leaves a hole.
-                    if !Self.isMissing(error), !unreadableDirectories.contains(configDirectory.path) {
-                        unreadableDirectories.append(configDirectory.path)
-                    }
-                }
-            }
-
-            let usage = await parser.parse(logSources: logs)
-            warnings.append(contentsOf: usage.warnings)
-            perAccountUsage.append(usage)
-
-            var accountWindows = Self.unavailableQuotaWindows(providerID: id)
-            if networkEnabled {
-                do {
-                    let liveWindows = try await liveQuotaWindows(for: account)
-                    if !liveWindows.isEmpty {
-                        accountWindows = liveWindows
-                        // A successful non-empty live-quota fetch means the OAuth usage
-                        // endpoint accepted our credentials — report auth honestly
-                        // instead of the blanket `.unknown` (which read as "not signed
-                        // in" in the UI even while live quota was flowing). One account
-                        // authenticating is enough to say Claude is connected.
-                        liveQuotaAuthenticated = true
-                    }
-                } catch {
-                    warnings.append(ProviderWarning(
-                        message: Self.prefixed(
-                            "Claude online usage request failed: \(error.localizedDescription). Falling back to local logs only.",
-                            account: account, multiAccount: multiAccount
-                        ),
-                        level: .warning
-                    ))
-                }
-            }
-
-            accountUsages.append(ProviderAccountUsage(
-                id: account.id,
-                label: account.label,
-                quotaWindows: accountWindows,
-                todayUsage: usage.today,
-                // The same daily series that goes into the provider-level merge below, kept
-                // per account so a surface can answer "which account is spending more" over
-                // time instead of only right now.
-                dailyTotals: usage.dailyTotals,
-                configDirectories: account.configDirectories.map(\.path),
-                unreadableDirectories: unreadableDirectories
-            ))
+            results.append(
+                await fetchAccount(account, networkEnabled: networkEnabled, multiAccount: multiAccount)
+            )
         }
+
+        let accountUsages = results.map(\.usage)
+        let perAccountUsage = results.map(\.parsed)
+        var warnings = results.flatMap(\.warnings)
+        // One account authenticating is enough to say Claude is connected.
+        let liveQuotaAuthenticated = results.contains { $0.authenticated }
 
         let headline = Self.headlineAccount(from: accountUsages)
         let quotaWindows = headline?.quotaWindows ?? Self.unavailableQuotaWindows(providerID: id)
@@ -189,6 +119,105 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             hourlyTotals: Self.merged(perAccountUsage.compactMap(\.hourlyTotals)),
             accounts: accountUsages,
             headlineAccountID: headline?.id
+        )
+    }
+
+    /// Everything one account contributes to the snapshot. Accounts are independent — the
+    /// only thing the loop above does with these is concatenate them — so the per-account
+    /// work is a function of the account, not 80 lines of accumulator bookkeeping.
+    private struct AccountFetch {
+        let usage: ProviderAccountUsage
+        let parsed: ClaudeJSONLParser.AggregateUsage
+        let warnings: [ProviderWarning]
+        let authenticated: Bool
+    }
+
+    private func fetchAccount(
+        _ account: ClaudeAccount,
+        networkEnabled: Bool,
+        multiAccount: Bool
+    ) async -> AccountFetch {
+        var warnings: [ProviderWarning] = []
+        // One account can own several config directories (the same Anthropic identity
+        // signed in from `~/.claude` and `~/.claude-account-2`, say). Its logs are the
+        // union of theirs, parsed in a single call so a record present in both — a
+        // session copied between directories — is deduped rather than counted twice.
+        var logs: [LogSource] = []
+        // Directories this account owns that exist but refused to be read. They are the
+        // difference between "this identity used 300 tokens" and "this identity used 300
+        // tokens *that we could see*", so the row carries them and can say so.
+        var unreadableDirectories: [String] = []
+
+        for projectsDirectory in account.projectsDirectories {
+            do {
+                logs += try await Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
+            } catch {
+                // Name the directory when the account owns more than one, so two failures
+                // under the same label stay distinguishable. A single-directory account
+                // keeps the message it always had.
+                let configDirectory = projectsDirectory.deletingLastPathComponent()
+                let directory = account.configDirectories.count > 1
+                    ? " in \(configDirectory.lastPathComponent)"
+                    : ""
+                warnings.append(ProviderWarning(
+                    message: Self.prefixed(
+                        "Failed to discover Claude logs\(directory): \(error.localizedDescription)",
+                        account: account, multiAccount: multiAccount
+                    ),
+                    level: .warning
+                ))
+                // Absent is not broken: a directory that has never run a session has no
+                // `projects` folder, and a machine that tracks eight tools has plenty of
+                // those. Only a directory that is there and unreadable leaves a hole.
+                if !Self.isMissing(error), !unreadableDirectories.contains(configDirectory.path) {
+                    unreadableDirectories.append(configDirectory.path)
+                }
+            }
+        }
+
+        let parsed = await parser.parse(logSources: logs)
+        warnings.append(contentsOf: parsed.warnings)
+
+        var accountWindows = Self.unavailableQuotaWindows(providerID: id)
+        var authenticated = false
+        if networkEnabled {
+            do {
+                let liveWindows = try await liveQuotaWindows(for: account)
+                if !liveWindows.isEmpty {
+                    accountWindows = liveWindows
+                    // A successful non-empty live-quota fetch means the OAuth usage endpoint
+                    // accepted our credentials — report auth honestly instead of the blanket
+                    // `.unknown`, which read as "not signed in" in the UI even while live
+                    // quota was flowing.
+                    authenticated = true
+                }
+            } catch {
+                warnings.append(ProviderWarning(
+                    message: Self.prefixed(
+                        "Claude online usage request failed: \(error.localizedDescription). Falling back to local logs only.",
+                        account: account, multiAccount: multiAccount
+                    ),
+                    level: .warning
+                ))
+            }
+        }
+
+        return AccountFetch(
+            usage: ProviderAccountUsage(
+                id: account.id,
+                label: account.label,
+                quotaWindows: accountWindows,
+                todayUsage: parsed.today,
+                // The same daily series that goes into the provider-level merge, kept per
+                // account so a surface can answer "which account is spending more" over time
+                // instead of only right now.
+                dailyTotals: parsed.dailyTotals,
+                configDirectories: account.configDirectories.map(\.path),
+                unreadableDirectories: unreadableDirectories
+            ),
+            parsed: parsed,
+            warnings: warnings,
+            authenticated: authenticated
         )
     }
 
