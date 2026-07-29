@@ -47,7 +47,9 @@ Previous todo (herdr dispatch, DONE 2026-07-24) archived — see git history.
 - [x] Real artifact: `recommendation` went from `routeTo: claude_code` (stale 0%) to `null`
 - [x] Real artifact: all 3 accounts tracked with separate token totals
 - [x] Real artifact: per-account warnings correctly attribute cooldown vs expired creds
-- [ ] Real artifact: live quota window returns after the default account's cooldown (05:42Z)
+- [x] Real artifact: live quota window returns after the default account's cooldown (05:42Z)
+      — verified 2026-07-28: both accounts reported `confidence: official`,
+      `observedAt 2026-07-29T06:12Z`, session 1%/2%, weekly 22%/23%
 
 ## Known real-world state (not defects)
 - `account-1` / `account-2` OAuth access tokens are **expired** (03:56Z / yesterday 19:14Z).
