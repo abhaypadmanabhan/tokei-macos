@@ -131,6 +131,50 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 10)
     }
 
+    /// The snapshot must say *which* account the headline came from. A surface that wants to
+    /// name it (the drill-in's "the gauge is one account — account-1") otherwise has to
+    /// re-derive the rule, and a second implementation of "most headroom" is free to disagree
+    /// with this one without any test noticing.
+    func testHeadlineAccountIDNamesTheAccountTheHeadlineCameFrom() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 10)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
+
+        let provider = ClaudeCodeProvider(
+            accounts: [base, one],
+            usageClientFactory: { account in
+                MockClaudeUsageClient(
+                    behavior: .success([self.weeklyWindow(used: account.isDefault ? 90 : 10)])
+                )
+            },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        let named = (snapshot.accounts ?? []).first { $0.id == snapshot.headlineAccountID }
+        XCTAssertEqual(named?.label, "account-1")
+        // ...and it is the account those very windows belong to, not just the lowest number.
+        XCTAssertEqual(named?.quotaWindows.first { $0.type == .weekly }?.used,
+                       snapshot.quotaWindows.first { $0.type == .weekly }?.used)
+    }
+
+    /// No usable reading anywhere means there is no headline account to name — the field
+    /// must stay `nil` rather than pointing at an account whose gauge says nothing.
+    func testHeadlineAccountIDIsNilWithoutAnyUsableReading() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 10)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
+
+        let provider = ClaudeCodeProvider(
+            accounts: [base, one],
+            usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertNil(snapshot.headlineAccountID)
+    }
+
     /// Per-account windows must survive aggregation — this is the field that tells an
     /// orchestrator *which* account to point `CLAUDE_CONFIG_DIR` at.
     func testPerAccountQuotaIsPreserved() async throws {

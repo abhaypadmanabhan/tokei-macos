@@ -166,7 +166,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             ))
         }
 
-        let quotaWindows = Self.headlineQuotaWindows(from: accountUsages, providerID: id)
+        let headline = Self.headlineAccount(from: accountUsages)
+        let quotaWindows = headline?.quotaWindows ?? Self.unavailableQuotaWindows(providerID: id)
 
         if warnings.isEmpty && quotaWindows.allSatisfy({ $0.confidence == .unavailable }) {
             warnings.append(ProviderWarning(message: "Local logs only; quotas unavailable", level: .info))
@@ -186,7 +187,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             lastSyncedAt: Date(),
             dailyTotals: Self.merged(perAccountUsage.map(\.dailyTotals)),
             hourlyTotals: Self.merged(perAccountUsage.compactMap(\.hourlyTotals)),
-            accounts: accountUsages
+            accounts: accountUsages,
+            headlineAccountID: headline?.id
         )
     }
 
@@ -215,26 +217,29 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         return []
     }
 
-    /// The quota the provider reports as its headline: the windows of the account with the
-    /// **most headroom**, i.e. the lowest peak utilization.
+    /// The account whose windows become the provider's headline quota: the one with the
+    /// **most headroom**, i.e. the lowest peak utilization. `nil` when no account has a
+    /// usable reading.
     ///
     /// Work can be sent to whichever account you like (that's what `CLAUDE_CONFIG_DIR` is
     /// for), so available capacity is the best account's — not the worst's, and not an
     /// average, which would describe no account that actually exists. Accounts with no
     /// usable reading are skipped rather than counted as 0%.
-    private static func headlineQuotaWindows(
-        from accountUsages: [ProviderAccountUsage],
-        providerID: ProviderID
-    ) -> [QuotaWindow] {
-        let withReadings = accountUsages.filter { usage in
-            usage.quotaWindows.contains { UtilizationEngine.usedPercent(from: $0) != nil }
-        }
-        guard !withReadings.isEmpty else { return unavailableQuotaWindows(providerID: providerID) }
-
-        let best = withReadings.min { lhs, rhs in
-            peakPercent(lhs.quotaWindows) < peakPercent(rhs.quotaWindows)
-        }
-        return best?.quotaWindows ?? unavailableQuotaWindows(providerID: providerID)
+    ///
+    /// Published on the snapshot as `headlineAccountID` so a surface can *name* the account
+    /// the gauge belongs to without re-deriving this rule. The drill-in used to recompute
+    /// "lowest peak wins" itself and then check its answer against the number on screen —
+    /// which meant two definitions of the same rule, differing (the copy excluded credits
+    /// windows, this does not) in a way that surfaced as the explanation silently going
+    /// vague rather than as anything a test could catch.
+    private static func headlineAccount(
+        from accountUsages: [ProviderAccountUsage]
+    ) -> ProviderAccountUsage? {
+        accountUsages
+            .filter { usage in
+                usage.quotaWindows.contains { UtilizationEngine.usedPercent(from: $0) != nil }
+            }
+            .min { peakPercent($0.quotaWindows) < peakPercent($1.quotaWindows) }
     }
 
     private static func peakPercent(_ windows: [QuotaWindow]) -> Double {

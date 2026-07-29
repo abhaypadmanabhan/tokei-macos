@@ -29,6 +29,7 @@ extension ProviderSnapshot: Codable {
         case dailyTotals
         case hourlyTotals
         case accounts
+        case headlineAccountID
     }
 
     public init(from decoder: Decoder) throws {
@@ -48,6 +49,7 @@ extension ProviderSnapshot: Codable {
         hourlyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .hourlyTotals)
         // Absent in snapshots written before multi-account support — decodes as nil.
         accounts = try container.decodeIfPresent([ProviderAccountUsage].self, forKey: .accounts)
+        headlineAccountID = try container.decodeIfPresent(String.self, forKey: .headlineAccountID)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -66,6 +68,7 @@ extension ProviderSnapshot: Codable {
         try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
         try container.encodeIfPresent(hourlyTotals, forKey: .hourlyTotals)
         try container.encodeIfPresent(accounts, forKey: .accounts)
+        try container.encodeIfPresent(headlineAccountID, forKey: .headlineAccountID)
     }
 }
 

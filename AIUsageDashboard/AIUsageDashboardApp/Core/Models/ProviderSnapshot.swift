@@ -20,6 +20,15 @@ public struct ProviderSnapshot: Sendable, Identifiable {
     /// Per-account breakdown for providers that support several signed-in accounts.
     /// `nil` for single-account providers. The top-level fields stay the aggregate.
     public let accounts: [ProviderAccountUsage]?
+    /// Which entry of `accounts` the headline `quotaWindows` were taken from, when the
+    /// provider picked one rather than aggregating.
+    ///
+    /// The rule that picks it (Claude: the account with the most headroom) lives in the
+    /// provider and nowhere else. A surface that wants to *say* which account the gauge
+    /// belongs to reads this; re-deriving the rule for display is how the explanation and
+    /// the number drift apart, and the display copy is exactly where a mismatch is
+    /// invisible. `nil` when there is no per-account breakdown or no usable reading.
+    public let headlineAccountID: String?
 
     public init(
         providerID: ProviderID,
@@ -35,7 +44,8 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         lastSyncedAt: Date? = nil,
         dailyTotals: [Date: Int]? = nil,
         hourlyTotals: [Date: Int]? = nil,
-        accounts: [ProviderAccountUsage]? = nil
+        accounts: [ProviderAccountUsage]? = nil,
+        headlineAccountID: String? = nil
     ) {
         self.providerID = providerID
         self.displayName = displayName
@@ -51,6 +61,7 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         self.dailyTotals = dailyTotals
         self.hourlyTotals = hourlyTotals
         self.accounts = accounts
+        self.headlineAccountID = headlineAccountID
     }
 }
 

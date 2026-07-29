@@ -413,20 +413,15 @@ struct ProviderDetailView: View {
             + "most headroom — not all \(accounts.count). Per-account numbers are in Accounts below."
     }
 
-    /// Which account the headline quota came from, re-deriving the provider's "most headroom"
-    /// rule — then **checked against** the headline actually on screen, and abandoned if it
-    /// doesn't match or if two accounts tie. Naming the wrong account would be worse than
-    /// naming none, and this view must not quietly become a second definition of the rule.
+    /// Which account the headline quota came from — **asked**, not re-derived. The provider
+    /// picks it and says so on the snapshot; this view only looks the id up. It used to
+    /// recompute "lowest peak wins" here and cross-check the answer against the number on
+    /// screen, which made the drill-in a second definition of the rule: it excluded credits
+    /// windows where the provider does not, so the two could pick different accounts and the
+    /// only symptom was this sentence quietly going vague.
     private var headlineAccount: ProviderAccountUsage? {
-        let readings = accounts.compactMap { account in
-            accountPeak(account).map { (account: account, peak: $0) }
-        }
-        guard let best = readings.min(by: { $0.peak < $1.peak }),
-              let headline = nonCreditsWindows.compactMap({ usedPercent($0) }).max(),
-              abs(best.peak - headline) < 0.5,
-              readings.filter({ abs($0.peak - best.peak) < 0.5 }).count == 1
-        else { return nil }
-        return best.account
+        guard let id = snapshot.headlineAccountID else { return nil }
+        return accounts.first { $0.id == id }
     }
 
     /// An account's own utilization: the tightest of its non-credits windows.
