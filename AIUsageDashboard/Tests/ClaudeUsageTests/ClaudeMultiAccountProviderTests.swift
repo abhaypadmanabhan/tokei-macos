@@ -59,7 +59,7 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         try Data(#"{"oauthAccount":{"accountUuid":"\#(uuid)"}}"#.utf8).write(to: url)
     }
 
-    private func weeklyWindow(used: Double) -> QuotaWindow {
+    private func weeklyWindow(used: Double, confidence: MetricConfidence = .providerReported) -> QuotaWindow {
         QuotaWindow(
             providerID: .claudeCode,
             type: .weekly,
@@ -67,7 +67,7 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
             limit: 100,
             remaining: 100 - used,
             resetAt: Date().addingTimeInterval(86_400),
-            confidence: .providerReported,
+            confidence: confidence,
             source: "test"
         )
     }
@@ -136,6 +136,9 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
     /// is not a failure worth a user-visible warning — and the warning displaced the
     /// accurate "Local logs only; quotas unavailable" that should be there instead.
     func testAbsentLogDirectoryProducesNoDiscoveryWarning() async throws {
+        // Network usage off, which is the shipped default — so the only warning this path
+        // can legitimately produce is the "local logs only" fallback.
+        userDefaults.set(false, forKey: "claudeNetworkUsageEnabled")
         let missing = ClaudeAccount(
             configDirectory: home.appendingPathComponent(".claude-never-used", isDirectory: true),
             home: home
@@ -152,6 +155,10 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertFalse(
             snapshot.warnings.contains { $0.message.contains("Failed to discover Claude logs") },
             "an absent directory is not a discovery failure, got: \(snapshot.warnings.map(\.message))"
+        )
+        XCTAssertTrue(
+            snapshot.warnings.contains { $0.message == "Local logs only; quotas unavailable" },
+            "the accurate fallback must take the slot the bogus warning held"
         )
         XCTAssertEqual(snapshot.accounts?.first?.unreadableDirectories, [])
     }
@@ -181,6 +188,59 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         // ...and it is the account those very windows belong to, not just the lowest number.
         XCTAssertEqual(named?.quotaWindows.first { $0.type == .weekly }?.used,
                        snapshot.quotaWindows.first { $0.type == .weekly }?.used)
+    }
+
+    /// Only the headline account's windows reach the snapshot, so picking a stale account
+    /// because its number looks better makes the whole provider unroutable —
+    /// `RouteTargetPolicy` drops an `.estimated` reading, and the confirmed account that was
+    /// sitting right there never gets published. Confidence outranks headroom.
+    func testHeadlineAccountPrefersAConfirmedReadingOverABetterLookingStaleOne() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 10)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
+
+        let provider = ClaudeCodeProvider(
+            accounts: [base, one],
+            usageClientFactory: { account in
+                MockClaudeUsageClient(
+                    behavior: .success([
+                        account.isDefault
+                            ? self.weeklyWindow(used: 10, confidence: .estimated)
+                            : self.weeklyWindow(used: 50, confidence: .providerReported)
+                    ])
+                )
+            },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        let named = (snapshot.accounts ?? []).first { $0.id == snapshot.headlineAccountID }
+        XCTAssertEqual(named?.label, "account-1")
+        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 50)
+        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.confidence, .providerReported)
+    }
+
+    /// With nothing confirmed anywhere, the rule falls back to headroom rather than
+    /// reporting no quota at all — an estimate is still better than a blank gauge.
+    func testHeadlineAccountFallsBackToHeadroomWhenNothingIsConfirmed() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 10)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
+
+        let provider = ClaudeCodeProvider(
+            accounts: [base, one],
+            usageClientFactory: { account in
+                MockClaudeUsageClient(
+                    behavior: .success([
+                        self.weeklyWindow(used: account.isDefault ? 70 : 20, confidence: .estimated)
+                    ])
+                )
+            },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 20)
     }
 
     /// No usable reading anywhere means there is no headline account to name — the field

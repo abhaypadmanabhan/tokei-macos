@@ -29,9 +29,16 @@ extension ProviderDetailView {
     }
 
     private func quotaRow(_ window: QuotaWindow) -> some View {
-        let pct = usedPercent(window) ?? 0
-        let pace = MaxxerMath.pace(usedPercent: pct, windowType: window.type,
-                                   resetAt: window.resetAt, now: Date())
+        // A window can be present and still carry no `used` — `nonCreditsWindows` filters on
+        // confidence, not on having a number. Rendering `?? 0` printed a confident "0%" over
+        // an empty bar, which reads as measured headroom; every other unmeasured value on
+        // this surface shows an em dash.
+        let known = usedPercent(window)
+        let pct = known ?? 0
+        let pace = known.flatMap {
+            MaxxerMath.pace(usedPercent: $0, windowType: window.type,
+                            resetAt: window.resetAt, now: Date())
+        }
         let verdict = pace.map { PaceVerdict(pct: pct, elapsed: $0.elapsedFraction) }
 
         return HStack(spacing: 14) {
@@ -42,10 +49,11 @@ extension ProviderDetailView {
                 .truncationMode(.tail)
                 .frame(minWidth: 88, maxWidth: 140, alignment: .leading)
 
-            quotaFillBar(pct: pct, elapsedFraction: pace?.elapsedFraction, ahead: verdict == .ahead)
+            quotaFillBar(pct: known ?? 0, elapsedFraction: pace?.elapsedFraction,
+                         ahead: verdict == .ahead)
                 .frame(minWidth: 120, maxWidth: .infinity)
 
-            Text("\(Int(pct.rounded()))%")
+            Text(known.map { "\(Int($0.rounded()))%" } ?? "\u{2014}")
                 .font(.mono(size: 14, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
@@ -133,11 +141,16 @@ extension ProviderDetailView {
 
     private var todaySplitSegments: [(name: String, value: Int, shade: Color)] {
         let today = snapshot.todayUsage
+        // Every category `TokenUsage.totalTokens` counts, in one monotonic ink ramp. Reasoning
+        // was missing: it counts toward the total but had no segment, so on a provider that
+        // reports it (Codex) the bar hid that share and inflated the other four — they still
+        // summed to 100%, of a number that was not today's total.
         let defs: [(String, Int?, Color)] = [
             ("Input", today.inputTokens, PadzyTheme.ink2),
             ("Cache read", today.cacheReadTokens, PadzyTheme.ink3),
-            ("Cache write", today.cacheCreationTokens, PadzyTheme.ink5),
-            ("Output", today.outputTokens, Color(hex: "37373E")),
+            ("Cache write", today.cacheCreationTokens, PadzyTheme.ink4),
+            ("Reasoning", today.reasoningTokens, PadzyTheme.ink5),
+            ("Output", today.outputTokens, Color(hex: "37373E"))
         ]
         return defs.compactMap { name, value, shade in
             guard let value, value > 0 else { return nil }

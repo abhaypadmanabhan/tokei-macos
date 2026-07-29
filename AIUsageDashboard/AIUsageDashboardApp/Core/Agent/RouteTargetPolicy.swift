@@ -102,8 +102,14 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     /// Two, because "least utilized" needs something to be least of.
     public var minTrustedProviders: Int
 
+    /// Confidences a reading must carry before anything routes work on the strength of it.
+    /// Shared, because a provider that picks *which of its accounts* to publish as the
+    /// headline is making the same judgement one step earlier — and picking a stale
+    /// account there makes the whole provider unroutable here.
+    public static let defaultRoutableConfidences: Set<MetricConfidence> = [.exact, .providerReported]
+
     public init(
-        routableConfidences: Set<MetricConfidence> = [.exact, .providerReported],
+        routableConfidences: Set<MetricConfidence> = RouteTargetPolicy.defaultRoutableConfidences,
         maxRoutableAge: TimeInterval = 30 * 60,
         avoidThreshold: Double = 85,
         maxRouteTargetPercent: Double? = nil,

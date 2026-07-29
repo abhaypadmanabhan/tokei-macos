@@ -283,11 +283,24 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     private static func headlineAccount(
         from accountUsages: [ProviderAccountUsage]
     ) -> ProviderAccountUsage? {
-        accountUsages
-            .filter { usage in
-                usage.quotaWindows.contains { UtilizationEngine.usedPercent(from: $0) != nil }
-            }
-            .min { peakPercent($0.quotaWindows) < peakPercent($1.quotaWindows) }
+        let withReadings = accountUsages.filter { usage in
+            usage.quotaWindows.contains { UtilizationEngine.usedPercent(from: $0) != nil }
+        }
+        // Headroom decides *within* a confidence tier, never across it. Only this account's
+        // windows go on the snapshot, so choosing a stale 10% over a confirmed 50% does not
+        // merely mislabel the gauge — it publishes an unroutable reading and
+        // `RouteTargetPolicy` drops Claude entirely, while the account it could have used
+        // sat right there. A confirmed number is worth more than a better-looking one.
+        let trusted = withReadings.filter(hasRoutableReading)
+        let pool = trusted.isEmpty ? withReadings : trusted
+        return pool.min { peakPercent($0.quotaWindows) < peakPercent($1.quotaWindows) }
+    }
+
+    private static func hasRoutableReading(_ usage: ProviderAccountUsage) -> Bool {
+        usage.quotaWindows.contains { window in
+            UtilizationEngine.usedPercent(from: window) != nil
+                && RouteTargetPolicy.defaultRoutableConfidences.contains(window.confidence)
+        }
     }
 
     private static func peakPercent(_ windows: [QuotaWindow]) -> Double {
