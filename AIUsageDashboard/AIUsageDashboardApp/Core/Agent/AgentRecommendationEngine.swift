@@ -3,74 +3,57 @@ import Foundation
 /// Computes the agent routing hint (`AgentRecommendation`) from the utilization
 /// spine. Pure and clock-injected, so it is deterministic and unit-testable.
 ///
-/// This is the same *idea* as the human-facing "Route work here" chip
-/// (`MaxxerMath.routeTarget`, issue #37) — route to the least-utilized provider — but
-/// it is NOT a faithful port: the chip also requires a >=15-point spread between the
-/// tightest and least-filled provider before it suggests anything, while this engine
-/// uses only the issue's own flat 85%-avoid rule with no spread gate. `MaxxerMath`
-/// lives under `UI/MenuBar/` and isn't compiled into the Core framework, so it can't be
-/// called here regardless. A third, independent least-filled-provider heuristic also
-/// exists at `DashboardView.routeTargetProviderID` (no threshold at all).
-/// FOLLOW-UP: reconcile all three into one canonical policy once `MaxxerMath` moves
-/// into Core — that requires picking a single rule, not just deleting a duplicate.
+/// The decision itself is **not made here**. "Which provider should work go to" has
+/// exactly one implementation — `RouteTargetPolicy` in this same directory — and this
+/// engine is the machine-facing caller of it, using `RouteTargetPolicy.agent`
+/// (85% avoid line, no spread gate, no extra ceiling). The human-facing surfaces
+/// (`MaxxerMath.routeTarget` → the "route work here" chip, `OverviewView`'s headroom
+/// dot and `DashboardView`'s drill-in chip) call the same type with
+/// `RouteTargetPolicy.human`, which adds a ≥15-point spread gate and a stricter 70%
+/// ceiling so a chip does not nag over a 2-point difference. Same rule, two tunings —
+/// read `RouteTargetPolicy`'s doc comment for the rule and the invariants behind it.
+///
+/// What remains this engine's own job: turning that decision into the public
+/// `AgentRecommendation` schema and writing the human-readable `reason` string,
+/// including naming the Claude account a headline number came from so a reader knows
+/// which `CLAUDE_CONFIG_DIR` to export.
 public enum AgentRecommendationEngine {
-    /// At or above this utilization, a provider is one to avoid. The issue's own
-    /// steering guidance is "avoid providers above 85% utilization".
-    public static let avoidThreshold: Double = 85
+    /// The single policy this engine routes on. Exposed so callers and tests can read
+    /// the thresholds without duplicating them.
+    public static let policy: RouteTargetPolicy = .agent
 
     /// Build a recommendation from live utilizations, or `nil` when there is nothing
     /// worth saying (fewer than two readings and nothing to avoid).
     ///
-    /// - `routeTo` is the least-utilized provider, returned only when at least two
-    ///   providers reported usable quota and the least one is below the avoid
-    ///   threshold. No minimum spread is required (unlike the UI chip — see the type
-    ///   doc above), so this can suggest a target even when providers are close together.
-    /// - `avoid` lists every provider at/over the avoid threshold, tightest first.
+    /// - Parameters:
+    ///   - utilizations: every live reading across providers.
+    ///   - displayNames: provider id → human name, for the `reason` string.
+    ///   - accounts: per-provider account breakdown (multi-account Claude), used to
+    ///     name *which* account the headline reading came from. Absent or single-entry
+    ///     lists add nothing to the reason.
+    ///   - now: current instant, injected for determinism.
+    ///
+    /// Routing semantics — `routeTo` from trusted readings only, `avoid` from every
+    /// reading — live in `RouteTargetPolicy`.
     public static func recommend(
         from utilizations: [Utilization],
         displayNames: [ProviderID: String],
+        accounts: [ProviderID: [AgentAccount]] = [:],
         now: Date
     ) -> AgentRecommendation? {
-        // Peak (tightest) window per provider — the reading that governs routing.
-        let peakByProvider: [ProviderID: Utilization] = Dictionary(
-            grouping: utilizations, by: \.providerID
-        ).compactMapValues { $0.max(by: { $0.usedPercent < $1.usedPercent }) }
-
-        guard !peakByProvider.isEmpty else { return nil }
-
-        // Stable provider order for deterministic tie-breaks (first-seen wins).
-        let ordered = ProviderID.allCases.compactMap { id in peakByProvider[id].map { (id, $0) } }
-
-        let avoided = ordered
-            .filter { $0.1.usedPercent >= avoidThreshold }
-            .sorted { $0.1.usedPercent > $1.1.usedPercent }
-
-        let leastFilled = ordered.min { lhs, rhs in
-            lhs.1.usedPercent < rhs.1.usedPercent
-        }
-
-        // Suggest a target only with ≥2 readings and a genuinely-open least-filled one.
-        let routeTarget: (ProviderID, Utilization)?
-        if ordered.count >= 2,
-           let least = leastFilled,
-           least.1.usedPercent < avoidThreshold {
-            routeTarget = least
-        } else {
-            routeTarget = nil
-        }
-
-        if routeTarget == nil, avoided.isEmpty { return nil }
+        let decision = policy.evaluate(utilizations, now: now)
+        guard !decision.hasNothingToSay else { return nil }
 
         let reason = buildReason(
-            avoided: avoided,
-            routeTarget: routeTarget,
+            decision: decision,
             displayNames: displayNames,
+            accounts: accounts,
             now: now
         )
 
         return AgentRecommendation(
-            routeTo: routeTarget?.0.rawValue,
-            avoid: avoided.map { $0.0.rawValue },
+            routeTo: decision.routeTo?.providerID.rawValue,
+            avoid: decision.avoid.map(\.providerID.rawValue),
             reason: reason
         )
     }
@@ -78,15 +61,15 @@ public enum AgentRecommendationEngine {
     // MARK: - Reason string
 
     private static func buildReason(
-        avoided: [(ProviderID, Utilization)],
-        routeTarget: (ProviderID, Utilization)?,
+        decision: RouteDecision,
         displayNames: [ProviderID: String],
+        accounts: [ProviderID: [AgentAccount]],
         now: Date
     ) -> String {
         var clauses: [String] = []
 
-        for (id, util) in avoided {
-            let name = displayNames[id] ?? id.rawValue
+        for util in decision.avoid {
+            let name = displayName(util.providerID, displayNames)
             var clause = "\(name) \(util.window.rawValue) \(percent(util.usedPercent))% used"
             if let resetAt = util.resetAt, let delta = resetDelta(from: now, to: resetAt) {
                 clause += ", resets in \(delta)"
@@ -94,12 +77,71 @@ public enum AgentRecommendationEngine {
             clauses.append(clause)
         }
 
-        if let (id, util) = routeTarget {
-            let name = displayNames[id] ?? id.rawValue
-            clauses.append("route to \(name) (tightest window \(percent(util.usedPercent))%)")
+        for util in decision.excluded {
+            let name = displayName(util.providerID, displayNames)
+            clauses.append("\(name) excluded from routing (\(exclusionCause(util, now: now)))")
+        }
+
+        if let target = decision.routeTo {
+            let name = displayName(target.providerID, displayNames)
+            var clause = "route to \(name) (tightest window \(percent(target.usedPercent))%"
+            if let account = headlineAccount(for: target.providerID, accounts: accounts) {
+                clause += ", account \(account.label) — export CLAUDE_CONFIG_DIR=\(account.id)"
+            }
+            clause += ")"
+            clauses.append(clause)
         }
 
         return clauses.isEmpty ? "No provider is near its limit." : clauses.joined(separator: "; ")
+    }
+
+    /// The account a multi-account provider's headline number came from: the one with
+    /// the **most headroom** (lowest peak utilization) among accounts that reported a
+    /// usable window. This deliberately mirrors
+    /// `ClaudeCodeProvider.headlineQuotaWindows` — the provider picks the best account's
+    /// windows as its headline quota, so naming any other account here would point the
+    /// reader at a number that is not the one being recommended.
+    ///
+    /// `nil` for a single-account provider: with one account there is nothing to
+    /// disambiguate and `CLAUDE_CONFIG_DIR` is just the default.
+    private static func headlineAccount(
+        for providerID: ProviderID,
+        accounts: [ProviderID: [AgentAccount]]
+    ) -> AgentAccount? {
+        guard let providerAccounts = accounts[providerID], providerAccounts.count >= 2 else {
+            return nil
+        }
+        return providerAccounts
+            .filter { !$0.windows.isEmpty }
+            .min { peakPercent($0.windows) < peakPercent($1.windows) }
+    }
+
+    private static func peakPercent(_ windows: [AgentWindow]) -> Double {
+        windows.map(\.usedPercent).max() ?? 0
+    }
+
+    /// Why a provider was held back from routing. The two causes are distinct and a reader
+    /// needs to tell them apart: an unconfirmed number vs. a confirmed but outdated one.
+    /// Confidence wording matches the public `AgentWindow.confidence` vocabulary so the
+    /// reason string and the window a reader is looking at use the same words.
+    private static func exclusionCause(_ utilization: Utilization, now: Date) -> String {
+        switch utilization.confidence {
+        case .localParsed, .estimated:
+            return "local estimate, not a confirmed reading"
+        case .unavailable:
+            return "no reading available"
+        case .exact, .providerReported:
+            guard let observedAt = utilization.observedAt else { return "not a confirmed reading" }
+            let seconds = now.timeIntervalSince(observedAt)
+            // A future stamp is a clock problem, not an age. Saying "0s old" about a
+            // reading we just refused to route to would read as a contradiction.
+            guard seconds >= 0 else { return "reading is timestamped in the future" }
+            return "reading is \(AgentSnapshot.compactDuration(seconds)) old"
+        }
+    }
+
+    private static func displayName(_ id: ProviderID, _ names: [ProviderID: String]) -> String {
+        names[id] ?? id.rawValue
     }
 
     private static func percent(_ value: Double) -> Int { Int(value.rounded()) }

@@ -1,5 +1,10 @@
 import Foundation
 
+// See the note in MCPServer.swift: set only on this file's copy in the test bundle.
+#if TOKEI_CLI_TESTS
+import AIUsageDashboardCore
+#endif
+
 /// Typed, user-actionable failures for reading the snapshot. Staleness is NOT an
 /// error here — a stale snapshot reads successfully and is flagged; only a missing,
 /// unreadable, or malformed file fails.

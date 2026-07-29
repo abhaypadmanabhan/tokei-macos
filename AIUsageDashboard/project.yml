@@ -13,8 +13,8 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.7.1"
-    CURRENT_PROJECT_VERSION: "7"
+    MARKETING_VERSION: "0.8.0"
+    CURRENT_PROJECT_VERSION: "8"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
@@ -40,6 +40,13 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application: Abhay Padmanabhan (A47GG9FV27)"
           CODE_SIGN_STYLE: Manual
           DEVELOPMENT_TEAM: A47GG9FV27
+          # Must match AIUsageDashboardApp. Hardened runtime enables library
+          # validation, so the app can only load this framework if both carry the
+          # same Team ID and the same runtime flag. This framework shipped with
+          # the runtime flag even while this said NO, because the app's embed
+          # phase re-signs it with the app's options — stating it here makes the
+          # invariant explicit instead of a side effect of embedding.
+          ENABLE_HARDENED_RUNTIME: YES
     scheme:
       testTargets:
         - AIUsageDashboardCoreTests
@@ -93,11 +100,33 @@ targets:
       # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
       # run without pulling the whole app target into the test target.
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
+      # Same mechanism again, for the per-account chart palette: whether two accounts can
+      # ever render as the same colour AND the same dash is a pure function of the account
+      # index, and a chart whose series collide cannot answer the question it exists for.
+      # `PadzyTheme.swift` comes along because the palette names its neutral ink; both are
+      # token/logic files with no app-target dependencies.
+      - path: AIUsageDashboardApp/UI/Charts/AccountSeriesStyle.swift
+      - path: AIUsageDashboardApp/UI/Components/PadzyTheme.swift
+      # Same mechanism, for the `tokei` CLI/MCP surface (issue #59). Those files ship in
+      # the standalone `tokei` tool target, which does not link Core — so compile the
+      # PURE-LOGIC ones in here to get them under `-scheme AIUsageDashboardCore test`.
+      # The TOKEI_CLI_TESTS condition below flips on their `import AIUsageDashboardCore`,
+      # which the tool target must NOT have (it compiles AgentSnapshot.swift directly).
+      # main.swift and StatusCommand.swift stay out: they own process entry / stdout.
+      - path: TokeiCLI/MCPServer.swift
+      - path: TokeiCLI/SnapshotReader.swift
+      - path: TokeiCLI/StatusFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.CoreTests
+        # Only this bundle's copy of the TokeiCLI files imports the Core framework.
+        # Per-file COMPILER_FLAGS cannot do this — Xcode ignores them for Swift, which
+        # compiles a module in one invocation — so the condition is target-wide.
+        # NOT a signing setting: this block is disjoint from the Core/App/tokei
+        # settings: and configs: that the release-signing package owns.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) TOKEI_CLI_TESTS
   # Read-only agent CLI + stdio MCP server (issue #57). Standalone executable —
   # does NOT link the Core framework; it compiles in the shared public schema file
   # directly so it can decode the snapshot with no app-internal dependencies.

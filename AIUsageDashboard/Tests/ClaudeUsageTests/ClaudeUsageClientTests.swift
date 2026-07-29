@@ -136,6 +136,7 @@ final class DefaultClaudeUsageCredentialsReaderTests: XCTestCase {
 private final class RecordingKeychainReader: KeychainPasswordSpawning, @unchecked Sendable {
     private let payload: String?
     private(set) var callCount = 0
+    private(set) var requestedServices: [String] = []
 
     init(payload: String?) {
         self.payload = payload
@@ -143,7 +144,39 @@ private final class RecordingKeychainReader: KeychainPasswordSpawning, @unchecke
 
     func readPassword(service: String) -> String? {
         callCount += 1
+        requestedServices.append(service)
         return payload
+    }
+}
+
+/// Per-account credential reads. Each `CLAUDE_CONFIG_DIR` has its own Keychain item;
+/// reading the unsuffixed one for every account means only the default account is ever
+/// seen (issue: Tokei reported `claude_code` once, with no account field).
+final class ClaudeAccountCredentialsReaderTests: XCTestCase {
+    private let home = URL(fileURLWithPath: "/Users/abhayp", isDirectory: true)
+
+    func testReaderRequestsTheAccountsOwnKeychainService() async throws {
+        let account = ClaudeAccount(
+            configDirectory: home.appendingPathComponent(".claude-account-1"),
+            home: home
+        )
+        let spawner = RecordingKeychainReader(payload: #"{"claudeAiOauth":{"accessToken":"tok-1"}}"#)
+        let reader = DefaultClaudeUsageCredentialsReader(account: account, keychainReader: spawner)
+
+        let credentials = try await reader.readCredentials()
+
+        XCTAssertEqual(credentials.accessToken, "tok-1")
+        XCTAssertEqual(spawner.requestedServices, ["Claude Code-credentials-a337dfc1"])
+    }
+
+    func testDefaultAccountStillUsesTheUnsuffixedService() async throws {
+        let account = ClaudeAccount(configDirectory: home.appendingPathComponent(".claude"), home: home)
+        let spawner = RecordingKeychainReader(payload: #"{"claudeAiOauth":{"accessToken":"tok-0"}}"#)
+        let reader = DefaultClaudeUsageCredentialsReader(account: account, keychainReader: spawner)
+
+        _ = try await reader.readCredentials()
+
+        XCTAssertEqual(spawner.requestedServices, ["Claude Code-credentials"])
     }
 }
 
@@ -206,9 +239,11 @@ final class ClaudeUsageClientImplTests: XCTestCase {
 
         let staleWindows = try await client.fetchQuotaWindows()
 
-        XCTAssertEqual(MockClaudeURLProtocol.requests.count, 4)
+        // Was 4 requests / sleeps [30, 30]: the loop used to sleep its own 30s ceiling and
+        // retry twice against a `Retry-After: 120`. Honouring the header means one request.
+        XCTAssertEqual(MockClaudeURLProtocol.requests.count, 2)
         let recordedSleeps = await sleeper.intervals()
-        XCTAssertEqual(recordedSleeps, [30, 30])
+        XCTAssertEqual(recordedSleeps, [])
         XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
         XCTAssertEqual(staleWindows.count, 3)
         XCTAssertTrue(staleWindows.allSatisfy { $0.confidence == .estimated })
@@ -217,29 +252,130 @@ final class ClaudeUsageClientImplTests: XCTestCase {
         MockClaudeURLProtocol.responses = []
         let cooldownWindows = try await client.fetchQuotaWindows()
 
-        XCTAssertEqual(MockClaudeURLProtocol.requests.count, 4)
+        XCTAssertEqual(MockClaudeURLProtocol.requests.count, 2)
         XCTAssertEqual(cooldownWindows.count, 3)
         XCTAssertTrue(cooldownWindows.allSatisfy { $0.confidence == .estimated })
     }
 
-    func testCachedWindowsWhoseResetHasPassedAreDropped() async throws {
+    /// Staleness must be a *number*, not a suffix on a human-readable string. Agents
+    /// need to know how old a reading is; `"… (stale)"` can't be reasoned about and
+    /// `.estimated` conflates "old server number" with "fresh local estimate".
+    func testStaleWindowsCarryTheObservationTimeTheyWereFetchedAt() async throws {
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
+        ]
+        let client = makeClient(accessToken: "mock-access-token")
+        let fetchedAt = now.value
+        _ = try await client.fetchQuotaWindows()
+
+        now.value = now.value.addingTimeInterval((10 * 60) + 1)
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+        ]
+
+        let staleWindows = try await client.fetchQuotaWindows()
+
+        XCTAssertFalse(staleWindows.isEmpty)
+        XCTAssertTrue(
+            staleWindows.allSatisfy { $0.observedAt == fetchedAt },
+            "stale windows must report when they were actually observed"
+        )
+    }
+
+    /// A live reading is observed now — so age is computable for fresh data too, not
+    /// only for the stale path.
+    func testLiveWindowsCarryTheObservationTime() async throws {
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
+        ]
+        let client = makeClient(accessToken: "mock-access-token")
+
+        let windows = try await client.fetchQuotaWindows()
+
+        XCTAssertFalse(windows.isEmpty)
+        XCTAssertTrue(windows.allSatisfy { $0.observedAt == now.value })
+    }
+
+    /// Dropping expired windows is right, but doing it *silently* is directionally
+    /// biased: short windows expire first and short windows are the tight ones, so
+    /// every stale serve decays toward reporting only the loosest surviving number.
+    /// That is exactly how "session 2% / weekly 0%" became a bare "0%" on 2026-07-27.
+    /// A partial view of a provider is not a usable reading — report nothing instead.
+    func testPartiallyExpiredCacheReportsNothingRatherThanTheLoosestWindow() async throws {
         MockClaudeURLProtocol.responses = [
             .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
         ]
         let client = makeClient(accessToken: "mock-access-token")
         _ = try await client.fetchQuotaWindows()
 
+        // Past the session window's reset, still inside the weekly window's.
         now.value = JSONLDateParsing.iso8601("2026-07-09T02:00:00Z")!
         MockClaudeURLProtocol.responses = [
-            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "300"]),
-            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "300"]),
             .init(data: Data(), statusCode: 429, headers: ["Retry-After": "300"])
+        ]
+
+        do {
+            let windows = try await client.fetchQuotaWindows()
+            XCTFail("expected no reading, got \(windows.count) window(s): \(windows.map(\.type))")
+        } catch {
+            // Correct: no usable reading. The provider reports "unavailable" and the
+            // recommendation engine then refuses to route to it.
+        }
+    }
+
+    /// A `Retry-After` far beyond our own sleep ceiling means "stop", not "sleep 30s and
+    /// ask again". The old loop fired three requests at a server that had just asked for
+    /// two minutes, which extends the very cooldown it is reacting to.
+    func testLongRetryAfterStopsImmediatelyInsteadOfRetrying() async throws {
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
+        ]
+        let client = makeClient(accessToken: "mock-access-token")
+        _ = try await client.fetchQuotaWindows()
+        let requestsAfterWarmup = MockClaudeURLProtocol.requests.count
+
+        now.value = now.value.addingTimeInterval((10 * 60) + 1)
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "3537"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "3537"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "3537"])
+        ]
+
+        _ = try? await client.fetchQuotaWindows()
+
+        XCTAssertEqual(
+            MockClaudeURLProtocol.requests.count - requestsAfterWarmup, 1,
+            "a long Retry-After must produce exactly one request"
+        )
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertEqual(recordedSleeps, [], "must not sleep-and-retry against a long Retry-After")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
+    }
+
+    /// A short `Retry-After` is still worth waiting out in-process — the retry loop is
+    /// only wrong when the server asked for longer than we're willing to wait.
+    func testShortRetryAfterStillRetriesInProcess() async throws {
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
+        ]
+        let client = makeClient(accessToken: "mock-access-token")
+        _ = try await client.fetchQuotaWindows()
+        let requestsAfterWarmup = MockClaudeURLProtocol.requests.count
+
+        now.value = now.value.addingTimeInterval((10 * 60) + 1)
+        MockClaudeURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "5"]),
+            .init(data: Data(ClaudeFixtures.oauthUsageResponse.utf8), statusCode: 200)
         ]
 
         let windows = try await client.fetchQuotaWindows()
 
-        XCTAssertNil(windows.first { $0.type == .session })
-        XCTAssertEqual(windows.filter { $0.type == .weekly || $0.type == .perModel }.count, 2)
+        XCTAssertEqual(MockClaudeURLProtocol.requests.count - requestsAfterWarmup, 2)
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertEqual(recordedSleeps, [5])
+        XCTAssertTrue(windows.allSatisfy { $0.confidence == .providerReported })
     }
 
     private var cacheURL: URL {
@@ -421,7 +557,8 @@ private final class MockClaudeURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
-private actor MockClaudeUsageClient: ClaudeUsageClient {
+/// Shared with `ClaudeMultiAccountProviderTests` — internal, not private.
+actor MockClaudeUsageClient: ClaudeUsageClient {
     enum Behavior: Sendable {
         case success([QuotaWindow])
         case failure

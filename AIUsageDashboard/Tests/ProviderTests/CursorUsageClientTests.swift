@@ -93,11 +93,13 @@ final class CursorUsageSummaryTests: XCTestCase {
     }
 }
 
-final class CursorUsageClientImplTests: XCTestCase {
-    private var tempDirectory: URL!
-    private var session: URLSession!
-    private var now: CursorDateBox!
-    private var sleeper: CursorRecordingSleeper!
+/// Shared scaffolding for the `CursorUsageClientImpl` suites: a temp storage directory,
+/// a stubbed transport, a frozen clock, and a sleeper that records instead of sleeping.
+class CursorUsageClientTestCase: XCTestCase {
+    var tempDirectory: URL!
+    var session: URLSession!
+    fileprivate var now: CursorDateBox!
+    fileprivate var sleeper: CursorRecordingSleeper!
 
     override func setUp() {
         super.setUp()
@@ -120,6 +122,35 @@ final class CursorUsageClientImplTests: XCTestCase {
         super.tearDown()
     }
 
+    var cooldownURL: URL {
+        tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
+    }
+
+    func makeClient() -> CursorUsageClientImpl {
+        let nowBox = now!
+        let sleeper = sleeper!
+        return CursorUsageClientImpl(
+            urlSession: session,
+            cooldownURL: cooldownURL,
+            now: { nowBox.value },
+            sleep: { interval in await sleeper.sleep(interval) }
+        )
+    }
+
+    func makePerCookieClient() -> CursorUsageClientImpl {
+        let nowBox = now!
+        let sleeper = sleeper!
+        return CursorUsageClientImpl(
+            urlSession: session,
+            explicitCooldownURL: nil,
+            storageDirectory: tempDirectory,
+            now: { nowBox.value },
+            sleep: { interval in await sleeper.sleep(interval) }
+        )
+    }
+}
+
+final class CursorUsageClientImplTests: CursorUsageClientTestCase {
     func testCSVRequestUsesCookieAuthAndCorrectURL() async throws {
         MockCursorURLProtocol.responses = [
             .init(data: Data(CursorFixtures.usageEventsCSV.utf8), statusCode: 200)
@@ -170,11 +201,15 @@ final class CursorUsageClientImplTests: XCTestCase {
         XCTAssertEqual(MockCursorURLProtocol.requests.count, 2)
     }
 
+    /// A `Retry-After` we are willing to wait out is honoured verbatim and retried.
+    /// (Was `Retry-After: 120` with an expected `[30, 30]` sleep — that combination is
+    /// now an immediate give-up, covered by
+    /// `testRetryAfterLongerThanCeilingGivesUpImmediatelyWithoutSleeping`.)
     func testRepeated429PersistsCooldownThenFastFailsUntilElapsed() async throws {
         MockCursorURLProtocol.responses = [
-            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
-            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
-            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "10"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "10"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "10"])
         ]
         let client = makeClient()
 
@@ -182,14 +217,14 @@ final class CursorUsageClientImplTests: XCTestCase {
             _ = try await client.fetchUsageSummary(cookie: "c")
             XCTFail("expected rateLimited")
         } catch let CursorUsageError.rateLimited(retryAfter) {
-            XCTAssertEqual(retryAfter, 120)
+            XCTAssertEqual(retryAfter, 10)
         } catch {
             XCTFail("unexpected error: \(error)")
         }
 
         XCTAssertEqual(MockCursorURLProtocol.requests.count, 3)
         let recordedSleeps = await sleeper.intervals()
-        XCTAssertEqual(recordedSleeps, [30, 30])
+        XCTAssertEqual(recordedSleeps, [10, 10])
         XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
 
         MockCursorURLProtocol.responses = [
@@ -213,7 +248,6 @@ final class CursorUsageClientImplTests: XCTestCase {
         XCTAssertFalse(data.isEmpty)
         XCTAssertEqual(MockCursorURLProtocol.requests.count, 4)
     }
-
     func testPerCookieCooldownIsolation() async throws {
         MockCursorURLProtocol.responses = [
             .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
@@ -356,34 +390,88 @@ final class CursorUsageClientImplTests: XCTestCase {
         } catch CursorUsageError.cooldownActive {
             // Expected.
         }
+        // One request total: `Retry-After: 120` exceeds the sleep ceiling, so the first
+        // 429 gives up immediately, and the second call never leaves the cooldown gate.
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1)
+    }
+}
+
+/// The 429 handling `UsageClientPolicy` owns, exercised through the real client.
+final class CursorUsageClientRetryTests: CursorUsageClientTestCase {
+    /// Handoff P1: the client used to sleep its own 30s ceiling and then retry against an
+    /// arbitrarily long `Retry-After` — three requests into an endpoint that already said
+    /// "back off". One request, no sleep, and the cooldown is still recorded.
+    func testRetryAfterLongerThanCeilingGivesUpImmediatelyWithoutSleeping() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"]),
+            .init(data: Data(), statusCode: 429, headers: ["Retry-After": "120"])
+        ]
+        let client = makeClient()
+
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected rateLimited")
+        } catch let CursorUsageError.rateLimited(retryAfter) {
+            XCTAssertEqual(retryAfter, 120)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1, "must not retry past the sleep ceiling")
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertTrue(recordedSleeps.isEmpty, "must not sleep before giving up")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path), "cooldown is still recorded")
+
+        // And the recorded cooldown gates the next call.
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected cooldownActive")
+        } catch CursorUsageError.cooldownActive {
+            // Expected.
+        }
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1)
+    }
+
+    func test429WithoutRetryAfterStillRetriesUpToTheAttemptCeiling() async throws {
+        MockCursorURLProtocol.responses = [
+            .init(data: Data(), statusCode: 429),
+            .init(data: Data(), statusCode: 429),
+            .init(data: Data(), statusCode: 429)
+        ]
+        let client = makeClient()
+
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected rateLimited")
+        } catch let CursorUsageError.rateLimited(retryAfter) {
+            XCTAssertNil(retryAfter)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
         XCTAssertEqual(MockCursorURLProtocol.requests.count, 3)
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertEqual(recordedSleeps, [30, 30], "no Retry-After → default cooldown clamped to the ceiling")
     }
 
-    private var cooldownURL: URL {
-        tempDirectory.appendingPathComponent("cursor-usage-cooldown.json")
-    }
+    func test401SurfacesAsHTTPStatusWithoutRetryOrCooldown() async throws {
+        MockCursorURLProtocol.responses = [.init(data: Data(), statusCode: 401)]
+        let client = makeClient()
 
-    private func makeClient() -> CursorUsageClientImpl {
-        let nowBox = now!
-        let sleeper = sleeper!
-        return CursorUsageClientImpl(
-            urlSession: session,
-            cooldownURL: cooldownURL,
-            now: { nowBox.value },
-            sleep: { interval in await sleeper.sleep(interval) }
-        )
-    }
+        do {
+            _ = try await client.fetchUsageSummary(cookie: "c")
+            XCTFail("expected throw")
+        } catch let CursorUsageError.httpStatus(code) {
+            XCTAssertEqual(code, 401)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
 
-    private func makePerCookieClient() -> CursorUsageClientImpl {
-        let nowBox = now!
-        let sleeper = sleeper!
-        return CursorUsageClientImpl(
-            urlSession: session,
-            explicitCooldownURL: nil,
-            storageDirectory: tempDirectory,
-            now: { nowBox.value },
-            sleep: { interval in await sleeper.sleep(interval) }
-        )
+        XCTAssertEqual(MockCursorURLProtocol.requests.count, 1, "a rejected cookie is not retried")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cooldownURL.path))
+        let recordedSleeps = await sleeper.intervals()
+        XCTAssertTrue(recordedSleeps.isEmpty)
     }
 }
 

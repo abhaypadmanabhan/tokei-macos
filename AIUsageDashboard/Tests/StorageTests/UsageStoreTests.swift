@@ -77,6 +77,60 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.hourlyTotals?[hour], 42)
     }
 
+    /// The per-account series must survive persistence, or a dashboard hydrated from disk
+    /// would show "no per-account history" until the next live parse.
+    func testRoundTripPreservesPerAccountHistory() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let day = calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone, year: 2026, month: 7, day: 10
+        ))!
+        let snapshot = ProviderSnapshot(
+            providerID: .claudeCode,
+            displayName: "Claude Code",
+            authStatus: .authenticated,
+            todayUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
+            weekUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
+            accounts: [
+                ProviderAccountUsage(
+                    id: "/Users/test/.claude",
+                    label: "default",
+                    quotaWindows: [],
+                    todayUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
+                    dailyTotals: [day: 42],
+                    configDirectories: ["/Users/test/.claude", "/Users/test/.claude-account-2"],
+                    unreadableDirectories: ["/Users/test/.claude-account-2"]
+                )
+            ]
+        )
+
+        let store1 = UsageStore(directory: tempDirectory)
+        await store1.save(snapshot: snapshot)
+
+        let store2 = UsageStore(directory: tempDirectory)
+        let account = await store2.snapshot(providerID: .claudeCode)?.accounts?.first
+        XCTAssertEqual(account?.dailyTotals?[day], 42)
+        XCTAssertEqual(account?.configDirectories.count, 2)
+        XCTAssertEqual(account?.unreadableDirectories, ["/Users/test/.claude-account-2"])
+    }
+
+    /// An account written before per-account history existed has none of those keys. It must
+    /// still decode — the alternative is a user's whole cache being dropped on upgrade.
+    func testAnAccountWrittenBeforePerAccountHistoryStillDecodes() throws {
+        let legacy = """
+        {"id":"/Users/test/.claude","label":"default","quotaWindows":[],\
+        "todayUsage":{"inputTokens":42,"confidence":"localParsed"}}
+        """
+
+        let account = try JSONDecoder().decode(ProviderAccountUsage.self, from: Data(legacy.utf8))
+
+        XCTAssertEqual(account.label, "default")
+        XCTAssertEqual(account.todayUsage.inputTokens, 42)
+        XCTAssertNil(account.dailyTotals)
+        XCTAssertEqual(account.configDirectories, [])
+        XCTAssertEqual(account.unreadableDirectories, [])
+    }
+
     func testCorruptFileRecovery() async {
         let corruptURL = tempDirectory.appendingPathComponent("usage-store.json")
         try? "not valid json".write(to: corruptURL, atomically: true, encoding: .utf8)

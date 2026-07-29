@@ -128,29 +128,34 @@ public enum MaxxerMath {
 
     // MARK: - Route-here target (#37)
 
-    /// The provider worth routing new work to: the least-filled window, but only
-    /// when the suggestion is actually useful. `nil` (no chip) unless
-    /// - there are at least two live readings (routing implies a choice), AND
-    /// - the least-filled has genuine headroom (`usedPercent <= maxUsedPercent`), AND
-    /// - it is meaningfully emptier than the tightest (`spread >= minSpread`),
-    ///   so we never nudge toward something that's also nearly full.
+    /// The provider worth routing new work to — the human-facing side of the ONE
+    /// canonical rule in `RouteTargetPolicy` (Core). This is a thin delegation: every
+    /// threshold, the trust gate and the peak-then-gate ordering live there, so the
+    /// chip, the Overview headroom dot and the agent snapshot can never disagree
+    /// about what "route here" means again.
     ///
-    /// Deterministic: on a tie for least-filled the first-seen reading wins.
+    /// `.human` is the human tuning of that rule: at least two providers with a
+    /// *trusted* peak reading, a target with genuine headroom (≤70%), and a ≥15-point
+    /// spread from the tightest reading anywhere — so the chip never nags over a
+    /// 2-point difference. `nil` (no chip) whenever any of those fails, which now
+    /// includes "the emptiest-looking provider is only a stale `local_estimate`":
+    /// a stale 0% is absence of data, not free quota, and pointing a human at it is
+    /// the same bug `f725bac` fixed for agents.
+    ///
+    /// Deterministic: each provider is reduced to its tightest window and ties break
+    /// in stable `ProviderID` order, so the menu bar never flickers between equals.
+    ///
+    /// - Parameters:
+    ///   - utilizations: live readings; the caller filters hidden providers first.
+    ///   - policy: the tuning to apply. Defaults to `.human`; injectable for tests.
+    ///   - now: current instant — injected, never read from the wall clock here, so
+    ///     this file stays pure (the age half of the trust gate needs it).
     public static func routeTarget(
         in utilizations: [Utilization],
-        maxUsedPercent: Double = 70,
-        minSpread: Double = 15
+        policy: RouteTargetPolicy = .human,
+        now: Date
     ) -> Utilization? {
-        guard utilizations.count >= 2 else { return nil }
-
-        let least = utilizations.reduce(nil) { (current: Utilization?, candidate) in
-            guard let current else { return candidate }
-            return candidate.usedPercent < current.usedPercent ? candidate : current
-        }
-        guard let least, let tightest = tightestWindow(in: utilizations) else { return nil }
-        guard least.usedPercent <= maxUsedPercent,
-              tightest.usedPercent - least.usedPercent >= minSpread else { return nil }
-        return least
+        policy.routeTarget(in: utilizations, now: now)
     }
 
     // MARK: - Lifetime totals (#41)

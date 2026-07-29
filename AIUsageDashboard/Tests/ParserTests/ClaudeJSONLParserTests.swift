@@ -236,6 +236,191 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(second.lifetime.totalTokens, 45)
   }
 
+  /// One parser instance is shared by every Claude account, and `ClaudeCodeProvider`
+  /// calls `parse` once per account — so a call's source list is one account's slice of
+  /// the corpus, never all of it. Cache eviction must not treat "absent from this call"
+  /// as "gone", or each account's parse wipes the others' entries and every account
+  /// re-reads its whole corpus on every refresh (measured: 0 cache hits, ~600 MB
+  /// re-parsed every 2 s, one core pegged).
+  ///
+  /// The probe rewrites account A's log in place with the same byte count and the same
+  /// modification date, so the cache key is unchanged: a served-from-cache read still
+  /// reports the old total, while a re-parse would pick up the new one.
+  func testCacheSurvivesAnInterleavedParseOfAnotherAccount() async throws {
+    let parser = makeParser()
+    func line(id: String, output: Int) -> String {
+      #"{"message":{"id":"\#(id)","usage":{"input_tokens":0,"output_tokens":\#(output),"cache_read_input_tokens":0,"cache_creation_input_tokens":0}},"type":"assistant","timestamp":"2026-07-06T10:00:00.000Z"}"#
+    }
+
+    let accountA = writeFixture(line(id: "msg_a", output: 100), named: "account-a.jsonl")
+    let accountB = writeFixture(line(id: "msg_b", output: 200), named: "account-b.jsonl")
+    let sourceA = makeSourceWithModificationDate(url: accountA)
+    let modifiedAt = try XCTUnwrap(sourceA.lastModified)
+
+    let firstA = await parser.parse(logSources: [sourceA])
+    XCTAssertEqual(firstA.lifetime.totalTokens, 100)
+    // The other account's refresh: same parser, a disjoint source list.
+    let firstB = await parser.parse(logSources: [makeSourceWithModificationDate(url: accountB)])
+    XCTAssertEqual(firstB.lifetime.totalTokens, 200)
+
+    // Same length, same mtime — indistinguishable to the cache key, different if re-read.
+    let rewritten = line(id: "msg_a", output: 999)
+    XCTAssertEqual(rewritten.utf8.count, line(id: "msg_a", output: 100).utf8.count)
+    try rewritten.write(to: accountA, atomically: false, encoding: .utf8)
+    try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: accountA.path)
+
+    let reread = await parser.parse(logSources: [makeSourceWithModificationDate(url: accountA)])
+    XCTAssertEqual(
+      reread.lifetime.totalTokens, 100,
+      "account A's cache entry was evicted by account B's parse, forcing a full re-read"
+    )
+  }
+
+  /// A per-file aggregate is only safely additive across files if the files' dedupe keys
+  /// are disjoint. When one file is served from cache its whole aggregate is applied at
+  /// once, so an ID it shares with a file parsed earlier in the same call gets counted a
+  /// second time. Before the parse cache actually hit (50276d2) this was unreachable;
+  /// now it is the normal path, and token totals are the one number this app cannot get
+  /// wrong.
+  ///
+  /// Order matters: the *fresh* file has to come first. If the cached file leads, its IDs
+  /// are in `seenIDs` before the fresh parse starts and the fresh parse's own dedup
+  /// catches the duplicate.
+  func testCacheHitDoesNotDoubleCountAnIDAlreadySeenInAFreshFile() async {
+    let parser = makeParser()
+    let shared = ClaudeFixtures.usageLine(id: "msg_shared", output: 100)
+    let fileA = writeFixture([shared, ClaudeFixtures.usageLine(id: "msg_a", output: 7)]
+      .joined(separator: "\n"), named: "shared-a.jsonl")
+    let fileB = writeFixture([shared, ClaudeFixtures.usageLine(id: "msg_b", output: 30)]
+      .joined(separator: "\n"), named: "shared-b.jsonl")
+
+    // Warm the cache for A only, so the next call mixes a cache hit with a fresh parse.
+    let warm = await parser.parse(logSources: [makeSourceWithModificationDate(url: fileA)])
+    XCTAssertEqual(warm.lifetime.totalTokens, 107)
+
+    let mixed = await parser.parse(logSources: [
+      makeSourceWithModificationDate(url: fileB, sessionID: "s2"),  // fresh
+      makeSourceWithModificationDate(url: fileA, sessionID: "s1"),  // cache hit
+    ])
+
+    XCTAssertEqual(
+      mixed.lifetime.totalTokens, 137,
+      "msg_shared was counted twice: once by B's fresh parse, again inside A's cached aggregate"
+    )
+    XCTAssertEqual(mixed.today.totalTokens, 137)
+  }
+
+  /// The mirror of the above: a fresh parse dedups against the running `seenIDs`, so the
+  /// aggregate it caches is missing whatever an earlier file in that same call happened to
+  /// claim. That entry then under-reports for every later call it is served from cache in,
+  /// including calls the other file is not part of. A cached per-file aggregate has to
+  /// describe the file, not the order it was first seen in.
+  func testCachedAggregateIsIndependentOfWhichFileWasParsedFirst() async {
+    let parser = makeParser()
+    let shared = ClaudeFixtures.usageLine(id: "msg_shared", output: 100)
+    let fileA = writeFixture([shared, ClaudeFixtures.usageLine(id: "msg_a", output: 7)]
+      .joined(separator: "\n"), named: "order-a.jsonl")
+    let fileB = writeFixture([shared, ClaudeFixtures.usageLine(id: "msg_b", output: 30)]
+      .joined(separator: "\n"), named: "order-b.jsonl")
+
+    let both = await parser.parse(logSources: [
+      makeSourceWithModificationDate(url: fileA, sessionID: "s1"),
+      makeSourceWithModificationDate(url: fileB, sessionID: "s2"),
+    ])
+    XCTAssertEqual(both.lifetime.totalTokens, 137)
+
+    // B alone, entirely from cache. Its own content is msg_shared + msg_b = 130.
+    let bAlone = await parser.parse(logSources: [
+      makeSourceWithModificationDate(url: fileB, sessionID: "s2"),
+    ])
+    XCTAssertEqual(
+      bAlone.lifetime.totalTokens, 130,
+      "B's cached aggregate dropped msg_shared because A claimed it during the first call"
+    )
+  }
+
+  /// Resolving an overlap costs a re-read of the overlapping file, which would be a
+  /// regression if it happened on every refresh — on this machine's corpus the files that
+  /// share IDs are session forks totalling ~22 MB, and the refresh cadence is 2 s. The
+  /// resolved aggregate is therefore kept until the overlapping set itself changes.
+  ///
+  /// Same probe as the eviction test: rewrite the file in place at the same byte count and
+  /// modification date, so a re-read would show the new number and a served-from-cache
+  /// read would not.
+  func testOverlapCorrectionIsNotRecomputedOnEveryRefresh() async throws {
+    let parser = makeParser()
+    let shared = ClaudeFixtures.usageLine(id: "msg_shared", output: 100)
+    let aUnique = ClaudeFixtures.usageLine(id: "msg_a", output: 700)
+    let fileA = writeFixture([shared, aUnique].joined(separator: "\n"), named: "memo-a.jsonl")
+    let fileB = writeFixture(
+      [shared, ClaudeFixtures.usageLine(id: "msg_b", output: 30)].joined(separator: "\n"),
+      named: "memo-b.jsonl"
+    )
+    let sources = [
+      makeSourceWithModificationDate(url: fileB, sessionID: "s2"),
+      makeSourceWithModificationDate(url: fileA, sessionID: "s1"),
+    ]
+    let modifiedAt = try XCTUnwrap(sources[1].lastModified)
+
+    let first = await parser.parse(logSources: sources)
+    XCTAssertEqual(first.lifetime.totalTokens, 830)
+
+    let rewritten = [shared, ClaudeFixtures.usageLine(id: "msg_a", output: 999)]
+      .joined(separator: "\n")
+    XCTAssertEqual(rewritten.utf8.count, [shared, aUnique].joined(separator: "\n").utf8.count)
+    try rewritten.write(to: fileA, atomically: false, encoding: .utf8)
+    try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: fileA.path)
+
+    let second = await parser.parse(logSources: [
+      makeSourceWithModificationDate(url: fileB, sessionID: "s2"),
+      makeSourceWithModificationDate(url: fileA, sessionID: "s1"),
+    ])
+    XCTAssertEqual(
+      second.lifetime.totalTokens, 830,
+      "the overlapping file was re-read even though neither it nor the overlap changed"
+    )
+  }
+
+  /// A file can both overlap another and still be the one being written to — a forked
+  /// session keeps appending. Appending must not throw away the resolved aggregate and
+  /// send the whole file back through the parser.
+  func testAppendExtendsTheOverlapCorrectionInsteadOfDiscardingIt() async throws {
+    let parser = makeParser()
+    let shared = ClaudeFixtures.usageLine(id: "msg_shared", output: 100)
+    let aUnique = ClaudeFixtures.usageLine(id: "msg_a", output: 700)
+    let fileA = writeFixture([shared, aUnique].joined(separator: "\n"), named: "grow-a.jsonl")
+    let fileB = writeFixture(
+      [shared, ClaudeFixtures.usageLine(id: "msg_b", output: 30)].joined(separator: "\n"),
+      named: "grow-b.jsonl"
+    )
+    func sources() -> [LogSource] {
+      [
+        makeSourceWithModificationDate(url: fileB, sessionID: "s2"),
+        makeSourceWithModificationDate(url: fileA, sessionID: "s1"),
+      ]
+    }
+
+    let warm = await parser.parse(logSources: sources())
+    XCTAssertEqual(warm.lifetime.totalTokens, 830)
+
+    // Rewrite the already-parsed prefix at the same width *and* append: only a full
+    // re-read would pick the 999 up.
+    let poisoned = [shared, ClaudeFixtures.usageLine(id: "msg_a", output: 999)]
+      .joined(separator: "\n")
+    try poisoned.write(to: fileA, atomically: false, encoding: .utf8)
+    if let handle = try? FileHandle(forWritingTo: fileA) {
+      handle.seekToEndOfFile()
+      handle.write(Data("\n\(ClaudeFixtures.usageLine(id: "msg_c", output: 5))".utf8))
+      handle.closeFile()
+    }
+
+    let grown = await parser.parse(logSources: sources())
+    XCTAssertEqual(
+      grown.lifetime.totalTokens, 835,
+      "expected shared(100) + a(700, from cache) + b(30) + the appended c(5)"
+    )
+  }
+
   func testParseErrorWarningContainsFilenameNotFullPath() async throws {
     let parser = makeParser()
     let dirURL = tempDirectory.appendingPathComponent("notAFile.jsonl", isDirectory: true)

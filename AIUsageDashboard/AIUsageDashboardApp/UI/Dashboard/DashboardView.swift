@@ -21,36 +21,6 @@ struct DashboardView: View {
     /// action and the Settings pane.
     @State private var showingAddAgent = false
 
-    @State private var pulseOpacity: Double = 1.0
-    @State private var countdownTick = Date()
-    private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
-
-    private var isClaudeInstalled: Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let claudeDir = home.appendingPathComponent(".claude", isDirectory: true)
-        return FileManager.default.fileExists(atPath: claudeDir.path)
-    }
-
-    private var selectedSnapshot: ProviderSnapshot? {
-        viewModel.snapshot(for: viewModel.selectedProvider)
-    }
-
-    /// The visible, quota-bearing provider with the most headroom — the lowest
-    /// tightest-window used% (mirrors `OverviewView.headroomProviderID`). `nil`
-    /// unless at least two providers have a live window, so "route here" always
-    /// implies a real choice. Drives the drill-in's green route chip.
-    private var routeTargetProviderID: ProviderID? {
-        var tightestByProvider: [ProviderID: Double] = [:]
-        for util in viewModel.utilization {
-            tightestByProvider[util.providerID] = max(tightestByProvider[util.providerID] ?? 0, util.usedPercent)
-        }
-        let quotaBearing: [(id: ProviderID, pct: Double)] = ProviderID.allCases
-            .filter { !ProviderVisibility.isHidden($0) }
-            .compactMap { id in tightestByProvider[id].map { (id, $0) } }
-        guard quotaBearing.count >= 2 else { return nil }
-        return quotaBearing.min(by: { $0.pct < $1.pct })?.id
-    }
-
     /// First non-hidden provider in chip-strip order — the chip that down-arrow
     /// from a tab drills into, and the one left-arrow stops at.
     private var firstVisibleProvider: ProviderID? {
@@ -135,7 +105,7 @@ struct DashboardView: View {
             HairlineDivider()
 
             content
-            statusStrip
+            DashboardStatusStrip()
         }
         .background(PadzyTheme.ground)
         .focusable()
@@ -174,9 +144,6 @@ struct DashboardView: View {
             // Seed the canvas once so a brand-new user (no agents on disk) leads with
             // the + instead of a wall of empty provider rows; idempotent thereafter.
             AddAgentModel.seedOnFirstLaunchIfNeeded()
-        }
-        .onReceive(countdownTimer) { _ in
-            countdownTick = Date()
         }
         .task {
             viewModel.beginAutoSync()
@@ -285,7 +252,7 @@ struct DashboardView: View {
     private var drillInPane: some View {
         switch section {
         case .provider:
-            providerDetailPane
+            DashboardProviderPane(onEnableOnline: { openSettings() })
         case .overview, .value, .connections:
             EmptyView()
         }
@@ -340,230 +307,6 @@ struct DashboardView: View {
         return "\(homeTab.accessibilityName) / \(leaf)".uppercased()
     }
 
-    // MARK: 02 / USAGE
-
-    /// True when the selected provider has any real signal to render (tokens in
-    /// any window, an active quota, a cost, a plan/tier signal, or a daily-total
-    /// bonus stat like Cursor's accepted lines). Drives the empty state — a
-    /// provider that's merely `.planOnly` still has something honest to show.
-    private var selectedHasData: Bool {
-        guard let snapshot = selectedSnapshot else { return false }
-        let tokenTotals = [snapshot.todayUsage.totalTokens, snapshot.weekUsage.totalTokens,
-                           snapshot.monthUsage?.totalTokens, snapshot.lifetimeUsage?.totalTokens]
-            .compactMap { $0 }
-        if tokenTotals.contains(where: { $0 > 0 }) { return true }
-        if snapshot.quotaWindows.contains(where: { $0.confidence != .unavailable }) { return true }
-        if snapshot.costUsage?.amount != nil { return true }
-        if ProviderMetadata.planText(from: snapshot.warnings) != nil { return true }
-        if let totals = snapshot.dailyTotals, !totals.isEmpty { return true }
-        return false
-    }
-
-    /// Provider-detail surface: resolves to error → tailored empty (Claude not
-    /// installed) → loading → generic empty → loaded, in that precedence.
-    @ViewBuilder
-    private var providerDetailPane: some View {
-        if let errorMessage = viewModel.errorMessage {
-            SurfaceStateView(
-                header: "USAGE",
-                kind: .error(headline: "Sync failed", detail: errorMessage),
-                onRetry: { Task { await viewModel.refresh() } }
-            )
-        } else if viewModel.selectedProvider == .claudeCode && !isClaudeInstalled {
-            emptyState
-        } else if selectedSnapshot == nil && viewModel.isLoading {
-            SurfaceStateView(
-                header: "USAGE",
-                kind: .loading(message: "Reading local logs")
-            )
-        } else if !selectedHasData {
-            SurfaceStateView(
-                header: "USAGE",
-                kind: .empty(
-                    headline: "No usage data",
-                    hint: "No data yet at \(ProviderMetadata.localPaths(for: viewModel.selectedProvider).joined(separator: ", ")). Run it once, then use Sync Now below."
-                )
-            )
-        } else if let snapshot = selectedSnapshot {
-            // ONE unified drill-in (WP-5 P6) for BOTH full-metrics and plan-only
-            // providers — the plan-only branch now falls through here too. Analytics
-            // from the frozen §4 DashboardViewModel surface; value/route/plan from
-            // the Maxxer scorecard + provider metadata.
-            ProviderDetailView(
-                snapshot: snapshot,
-                trend: viewModel.trend(for: snapshot.providerID),
-                peakHour: viewModel.peakHour(for: snapshot.providerID),
-                lastSyncedAt: viewModel.lastSyncedAt,
-                value: MaxxerValueEngine.scorecard(
-                    snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
-                    planCosts: MaxxerPlanCostStore(),
-                    now: Date()
-                ).providers.first { $0.providerID == snapshot.providerID.rawValue },
-                isRouteTarget: routeTargetProviderID == snapshot.providerID,
-                planLabel: ProviderMetadata.planText(from: snapshot.warnings),
-                onEnableOnline: { openSettings() }
-            )
-        } else {
-            SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
-        }
-    }
-
-    // MARK: Status
-
-    /// Bottom status bar (mockup): a live sync dot, a relative "Synced …" line, the
-    /// today-usage confidence, the watched path, and a trailing "Sync now". Reflows
-    /// toward the 640pt minimum by dropping the confidence first, then the path — the
-    /// dot, the status line, and Sync now always stay so nothing critical clips.
-    private var statusStrip: some View {
-        VStack(spacing: 0) {
-            // Non-info warnings ride above the bar as their own hairline-bounded
-            // sub-banner (kept from the prior status strip).
-            if let warnings = selectedSnapshot?.warnings.filter({ $0.level != .info }), !warnings.isEmpty {
-                HairlineDivider()
-                HStack(spacing: 8) {
-                    Text("!!")
-                        .font(.mono(size: 10))
-                        .foregroundColor(PadzyTheme.accent)
-                    Text(warnings.map(\.message).joined(separator: "  ·  ").uppercased())
-                        .font(.mono(size: 10))
-                        .foregroundColor(PadzyTheme.ink4)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer()
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 8)
-                .background(PadzyTheme.statusBar)
-            }
-            HairlineDivider()
-            ViewThatFits(in: .horizontal) {
-                statusRow(showConfidence: true, showPath: true)
-                statusRow(showConfidence: false, showPath: true)
-                statusRow(showConfidence: false, showPath: false)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 8)
-            .background(PadzyTheme.statusBar)
-        }
-    }
-
-    /// One status-bar layout. `showConfidence` / `showPath` are toggled by the
-    /// `ViewThatFits` reflow above; the dot, the "Synced …" line, and Sync now are
-    /// always present. The path is the flexible, middle-truncating segment.
-    private func statusRow(showConfidence: Bool, showPath: Bool) -> some View {
-        HStack(spacing: 10) {
-            statusDot
-
-            Text(syncStatusText)
-                .font(.sans(size: 11.5))
-                .foregroundColor(PadzyTheme.ink3)
-                .lineLimit(1)
-                .fixedSize()
-
-            if showConfidence, let confidence = confidenceLabel {
-                Text(confidence)
-                    .font(.sans(size: 11.5))
-                    .foregroundColor(PadzyTheme.ink4)
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-
-            if showPath, let path = watchedPath {
-                Text(path)
-                    .font(.mono(size: 11))
-                    .foregroundColor(PadzyTheme.ink5)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer(minLength: 8)
-
-            syncButton
-        }
-    }
-
-    /// 6px status dot: warn + pulsing while a sync is in flight, else a steady good.
-    /// The pulse is gated on Reduce Motion (static full opacity when it is set).
-    private var statusDot: some View {
-        Circle()
-            .fill(viewModel.isLoading ? PadzyTheme.warn : PadzyTheme.good)
-            .frame(width: 6, height: 6)
-            .opacity(viewModel.isLoading ? pulseOpacity : 1)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                    pulseOpacity = 0.2
-                }
-            }
-            .accessibilityHidden(true)
-    }
-
-    private var syncButton: some View {
-        Button(action: { Task { await viewModel.refresh() } }) {
-            Text("Sync now")
-                .font(.sans(size: 11.5, weight: .semibold))
-                .foregroundColor(viewModel.isLoading ? PadzyTheme.ink5 : PadzyTheme.accent)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .keyboardShortcut("r", modifiers: .command)
-        .disabled(viewModel.isLoading)
-        .accessibilityLabel("Sync now")
-    }
-
-    /// "Syncing…" while a refresh is in flight, else "Synced <relative>" (or a
-    /// first-run "Not synced yet").
-    private var syncStatusText: String {
-        if viewModel.isLoading { return "Syncing…" }
-        guard let syncedRelative else { return "Not synced yet" }
-        return "Synced \(syncedRelative)"
-    }
-
-    /// Relative age of the last sync — "just now", "3m ago", "2h ago", "1d ago".
-    /// `nil` before the first sync. Recomputed each second via `countdownTick`.
-    private var syncedRelative: String? {
-        _ = countdownTick
-        guard let last = viewModel.lastSyncedAt else { return nil }
-        let seconds = max(0, Int(Date().timeIntervalSince(last)))
-        if seconds < 5 { return "just now" }
-        if seconds < 60 { return "\(seconds)s ago" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m ago" }
-        let hours = minutes / 60
-        if hours < 24 { return "\(hours)h ago" }
-        return "\(hours / 24)d ago"
-    }
-
-    /// Today-usage confidence for the selected provider, sentence-case (subtle, per
-    /// the mockup — no shouting REPORTED/ESTIMATED chip on this surface).
-    private var confidenceLabel: String? {
-        selectedSnapshot?.todayUsage.confidence.displayName
-    }
-
-    /// The first local path Tokei watches for the selected provider.
-    private var watchedPath: String? {
-        ProviderMetadata.localPaths(for: viewModel.selectedProvider).first
-    }
-
-    // MARK: Empty state
-
-    private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Usage")
-            Text("NO CLAUDE CODE DIRECTORY DETECTED")
-                .font(.display(size: 18, weight: .black))
-                .foregroundColor(PadzyTheme.ink)
-            Text("Expected location: ~/.claude")
-                .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.ink)
-            Text("Install Claude Code and run it once in your terminal to initialize session logs.")
-                .font(.system(size: 12))
-                .foregroundColor(PadzyTheme.muted)
-            Spacer()
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 }
 
 // MARK: - Previews

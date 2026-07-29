@@ -1,5 +1,15 @@
 import Foundation
 
+// The `tokei` target compiles Core/Agent/AgentSnapshot.swift directly and does NOT link
+// the Core framework (it must stay standalone). The AIUsageDashboardCoreTests bundle
+// compiles this file too, but gets the same shapes from the framework — so the import is
+// gated on a flag set only on that bundle's copy (see project.yml `sources`). Do not
+// switch this to `canImport`: the framework is on the tool target's implicit search path
+// whenever it happens to have been built, which would make the tool link Core sometimes.
+#if TOKEI_CLI_TESTS
+import AIUsageDashboardCore
+#endif
+
 /// Minimal stdio MCP server (issue #57). Speaks newline-delimited JSON-RPC 2.0 over
 /// stdin/stdout — the stdio transport every major client supports without caveats.
 ///
@@ -17,14 +27,26 @@ struct MCPServer {
 
     let reader: SnapshotReader
     let version: String
+    /// Every protocol frame is written here. Defaults to stdout; tests inject a capture
+    /// so the *framing* (JSON-RPC envelope + the newline delimiter) is asserted rather
+    /// than re-implemented. `version` has no default because `TokeiCLI.version` lives in
+    /// main.swift, which is deliberately excluded from the test bundle.
+    let output: (Data) -> Void
 
-    init(reader: SnapshotReader = SnapshotReader(), version: String = TokeiCLI.version) {
+    init(
+        reader: SnapshotReader = SnapshotReader(),
+        version: String,
+        output: @escaping (Data) -> Void = { FileHandle.standardOutput.write($0) }
+    ) {
         self.reader = reader
         self.version = version
+        self.output = output
     }
 
-    func run() {
-        while let line = readLine(strippingNewline: true) {
+    /// - Parameter nextLine: the transport. Defaults to stdin; injected in tests so the
+    ///   read loop itself (blank-line skipping, one frame per message) is covered.
+    func run(nextLine: () -> String? = { readLine(strippingNewline: true) }) {
+        while let line = nextLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
             handle(line: trimmed)
@@ -33,7 +55,7 @@ struct MCPServer {
 
     // MARK: - Dispatch
 
-    private func handle(line: String) {
+    func handle(line: String) {
         guard
             let data = line.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -109,6 +131,16 @@ struct MCPServer {
         least-utilized one that reported real quota.
         • `confidence: official` is provider-reported. Never treat `local_estimate` \
         or `unavailable` as a hard limit — they are floors, not ceilings.
+        • A low number you do not trust is NOT free capacity. A stale or estimated 0% \
+        means "no reading", not "wide open" — absence of data is not headroom.
+        • `observedAt` on a window is when that reading was taken. The top-level \
+        `stale` flag is a different thing: it only says how long ago Tokei wrote the \
+        file, so `stale: false` can still contain hour-old numbers. Judge freshness \
+        per window.
+        • `accounts` (Claude Code) lists each signed-in account separately. The \
+        provider's own `windows` show the account with the most headroom and \
+        `tokensToday` is the sum across accounts; use `accounts[].id` as \
+        `CLAUDE_CONFIG_DIR` to target a specific one.
         • If a response is prefixed with a stale warning, Tokei may not be running. \
         Say so instead of presenting the numbers as current.
 
@@ -220,6 +252,6 @@ struct MCPServer {
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         var line = data
         line.append(0x0A) // newline-delimited transport
-        FileHandle.standardOutput.write(line)
+        output(line)
     }
 }

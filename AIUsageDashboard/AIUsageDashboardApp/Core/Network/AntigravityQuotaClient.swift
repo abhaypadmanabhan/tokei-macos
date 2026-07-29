@@ -123,7 +123,13 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AntigravityQuotaError.httpStatus(httpResponse.statusCode)
         }
-        let windows = try Self.decodeQuotaWindows(data, providerID: .antigravity)
+        // Stamp the observation time here rather than in `decodeQuotaWindows`, which is a
+        // pure decoder with no clock. A window with no `observedAt` reads as "age unknown".
+        let observedAt = now()
+        let windows = UsageClientPolicy.observed(
+            try Self.decodeQuotaWindows(data, providerID: .antigravity),
+            at: observedAt
+        )
         saveToCache(data)
         return windows
     }
@@ -148,48 +154,34 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             return nil
         }
 
+        // Same ceiling as every other client. A week-old reading was still being served
+        // here after Claude's dropped to two hours, and `RouteTargetPolicy` builds `avoid`
+        // from untrusted readings too — so a stale Antigravity number could still steer
+        // work days after its fetches started failing.
         let age = now().timeIntervalSince(cached.timestamp)
-        guard age >= 0 && age <= 7 * 24 * 3600 else {
+        guard age >= 0 && age <= UsageClientPolicy.maxStaleInterval else {
             return nil
         }
 
-        guard let payload = try? JSONDecoder().decode(QuotaSummaryPayload.self, from: cached.rawPayload) else {
+        // Same decode as the live path — the cached bytes are the live payload verbatim,
+        // so re-deriving the window construction here only invited the two to drift.
+        guard let decoded = try? Self.decodeQuotaWindows(cached.rawPayload, providerID: .antigravity) else {
             return nil
         }
 
         let currentDate = now()
-        let windows = payload.response.groups.flatMap { group in
-            group.buckets.compactMap { bucket -> QuotaWindow? in
-                guard let type = Self.quotaWindowType(from: bucket.window),
-                      let resetAt = JSONLDateParsing.standard.date(from: bucket.resetTime) else {
-                    return nil
-                }
-
-                // Drop individual cached buckets whose resetTime has already passed.
-                guard resetAt > currentDate else {
-                    return nil
-                }
-
-                let remainingFraction = min(1, max(0, bucket.remainingFraction))
-                return QuotaWindow(
-                    providerID: .antigravity,
-                    type: type,
-                    used: round((1 - remainingFraction) * 100),
-                    limit: 100,
-                    remaining: round(remainingFraction * 100),
-                    resetAt: resetAt,
-                    confidence: .estimated,
-                    source: "antigravity-local-rpc (stale)",
-                    label: group.displayName,
-                    bucketKey: bucket.bucketId
-                )
-            }
+        // Drop individual cached buckets whose resetTime has already passed.
+        let live = decoded.filter { window in
+            guard let resetAt = window.resetAt else { return false }
+            return resetAt > currentDate
         }
 
-        guard !windows.isEmpty else {
+        guard !live.isEmpty else {
             return nil
         }
-        return windows
+        // Staleness is `observedAt` + `.estimated` confidence, not a `" (stale)"` suffix
+        // glued onto `source`: consumers can do date arithmetic on the former only.
+        return UsageClientPolicy.replayedFromCache(live, observedAt: cached.timestamp)
     }
 
     static func decodeQuotaWindows(_ data: Data, providerID: ProviderID) throws -> [QuotaWindow] {

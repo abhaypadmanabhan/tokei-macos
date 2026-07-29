@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public protocol ClaudeUsageClient: Sendable {
     func fetchQuotaWindows() async throws -> [QuotaWindow]
@@ -115,7 +116,19 @@ public struct SecurityCLIKeychainReader: KeychainPasswordSpawning {
 public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading {
     private let credentialsURL: URL
     private let keychainReader: KeychainPasswordSpawning
-    private static let keychainService = "Claude Code-credentials"
+    private let keychainService: String
+
+    /// Reads the credentials belonging to one specific account. Each `CLAUDE_CONFIG_DIR`
+    /// has its own Keychain item and its own `.credentials.json` — see `ClaudeAccount`.
+    public init(
+        account: ClaudeAccount,
+        keychainReader: KeychainPasswordSpawning = SecurityCLIKeychainReader()
+    ) {
+        self.credentialsURL = account.configDirectory
+            .appendingPathComponent(".credentials.json", isDirectory: false)
+        self.keychainService = account.keychainService
+        self.keychainReader = keychainReader
+    }
 
     public init(
         credentialsURL: URL? = nil,
@@ -123,6 +136,7 @@ public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading
     ) {
         self.credentialsURL = credentialsURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/.credentials.json")
+        self.keychainService = ClaudeAccount.baseKeychainService
         self.keychainReader = keychainReader
     }
 
@@ -145,7 +159,7 @@ public struct DefaultClaudeUsageCredentialsReader: ClaudeUsageCredentialsReading
         //    cooperative pool — otherwise a hung `security` parks a cooperative thread and can
         //    starve unrelated async work under concurrent syncs.
         let reader = keychainReader
-        let service = Self.keychainService
+        let service = keychainService
         let raw = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             DispatchQueue.global(qos: .utility).async {
                 continuation.resume(returning: reader.readPassword(service: service))
@@ -235,6 +249,27 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     private let cooldownStore: CooldownStore
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (TimeInterval) async -> Void
+
+    /// A client bound to one Claude account. Cache and cooldown files are keyed by account
+    /// so two accounts can't overwrite each other's readings (which would make whichever
+    /// synced last stand in for both).
+    public init(
+        account: ClaudeAccount,
+        urlSession: URLSession = .shared,
+        keychainReader: KeychainPasswordSpawning = SecurityCLIKeychainReader(),
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.init(
+            urlSession: urlSession,
+            credentialsReader: DefaultClaudeUsageCredentialsReader(
+                account: account,
+                keychainReader: keychainReader
+            ),
+            cacheURL: Self.defaultStorageURL(filename: "claude-usage-cache\(account.storageKey).json"),
+            cooldownURL: Self.defaultStorageURL(filename: "claude-usage-cooldown\(account.storageKey).json"),
+            now: now
+        )
+    }
 
     public init(
         urlSession: URLSession = .shared,
@@ -339,16 +374,32 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
 
             switch httpResponse.statusCode {
             case 200..<300:
+                // Stamp the observation time here rather than in `decodeQuotaWindows`, which
+                // is a pure decoder with no clock.
+                let observedAt = now()
                 return try Self.decodeQuotaWindows(data, providerID: .claudeCode)
+                    .map { $0.withObservedAt(observedAt) }
             case 401:
+                Self.logger.warning("oauth usage rejected our credentials (401)")
                 throw ClaudeUsageError.unauthorized
             case 429:
                 let retryAfter = cooldownStore.retryAfter(from: httpResponse)
                 lastRetryAfter = retryAfter
+                Self.logger.warning(
+                    "oauth usage rate limited (429), retry-after \(retryAfter.map { String(Int($0)) } ?? "unset", privacy: .public)s, attempt \(attempt, privacy: .public)"
+                )
+                // The server asked for longer than we are willing to wait in-process. Sleeping
+                // our 30s ceiling and asking again just hammers an endpoint that already said
+                // "back off", which can deepen or extend the very cooldown we're reacting to.
+                // Stop now; the caller records the cooldown and serves cache instead.
+                if let retryAfter, retryAfter > Self.maxRetrySleepInterval {
+                    throw ClaudeUsageError.rateLimited(retryAfter: retryAfter)
+                }
                 if attempt < Self.maxAttempts {
                     await sleep(min(retryAfter ?? cooldownStore.defaultCooldownInterval, Self.maxRetrySleepInterval))
                 }
             default:
+                Self.logger.warning("oauth usage returned HTTP \(httpResponse.statusCode, privacy: .public)")
                 throw ClaudeUsageError.httpStatus(httpResponse.statusCode)
             }
         }
@@ -372,13 +423,25 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             return nil
         }
 
-        let windows = cache.windows.compactMap { window -> QuotaWindow? in
-            if let resetAt = window.resetAt, resetAt <= referenceDate {
-                return nil
-            }
-            return stale ? Self.staleWindow(from: window) : window
+        let survivors = cache.windows.filter { window in
+            guard let resetAt = window.resetAt else { return true }
+            return resetAt > referenceDate
         }
-        return windows.isEmpty ? nil : windows
+
+        // Refuse a partially-expired cache outright. Dropping expired windows is correct in
+        // isolation, but serving what's left is directionally biased: short windows expire
+        // first and short windows are the *tight* ones, so the surviving subset always
+        // flatters the provider. On 2026-07-27 that turned a cached "session 2% / weekly 0%"
+        // into a bare "0%" — which the recommendation engine then read as free capacity.
+        // Half a reading is not a reading; report nothing and let the caller say "unavailable".
+        guard !survivors.isEmpty, survivors.count == cache.windows.count else { return nil }
+
+        // The cache's own `fetchedAt` is the truth about when these numbers were observed,
+        // regardless of what the persisted window says.
+        return survivors.map { window in
+            let observed = window.withObservedAt(cache.fetchedAt)
+            return stale ? Self.staleWindow(from: observed) : observed
+        }
     }
 
     private func persistCache(_ windows: [QuotaWindow], fetchedAt: Date) throws {
@@ -483,7 +546,10 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             confidence: .estimated,
             source: window.source.contains("(stale)") ? window.source : "\(window.source) (stale)",
             label: window.label,
-            bucketKey: window.bucketKey
+            bucketKey: window.bucketKey,
+            // Preserved deliberately: the `(stale)` suffix is now cosmetic, and
+            // `observedAt` is the field consumers should reason about.
+            observedAt: window.observedAt
         )
     }
 
@@ -495,11 +561,16 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             .appendingPathComponent(filename)
     }
 
+    private static let logger = Logger(subsystem: "ai.padzy.tokei", category: "ClaudeUsageClient")
+
     private static let endpointURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private static let source = "api.anthropic.com/api/oauth/usage"
     private static let maxAttempts = 3
     private static let freshCacheInterval: TimeInterval = 10 * 60
-    private static let maxStaleInterval: TimeInterval = 7 * 24 * 60 * 60
+    /// Ceiling on how old a cached reading may be and still be served at all — shared with
+    /// every other usage client, because a week-old Antigravity number was no more useful
+    /// than a week-old Claude one.
+    private static let maxStaleInterval: TimeInterval = UsageClientPolicy.maxStaleInterval
     private static let maxRetrySleepInterval: TimeInterval = 30
 }
 

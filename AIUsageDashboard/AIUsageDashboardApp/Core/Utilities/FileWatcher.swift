@@ -2,14 +2,17 @@ import Foundation
 
 public actor FileWatcher {
     public static let shared = FileWatcher()
-    public static let defaultWatchPaths: [URL] = [
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects", isDirectory: true),
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/sessions", isDirectory: true),
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cline/data/sessions", isDirectory: true)
-    ]
+    public static let defaultWatchPaths: [URL] =
+        // One per Claude *config directory* — watching only `~/.claude/projects` meant edits
+        // in the other accounts' logs never triggered a refresh. `flatMap` because accounts
+        // are deduplicated by identity now, so one account can own several directories and
+        // every one of them still has to be watched.
+        ClaudeAccount.discover().flatMap(\.projectsDirectories) + [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex/sessions", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cline/data/sessions", isDirectory: true)
+        ]
     public static let defaultWatchPath: URL = defaultWatchPaths[0]
 
     public struct Event: Sendable, Equatable {

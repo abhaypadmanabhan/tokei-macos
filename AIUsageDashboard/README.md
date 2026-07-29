@@ -62,6 +62,46 @@ cd AIUsageDashboard
 xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test
 ```
 
+## Multiple Claude Code accounts
+
+Claude Code supports several accounts on one Mac by pointing `CLAUDE_CONFIG_DIR` at
+different directories. Tokei discovers and reports all of them — no configuration needed.
+
+**If you are setting this up, read `docs/09-multi-account.md`** — it is the user-facing
+guide: what discovery can and cannot see, how to split two logins into two tracked
+accounts, and how to read the numbers once you have several. The notes below are the
+engineering detail behind it.
+
+- **Discovery:** the default `~/.claude`, plus any sibling `~/.claude-*` directory that
+  actually contains a `projects/` folder. The `projects/` requirement is what separates a
+  real account from unrelated dotfiles — `~/.claude-worktrees` is a scratch area, not an
+  account, and is not counted as one. Directories are then grouped by the Anthropic
+  identity they are signed into (`oauthAccount.accountUuid`), so two directories on the
+  same account collapse to **one** account that lists both paths.
+- **What discovery cannot see:** two Anthropic logins used one at a time out of the *same*
+  directory. Logging out and back in leaves no per-identity trace on disk, so there is
+  nothing to read and nothing to detect — they are one account as far as Tokei is
+  concerned, and their usage is added together. The only fix is to give each account its
+  own directory (`docs/09-multi-account.md` §4). The app says this in the Claude Code
+  view rather than claiming a detection it cannot perform.
+- **Credentials:** each config directory has its own Keychain item. The default directory
+  uses the bare service name; every other one uses
+  `Claude Code-credentials-<first 8 hex of SHA-256 of the directory path>`. Tokei reads
+  those items; it never writes or refreshes them.
+- **How the numbers combine:** `tokensToday` is the **sum** across accounts. The headline
+  quota is the account with the **most headroom** — you can send work to whichever account
+  you like, so available capacity is the best account's, not an average of accounts that
+  don't individually exist. An account with no usable reading is skipped, never counted
+  as 0%.
+- **Per-account detail** is preserved: the dashboard labels each account (`default`,
+  `account-2`, …), and `tokei status --json` / the MCP `get_usage` tool expose an
+  `accounts[]` array. `accounts[].id` is the directory path — that is exactly what you set
+  `CLAUDE_CONFIG_DIR` to in order to target that account.
+
+If an account's OAuth token has expired, Tokei reports it rather than refreshing it —
+refreshing would race the Claude CLI's own token rotation. Run
+`CLAUDE_CONFIG_DIR=~/.claude-account-2 claude` once to let the CLI rotate it.
+
 ## Enable Gemini (optional)
 
 Gemini quota tracking is powered by the official [Google Gemini CLI](https://github.com/google-gemini/gemini-cli). Tokei reads the OAuth credentials that the CLI writes to `~/.gemini/oauth_creds.json`; it never writes that file or stores tokens anywhere else.
@@ -85,7 +125,18 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
 - **Persistence**: `~/Library/Application Support/AIUsageDashboard/usage-store.json` (snapshots + per-day rollups that survive log rotation).
 - **Quota notifications**: threshold engine fires at 80% and 95%, no-spam re-arm logic after reset or percent drop, master toggle in Settings, lazy authorization.
 - **Cursor** real token usage + live quota (opt-in). With `cursorNetworkUsageEnabled` on, Tokei reads the Cursor web dashboard the way the dashboard itself does — `cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens` for per-event token usage (today/week/month with input/cache/output split + daily totals) and `cursor.com/api/usage-summary` for plan utilisation %, authenticating with the WorkOS session cookie (userId from the JWT `sub`; token never logged or persisted). Verified live: today 1.38M tokens, quota 7% "Pro (active)". Toggle off (or any network failure) falls back to the offline `state.vscdb` code-line read, no crash.
-- 67 unit tests green, incl. real-logs smoke tests (skip on machines without logs).
+- **Antigravity** offline plan + credits, with opt-in live quota. Tokei reads
+  `~/Library/Application Support/Antigravity/User/globalStorage/state.vscdb` with a
+  zero-dependency `MiniProtobufReader` and reports the plan name and available model
+  credits as informational lines on the provider (real local numbers, not a fabricated
+  gauge). Model quota — the per-model weekly / 5-hour buckets — is *not* written to local
+  storage, so with `antigravityOnlineQuotaEnabled` on Tokei discovers the running app's
+  **local RPC endpoint** (loopback port + CSRF token, never a Google cloud call) and
+  reads those buckets as `.estimated`-confidence windows. Off, or when the app isn't
+  running, Tokei says so instead of showing a gauge. Antigravity exposes no local
+  per-message log, so token counts stay honestly `unavailable`.
+- 67 unit tests green at MVP (507 today), incl. real-logs smoke tests (skip on machines
+  without logs).
 - **Value surface (#23) + lifetime (#41)** (2026-07-19): the "am I using the tokens I pay
   for" pane — headline plan-value multiple + Maxxer tier (idle → goblin mode), per-agent
   table of plan $ / API-equivalent $ / multiple with confidence badges; per-provider
@@ -106,13 +157,33 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
   Copilot for Xcode) without ever reading credentials. Copilot doesn't expose a
   documented local usage/quota record, so it honestly reports unavailable metrics
   rather than a guessed number — Gemini/OpenCode (also #26) already had full data.
+- **Quota trust gating + multi-account Claude Code** (2026-07-27): agent routing now reads
+  a reading's `confidence`, not just its percentage. `routeTo` requires trusted, recent
+  readings (`avoid` still uses every reading — the asymmetry is deliberate), so a stale or
+  `local_estimate` 0% can no longer look like free capacity. Each quota window carries
+  `observedAt`, so per-reading freshness is a number rather than a `" (stale)"` string.
+  Claude Code is now discovered per account (see "Multiple Claude Code accounts" above).
+- **`tokei` CLI/MCP test coverage** (2026-07-27, #59): the MCP stdio protocol framing,
+  `SnapshotReader`, and `tokei status` formatting are unit-tested under the standard
+  `AIUsageDashboardCore` scheme — the surface external agents read quota through is no
+  longer untested.
 
 ## What Is Stubbed (post-MVP)
 
-- **Cursor** token usage + quota require the opt-in online toggle (they come from `cursor.com`, not local storage — `state.vscdb` holds only code-line stats). Offline, Cursor shows accepted code-lines only.
-- **Antigravity** remains a non-interactive skeleton pending data-source research.
+Both provider connectors that used to be listed here — Cursor and Antigravity — shipped
+on 2026-07-06 and are described under "What Works" above. What genuinely remains:
+
+- **Opt-in network paths are off by default.** Cursor's real token usage/quota
+  (`cursorNetworkUsageEnabled`) and Antigravity's live per-model quota
+  (`antigravityOnlineQuotaEnabled`) each require a per-provider toggle. Neither is a
+  stub — each has a working offline baseline and adds the richer data when enabled — but
+  a fresh install shows the offline view until you turn them on.
+- **Antigravity reports no token counts at all.** It has no local per-message log to
+  parse, so today/week token usage is honestly `unavailable` rather than guessed.
+- **GitHub Copilot is install-detection only** — no documented local usage or quota
+  record exists to read.
 - WidgetKit target deferred (source exists, not in `project.yml`).
-- App icon and additional settings functionality minimal.
+- Per-provider notification threshold overrides (currently global 80% / 95%).
 - **Value scorecard prices only providers with a trusted reference model** (Claude Code,
   Codex, Cursor); Antigravity/Cline/opencode/Gemini stay visibly unpriced in the Value
   pane rather than receiving guessed API-equivalent figures. Plan-cost auto-detection
@@ -120,11 +191,12 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
 
 ## Post-MVP Roadmap
 
-1. Cursor local metrics and monthly-budget quota model.
-2. Antigravity data source research and adapter.
-3. WidgetKit target via App Group reading the persisted JSON store.
-4. App icon and extended settings (e.g., per-provider threshold override).
-5. Export/reporting features.
+1. WidgetKit target via App Group reading the persisted JSON store.
+2. Per-provider alert thresholds in Settings.
+3. Daily history chart view (the persisted `dailyHistory()` is not yet surfaced).
+4. Export/reporting features.
+
+The authoritative, always-current list is `tasks/BACKLOG.md`; this is a summary of it.
 
 ## Documentation
 
@@ -134,6 +206,10 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
 - `docs/04-implementation-roadmap.md` — Phased roadmap.
 - `docs/05-codex-orchestrator.md` — How Codex should orchestrate agents.
 - `docs/06-provider-spec.md` — Provider protocol and data model specification.
+- `docs/07-padzy-theme.md` — Design tokens and the invariants every view holds to.
+- `docs/08-agent-snapshot-schema.md` — The snapshot file and the `tokei` helper CLI.
+- `docs/09-multi-account.md` — Multiple accounts on one Mac: what discovery can and
+  cannot see, and how to split two logins with `CLAUDE_CONFIG_DIR`.
 
 ## License
 

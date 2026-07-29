@@ -34,7 +34,7 @@ struct ProviderDetailView: View {
     /// `DashboardView`; a no-op by default.
     var onEnableOnline: () -> Void = {}
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) var reduceMotion
 
     /// Full content width (incl. horizontal padding) — drives the ≥720pt two-column
     /// split. Compared against `720 + horizontal padding` so the breakpoint tracks
@@ -51,17 +51,17 @@ struct ProviderDetailView: View {
         snapshot.quotaWindows.filter { $0.confidence != .unavailable }
     }
 
-    private var nonCreditsWindows: [QuotaWindow] {
+    var nonCreditsWindows: [QuotaWindow] {
         activeWindows.filter { $0.type != .credits }
     }
 
-    private var creditsWindow: QuotaWindow? {
+    var creditsWindow: QuotaWindow? {
         activeWindows.first { $0.type == .credits }
     }
 
     /// Whether ANY local token metric was measured — the honest divider between the
     /// full-metrics surface and the plan-only one (mirrors `ProviderCapabilityTier`).
-    private var hasLocalTokenData: Bool {
+    var hasLocalTokenData: Bool {
         snapshot.todayUsage.confidence != .unavailable
             || snapshot.weekUsage.confidence != .unavailable
             || (snapshot.monthUsage?.confidence).map { $0 != .unavailable } ?? false
@@ -74,7 +74,7 @@ struct ProviderDetailView: View {
 
     /// The tightest (highest-utilization) quota window — drives the gauge + the
     /// pace-based insight. Credits are a balance, shown separately, so excluded.
-    private var tightestWindow: QuotaWindow? {
+    var tightestWindow: QuotaWindow? {
         nonCreditsWindows
             .compactMap { window in usedPercent(window).map { (window, $0) } }
             .max(by: { $0.1 < $1.1 })?
@@ -86,7 +86,7 @@ struct ProviderDetailView: View {
     private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection }
+    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
 
     private static let syncFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -103,6 +103,7 @@ struct ProviderDetailView: View {
                 metaGrid
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
+                if accounts.count > 1 { accountScopeNote }
                 if isPlanOnly { planCreditsSection }
                 bottomRegion
             }
@@ -372,149 +373,6 @@ struct ProviderDetailView: View {
         return "\(MaxxerMath.formatUSD(value?.apiEquivalentUSD))/mo API-equiv"
     }
 
-    // MARK: - 5 · Plan & credits (plan-only)
-
-    private var planCreditsSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            SectionLabel("Plan & credits")
-
-            if let credits = creditsWindow, let display = creditsDisplay(credits) {
-                HStack(spacing: 16) {
-                    Text(display.barLabel)
-                        .font(.sans(size: 13))
-                        .foregroundColor(PadzyTheme.ink2)
-                        .frame(minWidth: 100, alignment: .leading)
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(PadzyTheme.hairline)
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(PadzyTheme.quotaColor(display.fraction * 100))
-                                .frame(width: geo.size.width * CGFloat(display.fraction))
-                        }
-                    }
-                    .frame(height: 6)
-                    .frame(minWidth: 140, maxWidth: .infinity)
-                    Text(display.readout)
-                        .font(.mono(size: 13))
-                        .monospacedDigit()
-                        .foregroundColor(PadzyTheme.ink)
-                }
-
-                FlowLayout(hSpacing: 40, vSpacing: 20) {
-                    ForEach(display.stats, id: \.kicker) { stat in
-                        planStatBlock(kicker: stat.kicker, value: stat.value)
-                    }
-                }
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("\u{2014}")
-                    .font(.mono(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
-                Text("Token-level usage isn't measured locally for \(snapshot.displayName). The quota above is what Tokei reads honestly.")
-                    .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .frame(maxWidth: 560, alignment: .leading)
-            .overlay(
-                RoundedRectangle(cornerRadius: PadzyRadius.cell, style: .continuous)
-                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .foregroundColor(PadzyTheme.border2)
-            )
-
-            Button(action: onEnableOnline) {
-                Text(enableOnlineLabel)
-                    .font(.mono(size: 12.5, weight: .semibold))
-                    .foregroundColor(PadzyTheme.ground)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                            .fill(PadzyTheme.accent)
-                    )
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var enableOnlineLabel: String {
-        snapshot.providerID == .cursor ? "Enable online in Settings" : "Enable online sync \u{2192}"
-    }
-
-    private func planStatBlock(kicker: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kicker.uppercased())
-                .font(.mono(size: 9.5))
-                .tracking(1.0)
-                .foregroundColor(PadzyTheme.ink5)
-            Text(value)
-                .font(.mono(size: 22, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .fixedSize()
-    }
-
-    private struct CreditsDisplay {
-        let barLabel: String
-        let readout: String
-        let fraction: Double
-        let stats: [(kicker: String, value: String)]
-    }
-
-    /// Preserves the capabilityPane "used" vs "left" nuance: a window reporting
-    /// `used` reads as "Credits used"; a balance-style window (only `remaining`)
-    /// reads as "Credits left".
-    private func creditsDisplay(_ window: QuotaWindow) -> CreditsDisplay? {
-        func fmt(_ value: Double) -> String { TokenFormatter.format(Int(value.rounded())) }
-
-        if let used = window.used {
-            if let limit = window.limit, limit > 0 {
-                return CreditsDisplay(
-                    barLabel: "Credits used",
-                    readout: "\(fmt(used)) / \(fmt(limit))",
-                    fraction: min(1, max(0, used / limit)),
-                    stats: [("Credits left", fmt(max(0, limit - used))),
-                            ("Credits total", fmt(limit))]
-                )
-            }
-            return CreditsDisplay(
-                barLabel: "Credits used",
-                readout: fmt(used),
-                fraction: min(1, max(0, used / 100)),
-                stats: [("Credits used", fmt(used))]
-            )
-        }
-
-        if let remaining = window.remaining {
-            if let limit = window.limit, limit > 0 {
-                let used = max(0, limit - remaining)
-                return CreditsDisplay(
-                    barLabel: "Credits used",
-                    readout: "\(fmt(used)) / \(fmt(limit))",
-                    fraction: min(1, max(0, used / limit)),
-                    stats: [("Credits left", fmt(remaining)),
-                            ("Credits total", fmt(limit))]
-                )
-            }
-            return CreditsDisplay(
-                barLabel: "Credits left",
-                readout: fmt(remaining),
-                fraction: 0,
-                stats: [("Credits left", fmt(remaining))]
-            )
-        }
-
-        return nil
-    }
-
     // MARK: - 6/7/8 · Bottom region (2-column ≥720pt)
 
     @ViewBuilder
@@ -540,264 +398,16 @@ struct ProviderDetailView: View {
 
     private var rightColumn: some View {
         VStack(alignment: .leading, spacing: 30) {
+            if showAccounts {
+                accountsSection
+            } else if showAccountSetupNotice {
+                MultiAccountNotice(kind: .claudeSetup)
+            }
             if showHistory { dailyHistorySection }
             if showSplitSection { tokenSplitSection }
         }
     }
 
-    // MARK: 6 · Quota windows
-
-    private var quotaWindowsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Quota windows")
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(nonCreditsWindows.enumerated()), id: \.offset) { _, window in
-                    quotaRow(window)
-                }
-            }
-            HStack(spacing: 8) {
-                Rectangle()
-                    .fill(PadzyTheme.ink4)
-                    .frame(width: 2, height: 11)
-                Text("marker = where a steady, linear burn would sit right now")
-                    .font(.sans(size: 10.5))
-                    .foregroundColor(PadzyTheme.ink5)
-            }
-            .padding(.top, 6)
-        }
-    }
-
-    private func quotaRow(_ window: QuotaWindow) -> some View {
-        let pct = usedPercent(window) ?? 0
-        let pace = MaxxerMath.pace(usedPercent: pct, windowType: window.type,
-                                   resetAt: window.resetAt, now: Date())
-        let verdict = pace.map { PaceVerdict(pct: pct, elapsed: $0.elapsedFraction) }
-
-        return HStack(spacing: 14) {
-            Text(windowDisplayName(window))
-                .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink3)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(minWidth: 88, maxWidth: 140, alignment: .leading)
-
-            quotaFillBar(pct: pct, elapsedFraction: pace?.elapsedFraction, ahead: verdict == .ahead)
-                .frame(minWidth: 120, maxWidth: .infinity)
-
-            Text("\(Int(pct.rounded()))%")
-                .font(.mono(size: 14, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink)
-                .frame(width: 44, alignment: .trailing)
-
-            Text(verdict?.word ?? "\u{2014}")
-                .font(.sans(size: 10.5, weight: .semibold))
-                .foregroundColor(verdict?.color ?? PadzyTheme.ink5)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(width: 64, alignment: .trailing)
-
-            resetCountdown(window.resetAt)
-                .frame(width: 92, alignment: .trailing)
-        }
-        .padding(.vertical, 9)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(windowDisplayName(window)) \(Int(pct.rounded())) percent used")
-    }
-
-    private func quotaFillBar(pct: Double, elapsedFraction: Double?, ahead: Bool) -> some View {
-        let clamped = max(0, min(100, pct))
-        return GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(PadzyTheme.muted.opacity(0.3))
-                    .frame(height: 6)
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(PadzyTheme.quotaColor(pct))
-                    .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
-                if let elapsedFraction {
-                    let x = geo.size.width * CGFloat(elapsedFraction)
-                    Rectangle()
-                        .fill(ahead ? PadzyTheme.accent : PadzyTheme.ink.opacity(0.7))
-                        .frame(width: 2, height: 10)
-                        .offset(x: min(max(0, x - 1), geo.size.width - 2))
-                        .accessibilityHidden(true)
-                }
-            }
-            .frame(maxHeight: .infinity, alignment: .center)
-        }
-        .frame(height: 10)
-    }
-
-    @ViewBuilder
-    private func resetCountdown(_ resetAt: Date?) -> some View {
-        if let resetAt {
-            if reduceMotion {
-                countdownLabel(ProviderOverviewRow.format(until: resetAt, now: Date()))
-            } else {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    countdownLabel(ProviderOverviewRow.format(until: resetAt, now: context.date))
-                }
-            }
-        } else {
-            countdownLabel("\u{2014}")
-        }
-    }
-
-    private func countdownLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.mono(size: 11))
-            .monospacedDigit()
-            .foregroundColor(PadzyTheme.ink4)
-            .lineLimit(1)
-    }
-
-    // MARK: 7 · Daily history
-
-    private var dailyHistorySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Daily history · 30d")
-            if trend.count >= 2 {
-                LineTrendChart(points: trend, tint: AgentTint.color(snapshot.providerID))
-                    .frame(height: 150)
-            } else {
-                Text("No local token history yet.")
-                    .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
-            }
-        }
-    }
-
-    // MARK: 8 · Token split
-
-    private var todaySplitSegments: [(name: String, value: Int, shade: Color)] {
-        let today = snapshot.todayUsage
-        let defs: [(String, Int?, Color)] = [
-            ("Input", today.inputTokens, PadzyTheme.ink2),
-            ("Cache read", today.cacheReadTokens, PadzyTheme.ink3),
-            ("Cache write", today.cacheCreationTokens, PadzyTheme.ink5),
-            ("Output", today.outputTokens, Color(hex: "37373E")),
-        ]
-        return defs.compactMap { name, value, shade in
-            guard let value, value > 0 else { return nil }
-            return (name, value, shade)
-        }
-    }
-
-    private var hasSplit: Bool { !todaySplitSegments.isEmpty }
-
-    private var tokenSplitSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Token split · today")
-            if hasSplit {
-                let segments = todaySplitSegments
-                let total = max(1, segments.reduce(0) { $0 + $1.value })
-                GeometryReader { geo in
-                    HStack(spacing: 0) {
-                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                            Rectangle()
-                                .fill(segment.shade)
-                                .frame(width: geo.size.width * CGFloat(Double(segment.value) / Double(total)))
-                        }
-                    }
-                }
-                .frame(height: 10)
-                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-
-                FlowLayout(hSpacing: 24, vSpacing: 10) {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        splitLegendItem(segment, total: total)
-                    }
-                }
-            } else {
-                HStack(spacing: 12) {
-                    Text("\u{2014}")
-                        .font(.mono(size: 16))
-                        .foregroundColor(PadzyTheme.ink5)
-                    Text("Only aggregate totals available — no per-type split.")
-                        .font(.sans(size: 13))
-                        .foregroundColor(PadzyTheme.ink4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    private func splitLegendItem(_ segment: (name: String, value: Int, shade: Color), total: Int) -> some View {
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(segment.shade)
-                .frame(width: 8, height: 8)
-            Text(segment.name)
-                .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink3)
-            Text(TokenFormatter.format(segment.value))
-                .font(.mono(size: 12.5))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink)
-            Text(String(format: "%.1f%%", Double(segment.value) / Double(total) * 100))
-                .font(.mono(size: 11))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink5)
-        }
-        .fixedSize()
-    }
-
-    // MARK: - Shared helpers
-
-    /// Utilization percent for a window, matching the app's established gauge idiom
-    /// (`used / limit` when a limit is present, else `used` is already a percent).
-    private func usedPercent(_ window: QuotaWindow) -> Double? {
-        guard let used = window.used else { return nil }
-        if let limit = window.limit, limit > 0 { return used / limit * 100 }
-        return used
-    }
-
-    private func paceVerdict(_ window: QuotaWindow) -> PaceVerdict? {
-        guard let pct = usedPercent(window),
-              let pace = MaxxerMath.pace(usedPercent: pct, windowType: window.type,
-                                         resetAt: window.resetAt, now: Date())
-        else { return nil }
-        return PaceVerdict(pct: pct, elapsed: pace.elapsedFraction)
-    }
-
-    /// This week's tokens: the provider's own weekly metric, else the trailing
-    /// 7 days of trend, else unknown.
-    private var weekTokens: Int? {
-        if let week = snapshot.weekUsage.totalTokens { return week }
-        guard !trend.isEmpty else { return nil }
-        return trend.suffix(7).reduce(0) { $0 + $1.tokens }
-    }
-
-    /// The provider's own trailing-7-day average (the 7 days before the latest),
-    /// used for the today-vs-average delta. `nil` until there's ≥8 days of trend.
-    private var ownWeekAvg: Int? {
-        guard trend.count >= 8 else { return nil }
-        let prior = Array(trend.dropLast().suffix(7))
-        guard !prior.isEmpty else { return nil }
-        return prior.reduce(0) { $0 + $1.tokens } / prior.count
-    }
-
-    /// Human window label for rows + the gauge (`.label` wins; else a friendly name).
-    private func windowDisplayName(_ window: QuotaWindow) -> String {
-        if let label = window.label, !label.isEmpty { return label }
-        switch window.type {
-        case .session: return "Session"
-        case .daily: return "Daily"
-        case .weekly: return "Weekly"
-        case .fiveHour: return "5-hour"
-        case .monthly: return "Monthly"
-        case .credits: return "Credits"
-        case .perModel: return "Per model"
-        case .lifetime: return "Lifetime"
-        }
-    }
-
-    /// Lowercased window phrase for the insight sentence ("weekly window", "quota").
-    private func insightWindowName(_ window: QuotaWindow) -> String {
-        let base = windowDisplayName(window).lowercased()
-        return base.contains("quota") ? base : "\(base) window"
-    }
 }
 
 // MARK: - Flow layout
@@ -805,47 +415,47 @@ struct ProviderDetailView: View {
 /// Minimal left-to-right wrapping layout (macOS 14 `Layout`) for the mockup's
 /// `flex-wrap` rows: the meta grid, the KPI stats group, and the split legend.
 /// Wraps to a new line when the next subview would overflow the proposed width.
-private struct FlowLayout: Layout {
+struct FlowLayout: Layout {
     var hSpacing: CGFloat = 8
     var vSpacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
         let maxWidth = proposal.width ?? .greatestFiniteMagnitude
-        var x: CGFloat = 0
-        var y: CGFloat = 0
+        var cursorX: CGFloat = 0
+        var cursorY: CGFloat = 0
         var rowHeight: CGFloat = 0
         var widest: CGFloat = 0
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
-            if x > 0 && x + size.width > maxWidth {
-                y += rowHeight + vSpacing
-                x = 0
+            if cursorX > 0 && cursorX + size.width > maxWidth {
+                cursorY += rowHeight + vSpacing
+                cursorX = 0
                 rowHeight = 0
             }
-            x += size.width + hSpacing
+            cursorX += size.width + hSpacing
             rowHeight = max(rowHeight, size.height)
-            widest = max(widest, x - hSpacing)
+            widest = max(widest, cursorX - hSpacing)
         }
 
         let totalWidth = maxWidth.isFinite ? min(maxWidth, widest) : widest
-        return CGSize(width: max(0, totalWidth), height: y + rowHeight)
+        return CGSize(width: max(0, totalWidth), height: cursorY + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
-        var x: CGFloat = bounds.minX
-        var y: CGFloat = bounds.minY
+        var cursorX: CGFloat = bounds.minX
+        var cursorY: CGFloat = bounds.minY
         var rowHeight: CGFloat = 0
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX && x + size.width > bounds.maxX {
-                y += rowHeight + vSpacing
-                x = bounds.minX
+            if cursorX > bounds.minX && cursorX + size.width > bounds.maxX {
+                cursorY += rowHeight + vSpacing
+                cursorX = bounds.minX
                 rowHeight = 0
             }
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
-            x += size.width + hSpacing
+            subview.place(at: CGPoint(x: cursorX, y: cursorY), anchor: .topLeading, proposal: ProposedViewSize(size))
+            cursorX += size.width + hSpacing
             rowHeight = max(rowHeight, size.height)
         }
     }
@@ -857,85 +467,4 @@ private struct WidthKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }
-}
-
-// MARK: - Previews
-
-private func previewTrend(days: Int) -> [(date: Date, tokens: Int)] {
-    let values = [4_200_000, 9_800_000, 7_400_000, 15_200_000, 11_100_000,
-                  18_600_000, 9_300_000, 21_400_000, 16_800_000, 12_500_000]
-    let today = Calendar.current.startOfDay(for: Date())
-    return (0..<days).map { i in
-        let daysBack = days - 1 - i
-        return (
-            date: Calendar.current.date(byAdding: .day, value: -daysBack, to: today) ?? today,
-            tokens: values[i % values.count]
-        )
-    }
-}
-
-private func previewSnapshot() -> ProviderSnapshot {
-    ProviderSnapshot(
-        providerID: .claudeCode,
-        displayName: "Claude Code",
-        authStatus: .authenticated,
-        quotaWindows: [
-            QuotaWindow(providerID: .claudeCode, type: .weekly, used: 46, limit: 100,
-                        resetAt: Date().addingTimeInterval(3 * 86_400 + 14 * 3600),
-                        confidence: .providerReported, source: "preview", label: "Weekly"),
-            QuotaWindow(providerID: .claudeCode, type: .fiveHour, used: 22, limit: 100,
-                        resetAt: Date().addingTimeInterval(2 * 3600 + 41 * 60),
-                        confidence: .providerReported, source: "preview", label: "5-hour"),
-        ],
-        todayUsage: TokenUsage(inputTokens: 41_200_000, outputTokens: 25_500_000,
-                               cacheReadTokens: 402_800_000, cacheCreationTokens: 63_500_000,
-                               confidence: .providerReported),
-        weekUsage: TokenUsage(inputTokens: 300_000_000, outputTokens: 60_000_000, confidence: .providerReported)
-    )
-}
-
-#Preview("Full metrics") {
-    ProviderDetailView(
-        snapshot: previewSnapshot(),
-        trend: previewTrend(days: 14),
-        peakHour: (hour: 15, tokens: 6_800_000),
-        lastSyncedAt: Date(),
-        isRouteTarget: false,
-        planLabel: "$200/mo · 2× Max accounts"
-    )
-    .frame(width: 900, height: 1200)
-}
-
-#Preview("Plan-only · credits") {
-    ProviderDetailView(
-        snapshot: ProviderSnapshot(
-            providerID: .antigravity,
-            displayName: "Antigravity",
-            authStatus: .authenticated,
-            quotaWindows: [
-                QuotaWindow(providerID: .antigravity, type: .credits, used: 340, limit: 500,
-                            confidence: .providerReported, source: "preview"),
-                QuotaWindow(providerID: .antigravity, type: .weekly, used: 71, limit: 100,
-                            resetAt: Date().addingTimeInterval(4 * 86_400),
-                            confidence: .providerReported, source: "preview", label: "Gemini · Weekly"),
-            ],
-            todayUsage: .unavailable,
-            weekUsage: .unavailable
-        ),
-        lastSyncedAt: Date(),
-        isRouteTarget: true,
-        planLabel: "$5/mo · Google student"
-    )
-    .frame(width: 720, height: 900)
-}
-
-#Preview("Narrow 640") {
-    ProviderDetailView(
-        snapshot: previewSnapshot(),
-        trend: previewTrend(days: 7),
-        peakHour: (hour: 11, tokens: 4_100_000),
-        lastSyncedAt: Date(),
-        planLabel: "$200/mo · 2× Max accounts"
-    )
-    .frame(width: 640, height: 1200)
 }

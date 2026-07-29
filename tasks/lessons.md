@@ -199,3 +199,132 @@
 - **My own error to avoid repeating:** after the first crash I removed `--wait` and
   assumed the class was fixed. It wasn't; the crash is in the tool exiting, not in
   waiting. One data point wasn't enough to generalize from.
+
+## 2026-07-27 — absence of data is not a good number
+- **Symptom:** `tokei status --json` recommended routing fan-out work to `claude_code`
+  because its only window read `usedPercent: 0` — a cached reading served during a 429
+  cooldown, `confidence: local_estimate`, `source: "… (stale)"`. Codex, with a real 75%,
+  lost. Agents act on that field.
+- **Root cause was the consumer, not the data.** `AgentRecommendationEngine.recommend`
+  ranked purely on `usedPercent`. `Utilization` already carried `confidence` — the engine
+  simply never read it. Every other finding degraded data *quality*; only this one turned
+  bad data into a bad *action*. Fix the decision point first.
+- **Rule: rank on trust, then value.** Route only to confirmed, recent readings; require
+  ≥2 of them. Keep `avoid` computed from *all* readings — asymmetric on purpose, because
+  an unconfirmed number is not evidence of headroom but a high one is still evidence of
+  pressure. And name the exclusion in the reason: a silently-dropped provider reads as
+  "considered and rejected on the numbers", which is a different claim.
+- **Staleness in a string is staleness nobody can use.** `" (stale)"` was appended by hand
+  in each client and `.estimated` conflated "old server number" with "fresh local estimate".
+  Added `observedAt` so age is a number. If a consumer must regex a diagnostic label to make
+  a decision, the field is missing.
+- **Two different things were both called "stale".** Top-level `stale` meant "how long ago
+  the app wrote the file" (27s → false) while the reading inside was 81 minutes old. Same
+  word, unrelated questions. Name the *question*, not the vibe.
+- **Dropping expired items silently is directionally biased.** `cachedWindows` deleted
+  windows past their reset — and short windows expire first, and short windows are the tight
+  ones. Every stale serve decayed toward the loosest number, i.e. always flattering. Half a
+  reading now returns nothing at all.
+- **Honour Retry-After.** The loop slept its own 30s ceiling and retried 3× against a
+  `Retry-After: 3537`, hammering an endpoint that had just asked for an hour — plausibly
+  extending the cooldown it was reacting to.
+- **My own error to avoid repeating:** my "wait for the app to restart" loop tested
+  `mtime > now-3min`, which a *pre-existing* recent file already satisfied. It reported
+  success while the app had actually failed to launch (dyld Team ID mismatch), and I nearly
+  read the old binary's output as my new build's. Anchor a wait to a timestamp captured
+  *before* the action, never to a relative window.
+- **Verification note that paid off:** the fix labels warnings per account. First real run
+  immediately distinguished "[default] cooling down" from "[account-1] credentials expired"
+  — a distinction the single-account build structurally could not express.
+
+## 2026-07-27 — parallel patch: where downstream checks overturned upstream claims
+
+Four packages built in parallel, adversarially reviewed, then merged. Twelve agent tasks,
+all `done`. The value was almost entirely in the checks that *disagreed* with what came
+before them, including three that disagreed with me.
+
+- **My root-cause hypothesis was right in mechanism, wrong in detail — and the detail
+  mattered.** I diagnosed the unlaunchable Release app as "app has hardened runtime, Core
+  framework doesn't". Wrong: the app's embed phase re-signs the framework with the app's
+  options, so both carried `adhoc,runtime`. The real fault was **ad-hoc vs ad-hoc** —
+  `TeamIdentifier` absent on *both* sides, and under library validation *absent ≠ absent*.
+  Handing it over as "leading hypothesis, verify first, follow the evidence if it
+  disagrees" is what let the agent correct it instead of confirming it.
+- **I asserted a failure was loud; it was silent.** I said `gen-appcast.sh` would exit 1
+  with a friendly message. Under `set -euo pipefail`, `X="$(find <missing> | grep -v … |
+  head -1)"` aborts *at the assignment* — `find` exits non-zero, `grep` gets no input and
+  exits 1, pipefail propagates, `set -e` kills the script before the next line's guard can
+  print. Third instance of this pipefail-plus-short-pipeline family in this repo. **Fix the
+  pipeline, not the guard.**
+- **I over-attributed lint debt twice.** I charged four violations to WP-3 (only one was)
+  and one to WP-2 (pre-existing at base, 427 lines already flagged; WP-2 grew it by 20).
+  Both agents measured against the base commit and said so. **Attribute by measurement
+  against the base tree, never by "this file appears in that diff".**
+- **A stricter gate finds bugs the thing it gates never had.** Rebuilding the launch
+  assertion exposed a genuine pre-existing defect: both signing modes shared one
+  `DerivedData`, so the first ad-hoc build after a signed one staged a still-Developer-ID-
+  signed helper — a bundle `codesign --verify --strict --deep` passes. Only visible on a
+  *mode transition*; testing each path from clean can never see it.
+- **A gate that infers success from silence is not a gate.** The first launch assertion
+  discarded the exit status and printed OK whenever the process died, unless stderr matched
+  one of five English regexes. Require a *positive* signal, and make an allowed skip read
+  differently from a pass.
+- **Green-alone is not green-together.** WP-3 moved `avoidThreshold` onto a new type; WP-4
+  independently added a guard test reading the old symbol. Both branches passed their own
+  suites; only the merge failed to compile. **The full gate on the integrated branch is the
+  only run that means anything** — per-branch green is a prerequisite, not evidence.
+- **Tell an agent what was already cleared, not just what to fix.** Each fix task carried
+  the reviewer's explicit "confirmed clean, do not churn" list. Nobody re-litigated settled
+  work, and one agent (WP-4) *declined* a review suggestion after verifying notarization,
+  stapling and DMG already shipped — refusing to replace one false statement with another.
+- **Routing on an untrusted number is the bug this repo exists to prevent.** Mid-run,
+  Tokei's own reading went `local_estimate (stale)` and the engine correctly refused to
+  route. The honest move was to say quota was unverifiable and reuse warm agents — not to
+  treat a stale 5% as headroom. A floor is not a ceiling.
+
+Herdr/orchestration:
+- **`herd spawn` races its own pane.** It splits and calls `agent start` immediately, losing
+  to shell init (`agent_pane_busy`). The pane *is* created — read it for a clean prompt,
+  `herdr agent start` by hand, then patch `agent_name`/`pane_id`/`status` into `run.json`.
+- **Use `--isolation pane` with an explicit `--cwd` when the worktrees already exist**;
+  `worktree` mode makes herd create competing ones.
+- **`herd spawn` splits `--current`,** i.e. `$HERDR_PANE_ID`. Override that env var to
+  anchor the fleet into another tab instead of shredding the orchestrator's own pane.
+- **Results through files, never terminal scraping.** Lifecycle state said `running` for
+  tasks whose result files had already landed. The file is the truth.
+
+## 2026-07-27 (later) — the CPU regression, and "latent" as a failure word
+
+Manual QA of the patch surfaced the dev build pegging a core. Two fixes followed, and both
+overturned a confident earlier assessment.
+
+- **"Latent, not active" was wrong, and it cost real numbers.** The cross-file dedup bug was
+  assessed as unreachable-in-practice because an independent recomputation of the corpus
+  matched. Writing the failing test first showed **237 tokens where 137 was correct**, plus a
+  mirror defect (30 where 130 was correct). On the real corpus: **95 duplicated dedupe keys
+  across two forked sessions, 14.6M tokens** misattributed in month and lifetime figures —
+  invisible in today/this-week only because that session was 8–30 days old. *A recomputation
+  that matches the buggy code proves the two agree, not that either is right.* Reproduce
+  before classifying severity.
+- **The same word is now attached to the next one.** Cross-*account* dedup does not happen at
+  all (`seenIDs` is per `parse()` call, one call per account), and is "currently unreachable
+  because Claude does not share message IDs across accounts." That is the exact sentence
+  used about this bug yesterday. Treat "unreachable" as "untested".
+- **A cache that never hits hides the bugs in its hit path.** The parse cache evicted down to
+  the calling account's slice, so with multi-account every account missed every refresh
+  (~590 MB re-parsed every 2s, 58% of a core, 821 MB RSS). Fixing eviction made cache hits
+  happen *for the first time* — which is what made the dormant dedup bug live. Fixing an
+  upstream defect activates whatever was downstream of it and never ran. Third instance
+  today.
+- **Measure convergence, don't sample it.** I twice declared RSS from a 3-minute window:
+  first "605 MB, worse than claimed", then "~551 MB, a possible 400 MB regression". It
+  converges to **~90 MB**, it just takes 6–8 minutes on an 800 MB corpus. A falling number is
+  not a settled number.
+- **An agent refusing to fill in a metric is a good signal.** The dedup task left
+  `PERF_RISK_PLACEHOLDER` and marked its perf criterion `[ ]` rather than invent a
+  before/after, because my own agent fleet was writing Claude logs throughout and its
+  attempt to measure the pre-fix build failed. The orchestrator could get the clean number —
+  by shutting the fleet down — precisely because it controls what the agents cannot.
+- **Profile before theorising.** `sample <pid>` put 86% of samples on one call path in
+  seconds. My prior guess (`seenIDs.formUnion` cost) was wrong; so was my first root-cause
+  guess for the P0 that morning. Three hypotheses, three corrections by measurement.

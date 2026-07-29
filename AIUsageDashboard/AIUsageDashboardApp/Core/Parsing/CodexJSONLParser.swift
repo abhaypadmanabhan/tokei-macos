@@ -160,6 +160,16 @@ public actor CodexJSONLParser {
         // Evict cache entries for files no longer present so the cache can't grow
         // unbounded — Codex creates a new per-session log file continually, and a
         // long-running menu-bar app would otherwise retain every one ever seen.
+        //
+        // HAZARD, if Codex ever gains multiple accounts/config directories: filtering on
+        // *this call's* source list is only safe because `CodexProvider` makes exactly one
+        // `parse` call, so the list is the whole corpus. The moment a second caller shares
+        // this parser, each call's list becomes a slice and each one evicts the other's
+        // entries — the cache then never hits and every refresh re-reads everything. That
+        // is precisely what happened to `ClaudeJSONLParser`; see 50276d2, which changed the
+        // predicate to existence on disk. Copy that fix here rather than rediscovering it.
+        // The cross-file dedup ordering bug the Claude fix then exposed does not apply:
+        // Codex aggregates per session file with no shared dedupe-key set.
         let activePaths = Set(logSources.map(\.url.path))
         fileCache = fileCache.filter { activePaths.contains($0.key) }
 
