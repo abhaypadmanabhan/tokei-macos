@@ -3,6 +3,91 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.8.0] — 2026-07-29 (release candidate)
+
+On `dev`, PR dev → main (#64); **not yet merged to `main` or tagged.** Build 8.
+Audit trail: `tasks/patch-bibles/2026-07-27.md` + `tasks/patch-bibles/2026-07-28.md`.
+Security review clean (one candidate finding raised and refuted on verification —
+see the release notes). **Manual QA: functional/CLI/MCP paths verified live against
+the real corpus and the real Claude Code client; the SwiftUI surfaces were exercised
+by running the dev build, not by a full click-through of every state.**
+
+### Added
+- **Multi-account Claude Code tracking.** Tokei reads every Claude config directory on
+  the machine (`~/.claude`, `~/.claude-account-1`, …), not just the default one, and
+  keys accounts on the **Anthropic identity** each directory is signed into — so one
+  identity signed in from two directories is one account with one quota, and two
+  identities that took turns in a single directory are not fused into one. Token counts
+  sum across accounts; the headline gauge is the single account with the most headroom,
+  and the drill-in now says which account that is instead of leaving a 50% card next to
+  an 88% account unexplained.
+- **Per-account usage over time.** The Accounts section draws one line per account on a
+  shared scale (per-account peaks would answer the wrong question), with each account's
+  own tokens, share, and quota underneath, plus a notice naming any directory that
+  exists but could not be read this refresh.
+- **`accounts[]` in the agent snapshot, CLI and MCP.** `get_usage` and
+  `tokei status --json` now carry one row per signed-in account — id (the path to
+  export as `CLAUDE_CONFIG_DIR`), label, tokens, and that account's own quota windows
+  with their `observedAt`. Additive; `schemaVersion` stays 1.
+
+### Fixed
+- **Work was being routed to quota readings Tokei could not confirm.** A stale or
+  locally-estimated 0% could beat a confirmed 75% and win `routeTo`. Routing now
+  requires trusted readings on both sides, names the exclusion in its reason, and still
+  lists an untrusted provider under `avoid` when it is at or over the line — the
+  asymmetry is deliberate: "don't send work here" needs less certainty than "send work
+  here".
+- **One core pegged, ~800 MB re-parsed every 2 seconds.** The Claude parse cache evicted
+  down to the calling account's slice, so with more than one account every account missed
+  the cache on every refresh. Measured after the fix on the real 668 MB corpus: 100%
+  cache hits, 0 bytes re-read, and the app converges to 90 MB RSS and ~0% of a core idle
+  (3.6–8% under continuous log writes).
+- **14.6M tokens misattributed across two forked sessions.** A cached per-file aggregate
+  was added to a running total that another file had already contributed to. Month and
+  lifetime figures were wrong wherever two sessions shared message IDs.
+- **Staleness is structural now.** `observedAt` rides on every quota window, a
+  partially-expired cache reports nothing rather than the loosest window it still holds,
+  the max stale interval dropped from 7 days to 2 hours, and a future-dated `observedAt`
+  is treated as suspect rather than infinitely fresh.
+- **Cursor retry storm.** A `Retry-After` past the retry ceiling now ends the attempt
+  instead of sleeping through repeated 30s retries, and 429/401/non-2xx are logged
+  (status codes and intervals only) where the fetch path previously logged nothing.
+- **The Release-config app could not launch.** Hardened runtime was being combined with
+  ad-hoc signing, which passes `codesign --verify` and then dies at load with mismatched
+  Team IDs. Each signing mode gets its own derived-data tree, and `verify-app.sh` is now
+  a real launch gate rather than a silence check.
+- **A Claude account with no log directory reported "not installed"** while its usage was
+  being parsed correctly, and a merged identity's live quota is now read from whichever
+  of its directories holds usable credentials.
+
+### Changed
+- The provider publishes which account the headline quota came from
+  (`ProviderSnapshot.headlineAccountID`) instead of the drill-in re-deriving the rule.
+- The provider drill-in is split into section files; `ClaudeJSONLParser` gained
+  `TOKEI_PARSE_DEBUG=1` cache accounting on stderr.
+
+### Known issues
+- Cross-account dedup does not happen (`seenIDs` is per parse call). Unreachable today
+  because Claude does not share message IDs across accounts — recorded as **untested**,
+  not safe.
+- Sync starts when a Tokei surface appears, not at launch: with the dashboard window
+  closed and the menu bar never opened, the snapshot the CLI/MCP read goes stale.
+- SwiftLint reports 361 violations under `--strict` (`main` carries 370). Long-standing
+  repo-wide debt, mostly in tests; no error-level violations in the surfaces this release
+  touched.
+
+## [0.7.1] — 2026-07-26
+
+Published (signed appcast, Sparkle feed updated) but never written up here. Full notes:
+`tasks/reports/release-notes-0.7.1.md`.
+
+### Fixed
+- **MCP server rejected every current client.** `claude mcp add tokei …` reported success
+  and then failed with `Unsupported protocol version 2025-11-25`; the server errored
+  instead of replying with the version it does support. Verified against the real client.
+- **`tokei version` printed the wrong version** (0.7.0 from a 0.7.1 build). A gate now
+  fails when the CLI string and `MARKETING_VERSION` disagree.
+
 ## [0.7.0] — 2026-07-24 (release candidate)
 
 Prepared via the newly-restructured `/morning-patch` → herdr dispatch → auto-collect →
