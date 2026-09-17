@@ -288,7 +288,7 @@ public actor ClaudeJSONLParser {
             return TokenArithmetic.adding(current, contribution, overflowed: &overflowed)
         }
 
-        return TokenUsage(
+        let adjusted = TokenUsage(
             inputTokens: adjustedComponent(usage.inputTokens ?? 0, record.inputTokens),
             outputTokens: adjustedComponent(usage.outputTokens ?? 0, record.outputTokens),
             cacheReadTokens: adjustedComponent(usage.cacheReadTokens ?? 0, record.cacheReadInputTokens),
@@ -299,6 +299,8 @@ public actor ClaudeJSONLParser {
             reasoningTokens: usage.reasoningTokens ?? 0,
             confidence: .localParsed
         )
+        _ = adjusted.totalTokens(overflowed: &overflowed)
+        return adjusted
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {

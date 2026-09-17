@@ -230,6 +230,20 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertTrue(usage.warnings.contains { $0.message.contains("integer range") })
   }
 
+  func testR14_05ClaudeCrossComponentOverflowSaturatesWithOneWarning() async {
+    let fixture = [
+      #"{"usage":{"input_tokens":9223372036854775806}}"#,
+      #"{"usage":{"output_tokens":2}}"#
+    ].joined(separator: "\n")
+    let url = writeFixture(fixture, named: "r14-claude-cross-component-overflow.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+    let overflowWarnings = usage.warnings.filter { $0.message.contains("integer range") }
+
+    XCTAssertEqual(usage.lifetime.totalTokens, .max)
+    XCTAssertEqual(overflowWarnings.count, 1)
+  }
+
   func testS01ClaudeAcceptsRecordsThroughSixteenMiBAtChunkBoundaries() async throws {
     for mebibytes in [1, 4, 16] {
       var fixture = ignoredRecord(byteCount: mebibytes * 1024 * 1024)
