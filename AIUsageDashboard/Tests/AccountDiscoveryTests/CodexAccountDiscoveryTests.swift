@@ -197,6 +197,18 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertNotEqual(first.accounts?.first?.accountID, switched.accounts?.first?.accountID)
     }
 
+    func testR2_firstCodexIdentityObservationIsEligible() async throws {
+        _ = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 60)
+
+        let snapshot = try await provider(registered: []).fetchSnapshot()
+        let account = try XCTUnwrap(snapshot.accounts?.first)
+        let decision = AccountQuotaDecision.evaluate(account, providerID: .codex, now: now)
+
+        XCTAssertEqual(account.quotaStatus, .eligible)
+        XCTAssertTrue(decision.isEligible)
+        XCTAssertEqual(decision.usedPercent, 60)
+    }
+
     func testR09_07_reauthenticationRequiresNewQuotaObservationAndKeepsHistoricalTokens() async throws {
         let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
         let provider = provider(registered: [])
@@ -243,7 +255,7 @@ final class CodexAccountDiscoveryTests: XCTestCase {
 }
 
 extension CodexAccountDiscoveryTests {
-    func testR09_07_transitionObservationRejectsOldIdentityEventBeforeReauth() async throws {
+    func testR2_R09_07_realTransitionRemainsUnknownUntilLaterObservation() async throws {
         now = ISO8601DateFormatter().date(from: "2026-09-17T02:14:00Z")!
         let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
         let provider = provider(registered: [])

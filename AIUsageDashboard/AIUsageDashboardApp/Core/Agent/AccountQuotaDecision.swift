@@ -21,14 +21,7 @@ public struct AccountQuotaDecision: Sendable {
         policy: RouteTargetPolicy = .agent
     ) -> AccountQuotaDecision {
         guard account.quotaStatus == .eligible else {
-            return AccountQuotaDecision(
-                account: account,
-                status: account.quotaStatus,
-                usedPercent: nil,
-                headroomPercent: nil,
-                bindingWindowIndex: nil,
-                validUntil: nil
-            )
+            return nonEligible(account)
         }
 
         let candidates = account.quotaWindows.enumerated().compactMap { index, window -> (Int, Utilization)? in
@@ -50,16 +43,18 @@ public struct AccountQuotaDecision: Sendable {
         }
 
         // Account routing requires complete trusted, fresh coverage. A comfortable peak
-        // cannot hide a missing, stale, estimated, or expired sibling window from the same
-        // account. An omitted window is proven inapplicable; an explicit placeholder is a
-        // known applicable window whose reading is missing and therefore incomplete.
-        let hasCompleteCoverage = candidates.count == account.quotaWindows.count
-        let allApplicableWindowsAreRoutable = hasCompleteCoverage && candidates.allSatisfy { _, utilization in
-            utilization.observedAt != nil
-                && policy.isRoutable(utilization, now: now)
-                && (utilization.resetAt.map { $0 > now } ?? true)
-        }
-        guard allApplicableWindowsAreRoutable else {
+        // cannot hide a missing, stale, estimated, or expired applicable window from the same
+        // account. Applicability is provider-specific: Codex plans can expose only a weekly
+        // limit, so an uncomputable session/credits shell is not proof of missing coverage.
+        // An explicit missing weekly Codex window, and every emitted window for providers whose
+        // contracts require them, still makes coverage incomplete.
+        guard hasCompleteCoverage(
+            candidates: candidates,
+            windows: account.quotaWindows,
+            providerID: providerID,
+            now: now,
+            policy: policy
+        ) else {
             return unknown(
                 account,
                 usedPercent: peak.1.usedPercent,
@@ -107,6 +102,36 @@ public struct AccountQuotaDecision: Sendable {
         account.accountID ?? ProviderAccountNormalizer.localID(
             providerID: providerID,
             canonicalRoot: URL(fileURLWithPath: account.id, isDirectory: true)
+        )
+    }
+
+    private static func hasCompleteCoverage(
+        candidates: [(Int, Utilization)],
+        windows: [QuotaWindow],
+        providerID: ProviderID,
+        now: Date,
+        policy: RouteTargetPolicy
+    ) -> Bool {
+        let applicableWindowCount = windows.count { window in
+            providerID != .codex
+                || window.type == .weekly
+                || UtilizationEngine.usedPercent(from: window) != nil
+        }
+        return candidates.count == applicableWindowCount && candidates.allSatisfy { _, utilization in
+            utilization.observedAt != nil
+                && policy.isRoutable(utilization, now: now)
+                && (utilization.resetAt.map { $0 > now } ?? true)
+        }
+    }
+
+    private static func nonEligible(_ account: ProviderAccountUsage) -> AccountQuotaDecision {
+        AccountQuotaDecision(
+            account: account,
+            status: account.quotaStatus,
+            usedPercent: nil,
+            headroomPercent: nil,
+            bindingWindowIndex: nil,
+            validUntil: nil
         )
     }
 

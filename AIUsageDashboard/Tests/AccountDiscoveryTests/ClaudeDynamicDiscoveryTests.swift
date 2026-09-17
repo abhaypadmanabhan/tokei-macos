@@ -96,4 +96,53 @@ final class ClaudeDynamicDiscoveryTests: XCTestCase {
         XCTAssertEqual(inheritedPresent.accounts?.count, 2)
         XCTAssertEqual(inheritedRemoved.accounts?.count, 1)
     }
+
+    func testR1_dynamicAccountOneKeepsThreeOfficialWindowsBesideExpiredDefault() async throws {
+        try makeAccount(".claude", identity: "uuid-a", tokens: 1)
+        try makeAccount(".claude-account-1", identity: "uuid-b", tokens: 2)
+        defaults.set(true, forKey: "claudeNetworkUsageEnabled")
+        let observedAt = Date()
+        let windows: [QuotaWindow] = [
+            (.session, 0, "session"),
+            (.weekly, 88, "weekly_all"),
+            (.perModel, 86, "weekly_scoped:Fable")
+        ].map { type, used, bucketKey in
+            QuotaWindow(
+                providerID: .claudeCode,
+                type: type,
+                used: Double(used),
+                limit: 100,
+                remaining: Double(100 - used),
+                resetAt: observedAt.addingTimeInterval(86_400),
+                confidence: .providerReported,
+                source: "fixture",
+                bucketKey: bucketKey,
+                observedAt: observedAt
+            )
+        }
+        let provider = ClaudeCodeProvider(
+            accounts: [],
+            discoveryHome: home,
+            environment: [:],
+            usageClientFactory: { account in
+                if account.isDefault { return R1ExpiredClaudeUsageClient() }
+                return MockClaudeUsageClient(behavior: .success(windows))
+            },
+            userDefaults: defaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+        let accountOne = try XCTUnwrap(snapshot.accounts?.first { $0.label == "account-1" })
+
+        XCTAssertEqual(accountOne.quotaStatus, .eligible)
+        XCTAssertEqual(accountOne.quotaWindows.count, 3)
+        XCTAssertTrue(accountOne.quotaWindows.allSatisfy { $0.confidence == .providerReported })
+        XCTAssertEqual(snapshot.headlineAccountID, accountOne.id)
+    }
+}
+
+private struct R1ExpiredClaudeUsageClient: ClaudeUsageClient {
+    func fetchQuotaWindows() async throws -> [QuotaWindow] {
+        throw ClaudeUsageError.expiredCredentials
+    }
 }
