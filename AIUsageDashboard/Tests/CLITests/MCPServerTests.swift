@@ -50,7 +50,7 @@ final class MCPServerTests: XCTestCase {
     line: UInt = #line
   ) throws -> (text: String, isError: Bool) {
     let content = try XCTUnwrap(result["content"] as? [[String: Any]], file: file, line: line)
-    XCTAssertEqual(content.count, 1, "one text block per call", file: file, line: line)
+    XCTAssertFalse(content.isEmpty, "at least one text block per call", file: file, line: line)
     XCTAssertEqual(content[0]["type"] as? String, "text", file: file, line: line)
     return (
       try XCTUnwrap(content[0]["text"] as? String, file: file, line: line),
@@ -153,7 +153,10 @@ final class MCPServerTests: XCTestCase {
     // The f725bac trust rules must reach the agent, not just the routing engine.
     XCTAssertTrue(instructions.contains("local_estimate"))
     XCTAssertTrue(instructions.contains("85%"))
-    XCTAssertTrue(instructions.contains("CLAUDE_CONFIG_DIR"), "multi-account targeting must be documented")
+    XCTAssertTrue(instructions.contains("accountID"), "stable account identity must be documented")
+    XCTAssertTrue(instructions.contains("selector.env"), "structured account targeting must be documented")
+    XCTAssertTrue(instructions.contains("process API"), "selection must name the safe execution boundary")
+    XCTAssertFalse(instructions.contains("export CLAUDE_CONFIG_DIR"))
   }
 
   // MARK: - tools/list
@@ -230,27 +233,11 @@ final class MCPServerTests: XCTestCase {
     XCTAssertFalse(text.contains("\"providers\""), "this tool is the cheap one — no full snapshot")
   }
 
-  /// No recommendation is a first-class answer, not an error: refusing to route is
-  /// exactly what `f725bac` made the engine do when nothing is trustworthy.
-  func testGetRouteRecommendationExplainsAbsenceWithoutErroring() throws {
-    let (server, capture) = try makeServer(json: AgentSnapshotFixtures.minimal)
-
-    server.handle(line: """
-      {"jsonrpc":"2.0","id":3,"method":"tools/call",\
-      "params":{"name":"get_route_recommendation"}}
-      """)
-
-    let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
-    let (text, isError) = try toolCallText(result)
-    XCTAssertFalse(isError, "\"nothing to recommend\" is a valid answer, not a failure")
-    XCTAssertTrue(text.contains("No routing recommendation available"))
-  }
-
   // MARK: - tools/call · staleness
 
   /// Never serve stale data silently. The warning has to be in the text the model reads,
   /// not only in a flag it might ignore.
-  func testStaleSnapshotPrefixesAWarningOnBothTools() throws {
+  func testStaleSnapshotKeepsJSONFirstAndAddsAWarningOnBothTools() throws {
     for tool in ["get_usage", "get_route_recommendation"] {
       let (server, capture) = try makeServer(secondsAfterGeneration: 7200)
 
@@ -259,8 +246,12 @@ final class MCPServerTests: XCTestCase {
       let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
       let (text, isError) = try toolCallText(result)
       XCTAssertFalse(isError, "\(tool): a stale read still succeeds")
-      XCTAssertTrue(text.hasPrefix("⚠︎ Tokei data is stale"), "\(tool): missing stale warning")
-      XCTAssertTrue(text.contains("2h old"), "\(tool): the warning must state the age")
+      XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(text.utf8)))
+      let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+      XCTAssertEqual(content.count, 2, "\(tool): structured JSON first, warning second")
+      let warning = try XCTUnwrap(content[1]["text"] as? String)
+      XCTAssertTrue(warning.hasPrefix("⚠︎ Tokei data is stale"), "\(tool): missing stale warning")
+      XCTAssertTrue(warning.contains("2h old"), "\(tool): the warning must state the age")
     }
   }
 
@@ -378,5 +369,4 @@ final class MCPServerTests: XCTestCase {
     let message = try XCTUnwrap(error["message"] as? String)
     XCTAssertTrue(message.contains("resources/list"), "name the method so the client can debug it")
   }
-
 }

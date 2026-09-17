@@ -97,19 +97,17 @@ Do this once per extra account.
    session logs into it.
 
 3. Make it stick for that context, so you do not have to remember the prefix.
-   Either export it per shell:
+   Launch it with a quoted one-command environment assignment:
 
    ```bash
-   # in a project directory, a work shell, or a tmux session
-   export CLAUDE_CONFIG_DIR=~/.claude-work
-   claude
+   env CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude
    ```
 
-   …or alias it:
+   …or alias that direct launch:
 
    ```bash
    # ~/.zshrc
-   alias claude-work='CLAUDE_CONFIG_DIR=~/.claude-work claude'
+   alias claude-work='env CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude'
    ```
 
    With `CLAUDE_CONFIG_DIR` unset, Claude Code uses `~/.claude` — so your original
@@ -191,28 +189,69 @@ section and in `tokei status --json`.
 
 ## 8. For agents and scripts
 
-`tokei status --json` and the MCP `get_usage` tool expose an `accounts[]` array on
-each provider:
+`tokei status --json` and the MCP `get_usage` tool expose a provider-agnostic
+`accounts[]` array. Claude Code and Codex currently have account adapters; other
+providers remain single-account provider rows until they gain one.
 
 ```jsonc
 "accounts": [
-  { "id": "/Users/me/.claude",      "label": "default", "tokensToday": 101073707,
-    "windows": [ { "type": "weekly", "usedPercent": 21, "confidence": "official", … } ] },
-  { "id": "/Users/me/.claude-work", "label": "work",    "tokensToday": 44405877,
-    "windows": [] }
+  {
+    "id": "/Users/me/.claude",
+    "accountID": "claude_code:4f5c…",
+    "label": "default",
+    "selector": { "env": { "CLAUDE_CONFIG_DIR": "/Users/me/.claude" } },
+    "windows": [],
+    "quota": { "status": "unknown", "reasonCode": "no_quota_reading" }
+  },
+  {
+    "id": "/Users/me/.claude-work",
+    "accountID": "claude_code:19ac…",
+    "label": "work",
+    "selector": { "env": { "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work" } },
+    "windows": [
+      { "type": "weekly", "usedPercent": 21, "confidence": "official" }
+    ],
+    "quota": {
+      "status": "eligible",
+      "usedPercent": 21,
+      "headroomPercent": 79,
+      "bindingWindowIndex": 0,
+      "validUntil": "2026-09-17T02:26:40Z"
+    }
+  }
 ]
 ```
 
-`accounts[].id` is the config directory path — which is exactly what you set
-`CLAUDE_CONFIG_DIR` to in order to send work to that account:
+Join a roster or job to `accountID`. It is opaque and provider-scoped, and is
+stable across machines when Tokei knows the provider identity. `accounts[].id`
+remains a legacy local path for compatibility; never use the label or path as the
+portable join key.
 
-```bash
-CLAUDE_CONFIG_DIR=/Users/me/.claude-work claude
+To launch the selected account, pass `selector.env` unchanged as the environment
+map to the process API. Do not interpolate it into a shell command: spaces, quotes,
+and strings such as `$()` are literal path characters. If `selector` is absent,
+Tokei is naming an account but is not granting an executable selector; report that
+instead of guessing one.
+
+Use the published `quota` decision rather than recomputing a peak. Only
+`quota.status == "eligible"` with an unexpired `validUntil` is positive headroom.
+The other bounded states are `expiredCredentials`, `cooldown`, `disabled`,
+`requestFailed`, `noQuotaSource`, and `unknown`. Empty `windows` is absence of data,
+not 0%.
+
+The recommendation has the same exact-account join:
+
+```jsonc
+"target": {
+  "provider": "claude_code",
+  "accountID": "claude_code:19ac…",
+  "selector": { "env": { "CLAUDE_CONFIG_DIR": "/Users/me/.claude-work" } }
+},
+"validUntil": "2026-09-17T02:26:40Z"
 ```
 
-There is no precomputed "which account has the most headroom" field; an account's
-utilization is the highest `usedPercent` among its `windows`, and an account with
-`"windows": []` reported nothing — which is absence of data, not 0%. Treat it as
-unknown, never as free.
+Feature-detect `accountID`, `quota`, and `target`. An older helper can read the v1
+file while dropping these additive fields when it re-encodes, so the helper and app
+must ship together.
 
 See `08-agent-snapshot-schema.md` for the full shape.

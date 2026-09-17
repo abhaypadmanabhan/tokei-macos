@@ -204,11 +204,18 @@ struct MCPServer {
         `stale` flag is a different thing: it only says how long ago Tokei wrote the \
         file, so `stale: false` can still contain hour-old numbers. Judge freshness \
         per window.
-        • `accounts` (Claude Code) lists each signed-in account separately. The \
-        provider's own `windows` show the account with the most headroom and \
-        `tokensToday` is the sum across accounts; use `accounts[].id` as \
-        `CLAUDE_CONFIG_DIR` to target a specific one.
-        • If a response is prefixed with a stale warning, Tokei may not be running. \
+        • `accounts[].accountID` is the opaque, provider-scoped identity. For known \
+        identities it is stable across machines. `accounts[].id` is only a legacy \
+        local locator; never join accounts on it.
+        • To act on `recommendation.target.selector.env`, pass that map as the \
+        environment argument to the process API. Never concatenate selector values \
+        into a shell string.
+        • Feature-detect `accountID` and `target`. An older helper in front of a newer \
+        app is a lossy proxy even though both snapshots use schema version 1.
+        • `quota.status` is `eligible`, `expiredCredentials`, `cooldown`, `disabled`, \
+        `requestFailed`, `noQuotaSource`, or `unknown`. Only `eligible` publishes \
+        positive headroom and a bounded `validUntil` decision.
+        • If `stale` is true, Tokei may not be running or the recommendation expired. \
         Say so instead of presenting the numbers as current.
 
         Read-only. No network, no credentials, no other application's data.
@@ -233,7 +240,7 @@ struct MCPServer {
                     + "specific providers. Returns per-provider quota windows (used %, reset "
                     + "time, confidence, source), aggregate utilization, token counts, and "
                     + "timestamps. Includes a `stale` flag when the data is old or Tokei isn't "
-                    + "running. Read-only; no network or credentials.",
+                    + "running. " + Self.accountContract + " Read-only; no network or credentials.",
                 "inputSchema": emptyInput
             ],
             [
@@ -243,11 +250,20 @@ struct MCPServer {
                     + "that will consume a provider's quota — routing work to a provider about "
                     + "to hit its limit wastes the run. Returns which provider to route new work "
                     + "to (least-utilized), which to avoid (at or over 85% of a limit), and the "
-                    + "reason. Cheap and read-only: prefer calling it over guessing.",
+                    + "reason, with generatedAt, ageSeconds, validUntil, and stale metadata. "
+                    + Self.accountContract + " Cheap and read-only: prefer calling it over guessing.",
                 "inputSchema": emptyInput
             ]
         ]
     }
+
+    private static let accountContract = "Accounts use `accountID`, an opaque provider-scoped "
+        + "identity that is stable across machines for known identities; `accounts[].id` is a "
+        + "legacy locator; feature-detect `accountID` and `target`. An older helper in front of "
+        + "a newer app is a lossy proxy. Pass `recommendation.target.selector.env` as the "
+        + "environment map to the process API; never concatenate it into a shell string. "
+        + "`quota.status` is `eligible`, `expiredCredentials`, `cooldown`, `disabled`, "
+        + "`requestFailed`, `noQuotaSource`, or `unknown`; only `eligible` is positive headroom."
 
     // MARK: - tools/call
 
@@ -279,9 +295,9 @@ struct MCPServer {
             let snapshot = try reader.read()
             switch name {
             case .usage:
-                return textContent(prefixWarning(snapshot) + (try encode(snapshot)))
+                return textContent(try encode(snapshot), warning: staleWarning(snapshot))
             case .routeRecommendation:
-                return textContent(prefixWarning(snapshot) + (try recommendationText(snapshot)))
+                return textContent(try recommendationText(snapshot), warning: staleWarning(snapshot))
             }
         } catch let error as SnapshotReadError {
             return textContent(error.message, isError: true)
@@ -290,21 +306,48 @@ struct MCPServer {
         }
     }
 
-    /// Never serve stale data silently — prefix a warning the agent will see (issue §4).
-    private func prefixWarning(_ snapshot: AgentSnapshot) -> String {
-        guard snapshot.stale == true else { return "" }
+}
+
+// MARK: - Tool output
+
+private extension MCPServer {
+    struct RoutePayload: Encodable {
+        let generatedAt: Date
+        let ageSeconds: Int?
+        let stale: Bool
+        let routeTo: String?
+        let avoid: [String]
+        let reason: String
+        let target: AgentRecommendationTarget?
+        let avoidAccounts: [AgentAccountReference]?
+        let validUntil: Date?
+    }
+
+    /// Keep content[0] machine-parseable JSON; the optional second block is for models.
+    func staleWarning(_ snapshot: AgentSnapshot) -> String? {
+        guard snapshot.stale == true else { return nil }
         let age = snapshot.ageSeconds.map(StatusFormatting.humanAge(seconds:)) ?? "unknown age"
-        return "⚠︎ Tokei data is stale (\(age) old); the app may not be running. Values below may be outdated.\n\n"
+        return "⚠︎ Tokei data is stale (\(age) old); the app may not be running. Values may be outdated."
     }
 
-    private func recommendationText(_ snapshot: AgentSnapshot) throws -> String {
-        guard let recommendation = snapshot.recommendation else {
-            return "No routing recommendation available (not enough providers reported live quota)."
-        }
-        return try encode(recommendation)
+    func recommendationText(_ snapshot: AgentSnapshot) throws -> String {
+        let recommendation = snapshot.recommendation
+        let decisionExpired = recommendation?.validUntil.map { reader.now() > $0 } ?? false
+        return try encode(RoutePayload(
+            generatedAt: snapshot.generatedAt,
+            ageSeconds: snapshot.ageSeconds,
+            stale: snapshot.stale == true || decisionExpired,
+            routeTo: recommendation?.routeTo,
+            avoid: recommendation?.avoid ?? [],
+            reason: recommendation?.reason
+                ?? "No routing recommendation available (not enough providers reported live quota).",
+            target: recommendation?.target,
+            avoidAccounts: recommendation?.avoidAccounts,
+            validUntil: recommendation?.validUntil
+        ))
     }
 
-    private func encode<T: Encodable>(_ value: T) throws -> String {
+    func encode<T: Encodable>(_ value: T) throws -> String {
         let data = try AgentSnapshot.makeEncoder().encode(value)
         guard let text = String(bytes: data, encoding: .utf8) else {
             throw EncodingError.invalidValue(
@@ -315,13 +358,20 @@ struct MCPServer {
         return text
     }
 
-    private func textContent(_ text: String, isError: Bool = false) -> [String: Any] {
-        [
-            "content": [["type": "text", "text": text]],
+    func textContent(
+        _ text: String,
+        isError: Bool = false,
+        warning: String? = nil
+    ) -> [String: Any] {
+        var content: [[String: Any]] = [["type": "text", "text": text]]
+        if let warning {
+            content.append(["type": "text", "text": warning])
+        }
+        return [
+            "content": content,
             "isError": isError
         ]
     }
-
 }
 
 // MARK: - JSON-RPC framing

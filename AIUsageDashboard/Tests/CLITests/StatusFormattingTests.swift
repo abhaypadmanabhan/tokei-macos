@@ -174,6 +174,47 @@ final class StatusFormattingTests: XCTestCase {
     XCTAssertTrue(accountRow.contains("official"))
   }
 
+  func testWP6AccountWithoutWindowPrintsQuotaStatusAndReasonCode() throws {
+    let json = """
+      {
+        "schemaVersion": 1,
+        "generatedAt": "2026-07-27T12:00:00Z",
+        "providers": [{
+          "id": "claude_code",
+          "displayName": "Claude Code",
+          "windows": [],
+          "accounts": [{
+            "id": "/fixture/default",
+            "accountID": "claude_code:fixture-default",
+            "label": "default",
+            "windows": [],
+            "quota": {"status": "unknown", "reasonCode": "no_quota_reading"}
+          }]
+        }]
+      }
+      """
+
+    let output = try table(json: json)
+
+    let accountRow = try line(containing: "↳ default", in: output)
+    XCTAssertTrue(accountRow.contains("quota unknown"))
+    XCTAssertTrue(accountRow.contains("no_quota_reading"))
+    XCTAssertFalse(accountRow.contains("no quota window"))
+  }
+
+  func testWP6Legacy080AccountsStillPrintBothRowsWithoutInventedIdentity() throws {
+    let json = AgentSnapshotFixtures.twoAccountsOneWithoutQuota
+    let url = try CLITestSupport.writeSnapshot(json)
+    trackForCleanup(url)
+    let snapshot = try SnapshotReader(fileURL: url, now: snapshotClock(plus: 60)).read()
+
+    let accounts = try XCTUnwrap(snapshot.providers.first?.accounts)
+    XCTAssertEqual(accounts.count, 2)
+    XCTAssertTrue(accounts.allSatisfy { $0.accountID == nil })
+    let output = StatusFormatting.table(for: snapshot)
+    XCTAssertEqual(output.components(separatedBy: "↳ ").count - 1, 2)
+  }
+
   func testAggregateUtilizationIsRendered() throws {
     XCTAssertTrue(
       try table().contains("Aggregate utilization: \(AgentSnapshotFixtures.aggregateUtilizationPercent)%")

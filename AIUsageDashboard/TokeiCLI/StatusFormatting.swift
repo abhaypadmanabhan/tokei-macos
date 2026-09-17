@@ -97,7 +97,7 @@ enum StatusFormatting {
         return accounts.flatMap { account in
             let label = "  ↳ \(account.label)"
             if account.windows.isEmpty {
-                return [[label, "—", "—", "—", "—", noQuotaNote(tokensToday: account.tokensToday)]]
+                return [[label, "—", "—", "—", "—", noQuotaNote(for: account)]]
             }
 
             return account.windows.enumerated().map { index, window in
@@ -119,6 +119,14 @@ enum StatusFormatting {
 
     private static func noQuotaNote(tokensToday: Int?) -> String {
         "no quota window · \(tokensNote(tokensToday: tokensToday))"
+    }
+
+    private static func noQuotaNote(for account: AgentAccount) -> String {
+        guard let quota = account.quota else {
+            return noQuotaNote(tokensToday: account.tokensToday)
+        }
+        let reason = quota.reasonCode.map { " (\($0))" } ?? ""
+        return "quota \(quota.status)\(reason) · \(tokensNote(tokensToday: account.tokensToday))"
     }
 
     private static func tokensNote(tokensToday: Int?) -> String {
