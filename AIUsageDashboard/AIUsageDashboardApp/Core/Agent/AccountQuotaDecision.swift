@@ -49,11 +49,14 @@ public struct AccountQuotaDecision: Sendable {
             return unknown(account)
         }
 
-        // Account routing requires a positive freshness proof. Provider-level legacy
-        // readings may still omit observedAt, but they cannot mint an executable selector.
-        guard let observedAt = peak.1.observedAt,
-              policy.isRoutable(peak.1, now: now),
-              peak.1.resetAt.map({ $0 > now }) ?? true else {
+        // Account routing requires complete trusted, fresh coverage. A comfortable peak
+        // cannot hide a stale, estimated, or expired sibling window from the same account.
+        let allApplicableWindowsAreRoutable = candidates.allSatisfy { _, utilization in
+            utilization.observedAt != nil
+                && policy.isRoutable(utilization, now: now)
+                && (utilization.resetAt.map { $0 > now } ?? true)
+        }
+        guard allApplicableWindowsAreRoutable else {
             return unknown(
                 account,
                 usedPercent: peak.1.usedPercent,
@@ -61,11 +64,13 @@ public struct AccountQuotaDecision: Sendable {
             )
         }
 
-        let expiryCandidates = [
-            now.addingTimeInterval(AgentSnapshot.stalenessThreshold),
-            observedAt.addingTimeInterval(policy.maxRoutableAge),
-            peak.1.resetAt
-        ].compactMap { $0 }
+        let expiryCandidates = [now.addingTimeInterval(AgentSnapshot.stalenessThreshold)]
+            + candidates.flatMap { _, utilization in
+                [
+                    utilization.observedAt?.addingTimeInterval(policy.maxRoutableAge),
+                    utilization.resetAt
+                ].compactMap { $0 }
+            }
         return AccountQuotaDecision(
             account: account,
             status: .eligible,

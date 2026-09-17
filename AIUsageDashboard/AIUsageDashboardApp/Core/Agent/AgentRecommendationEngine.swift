@@ -53,7 +53,7 @@ public enum AgentRecommendationEngine {
         let target = targetAccount.flatMap { account -> AgentRecommendationTarget? in
             guard let providerID = decision.routeTo?.providerID.rawValue,
                   let accountID = account.accountID,
-                  let selector = account.selector else { return nil }
+                  let selector = account.selector?.executable(forProvider: providerID) else { return nil }
             return AgentRecommendationTarget(
                 provider: providerID,
                 accountID: accountID,

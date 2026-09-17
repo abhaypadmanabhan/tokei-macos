@@ -138,18 +138,24 @@ public actor AgentSnapshotWriter {
             providerID: providerID,
             now: generatedAt
         )
+        let projectedWindows = account.quotaWindows.enumerated().compactMap { sourceIndex, window in
+            agentWindow(from: window).map { (sourceIndex: sourceIndex, window: $0) }
+        }
+        let publicBindingWindowIndex = decision.bindingWindowIndex.flatMap { sourceIndex in
+            projectedWindows.firstIndex { $0.sourceIndex == sourceIndex }
+        }
         return AgentAccount(
             id: account.id,
             label: account.label,
-            windows: account.quotaWindows.compactMap(agentWindow(from:)),
+            windows: projectedWindows.map(\.window),
             tokensToday: account.todayUsage.totalTokens,
             accountID: AccountQuotaDecision.stableID(for: account, providerID: providerID),
-            selector: account.selector,
+            selector: account.selector?.executable(forProvider: providerID.rawValue),
             quota: AgentAccountQuota(
                 status: decision.status.rawValue,
                 usedPercent: decision.usedPercent,
                 headroomPercent: decision.headroomPercent,
-                bindingWindowIndex: decision.bindingWindowIndex,
+                bindingWindowIndex: publicBindingWindowIndex,
                 validUntil: decision.validUntil,
                 reasonCode: quotaReasonCode(for: decision, account: account)
             )

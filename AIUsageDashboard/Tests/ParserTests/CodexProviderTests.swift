@@ -58,6 +58,7 @@ final class CodexProviderTests: XCTestCase {
 
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
+        // A3: pin the provider clock so parsed rate-limit observations are freshness-testable.
         let now = calendar.date(from: DateComponents(
             timeZone: TimeZone(identifier: "UTC"),
             year: 2026,
@@ -85,7 +86,10 @@ final class CodexProviderTests: XCTestCase {
             day: 6,
             hour: 10
         ))!], 130)
-        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        // R09-04: the expired session sibling makes the provider headline ineligible,
+        // while the historical account row still exposes both parsed windows.
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+        XCTAssertEqual(snapshot.accounts?.first?.quotaWindows.count, 2)
         XCTAssertTrue(snapshot.warnings.isEmpty)
     }
 }

@@ -6,17 +6,32 @@ import XCTest
 /// a shell-shaped `export` recipe.
 final class AgentRecommendationAccountTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
+    private var tempDirectory: URL!
 
     private let names: [ProviderID: String] = [
         .claudeCode: "Claude Code", .codex: "OpenAI Codex"
     ]
+
+    override func setUp() {
+        super.setUp()
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tempDirectory)
+        super.tearDown()
+    }
 
     private func util(_ providerID: ProviderID, _ percent: Double) -> Utilization {
         Utilization(providerID: providerID, window: .weekly, usedPercent: percent, confidence: .exact)
     }
 
     private func account(_ id: String, _ label: String, _ percent: Double?) -> AgentAccount {
-        AgentAccount(
+        let selectorRoot = tempDirectory.appendingPathComponent(label, isDirectory: true)
+        try? FileManager.default.createDirectory(at: selectorRoot, withIntermediateDirectories: true)
+        return AgentAccount(
             id: id,
             label: label,
             windows: percent.map {
@@ -25,7 +40,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
             } ?? [],
             tokensToday: nil,
             accountID: "claude_code:\(label)",
-            selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": id]),
+            selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": selectorRoot.path]),
             quota: AgentAccountQuota(
                 status: percent == nil ? "unknown" : "eligible",
                 usedPercent: percent,
@@ -71,7 +86,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
         XCTAssertEqual(recommendation?.target?.accountID, "claude_code:account-1")
         XCTAssertEqual(
             recommendation?.target?.selector?.env["CLAUDE_CONFIG_DIR"],
-            "/Users/me/.claude-account-1"
+            tempDirectory.appendingPathComponent("account-1", isDirectory: true).path
         )
     }
 
@@ -133,6 +148,10 @@ final class AgentRecommendationAccountTests: XCTestCase {
         firstWindows: [QuotaWindow],
         secondWindows: [QuotaWindow]
     ) -> AgentSnapshot {
+        let firstRoot = tempDirectory.appendingPathComponent("a", isDirectory: true)
+        let secondRoot = tempDirectory.appendingPathComponent("b", isDirectory: true)
+        try? FileManager.default.createDirectory(at: firstRoot, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: secondRoot, withIntermediateDirectories: true)
         let claude = ProviderSnapshot(
             providerID: .claudeCode,
             displayName: "Claude Code",
@@ -143,7 +162,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
                 ProviderAccountUsage(
                     id: "/tmp/a",
                     accountID: "claude_code:a",
-                    selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": "/tmp/a"]),
+                    selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": firstRoot.path]),
                     label: "A",
                     quotaWindows: firstWindows,
                     todayUsage: .unavailable,
@@ -152,7 +171,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
                 ProviderAccountUsage(
                     id: "/tmp/b",
                     accountID: "claude_code:b",
-                    selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": "/tmp/b"]),
+                    selector: AccountSelector(env: ["CLAUDE_CONFIG_DIR": secondRoot.path]),
                     label: "B",
                     quotaWindows: secondWindows,
                     todayUsage: .unavailable,
@@ -221,6 +240,8 @@ final class AgentRecommendationAccountTests: XCTestCase {
     /// not just be reachable in principle.
     func testWriterFeedsAccountsIntoTheRecommendation() {
         let observedAt = now
+        let selectorRoot = tempDirectory.appendingPathComponent("account-1", isDirectory: true)
+        try? FileManager.default.createDirectory(at: selectorRoot, withIntermediateDirectories: true)
         let claude = ProviderSnapshot(
             providerID: .claudeCode,
             displayName: "Claude Code",
@@ -243,7 +264,7 @@ final class AgentRecommendationAccountTests: XCTestCase {
                     id: "/Users/me/.claude-account-1",
                     accountID: "claude_code:account-1",
                     selector: AccountSelector(env: [
-                        "CLAUDE_CONFIG_DIR": "/Users/me/.claude-account-1"
+                        "CLAUDE_CONFIG_DIR": selectorRoot.path
                     ]),
                     label: "account-1",
                     quotaWindows: [QuotaWindow(providerID: .claudeCode, type: .weekly, used: 7,

@@ -3,6 +3,19 @@ import XCTest
 
 final class AgentSnapshotAccountSchemaTests: XCTestCase {
     private let generatedAt = Date(timeIntervalSince1970: 1_700_000_000)
+    private var tempDirectory: URL!
+
+    override func setUp() {
+        super.setUp()
+        tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tempDirectory)
+        super.tearDown()
+    }
 
     private func freshWindow(_ providerID: ProviderID, used: Double) -> QuotaWindow {
         QuotaWindow(
@@ -26,7 +39,9 @@ final class AgentSnapshotAccountSchemaTests: XCTestCase {
             target: AgentRecommendationTarget(
                 provider: "codex",
                 accountID: "codex:one",
-                selector: nil
+                selector: AccountSelector(env: [
+                    "CODEX_HOME": FileManager.default.temporaryDirectory.path
+                ])
             ),
             avoidAccounts: [],
             validUntil: validUntil
@@ -211,6 +226,97 @@ final class AgentSnapshotAccountSchemaTests: XCTestCase {
         XCTAssertFalse(snapshot.recommendation?.avoidAccounts?.contains {
             $0.accountID == "claude_code:expired"
         } == true)
+    }
+
+    func testR09_05_relativeSelectorIsNotExportedOrAdvertisedAsATarget() throws {
+        let snapshot = executableSnapshot(selector: AccountSelector(env: [
+            "CLAUDE_CONFIG_DIR": "relative/profile"
+        ]))
+
+        assertSelectorIsNotExecutable(snapshot)
+    }
+
+    func testR09_05_nonexistentSelectorIsNotExportedOrAdvertisedAsATarget() throws {
+        let missing = tempDirectory.appendingPathComponent("missing", isDirectory: true).path
+        let snapshot = executableSnapshot(selector: AccountSelector(env: [
+            "CLAUDE_CONFIG_DIR": missing
+        ]))
+
+        assertSelectorIsNotExecutable(snapshot)
+    }
+
+    func testR09_05_controlCharactersAreNotExecutableSelectors() throws {
+        for path in [tempDirectory.path + "\nchild", tempDirectory.path + "\u{7F}child"] {
+            let snapshot = executableSnapshot(selector: AccountSelector(env: [
+                "CLAUDE_CONFIG_DIR": path
+            ]))
+            assertSelectorIsNotExecutable(snapshot)
+        }
+    }
+
+    func testR09_05_crossProviderSelectorMapIsNotExportedOrAdvertised() throws {
+        let snapshot = executableSnapshot(selector: AccountSelector(env: [
+            "CLAUDE_CONFIG_DIR": tempDirectory.path,
+            "CODEX_HOME": tempDirectory.path
+        ]))
+
+        assertSelectorIsNotExecutable(snapshot)
+    }
+
+    func testR09_05_deletedRootIsRevalidatedAtExportTime() throws {
+        let root = tempDirectory.appendingPathComponent("verified-then-deleted", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let selector = try XCTUnwrap(AccountSelector.verified(
+            environmentKey: "CLAUDE_CONFIG_DIR",
+            root: root
+        ))
+        try FileManager.default.removeItem(at: root)
+
+        assertSelectorIsNotExecutable(executableSnapshot(selector: selector))
+    }
+
+    private func executableSnapshot(selector: AccountSelector) -> AgentSnapshot {
+        let claude = ProviderSnapshot(
+            providerID: .claudeCode,
+            displayName: "Claude Code",
+            authStatus: .authenticated,
+            todayUsage: .unavailable,
+            weekUsage: .unavailable,
+            accounts: [ProviderAccountUsage(
+                id: tempDirectory.path,
+                accountID: "claude_code:test",
+                selector: selector,
+                label: "test",
+                quotaWindows: [freshWindow(.claudeCode, used: 20)],
+                todayUsage: .unavailable,
+                quotaStatus: .eligible
+            )]
+        )
+        let codex = ProviderSnapshot(
+            providerID: .codex,
+            displayName: "Codex",
+            authStatus: .authenticated,
+            quotaWindows: [freshWindow(.codex, used: 70)],
+            todayUsage: .unavailable,
+            weekUsage: .unavailable
+        )
+        return AgentSnapshotWriter.buildSnapshot(
+            from: [claude, codex],
+            generatedAt: generatedAt
+        )
+    }
+
+    private func assertSelectorIsNotExecutable(
+        _ snapshot: AgentSnapshot,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertNil(
+            snapshot.providers.first { $0.id == "claude_code" }?.accounts?.first?.selector,
+            file: file,
+            line: line
+        )
+        XCTAssertNil(snapshot.recommendation?.target, file: file, line: line)
     }
 }
 

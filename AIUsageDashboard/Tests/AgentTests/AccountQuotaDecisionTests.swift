@@ -8,7 +8,8 @@ final class AccountQuotaDecisionTests: XCTestCase {
         _ percent: Double,
         confidence: MetricConfidence = .providerReported,
         observedAt: Date? = nil,
-        type: QuotaWindowType = .weekly
+        type: QuotaWindowType = .weekly,
+        resetAt: Date? = nil
     ) -> QuotaWindow {
         QuotaWindow(
             providerID: .claudeCode,
@@ -16,7 +17,7 @@ final class AccountQuotaDecisionTests: XCTestCase {
             used: percent,
             limit: 100,
             remaining: 100 - percent,
-            resetAt: now.addingTimeInterval(86_400),
+            resetAt: resetAt ?? now.addingTimeInterval(86_400),
             confidence: confidence,
             source: "fixture",
             observedAt: observedAt
@@ -227,5 +228,79 @@ final class AccountQuotaDecisionTests: XCTestCase {
         XCTAssertNil(decision.usedPercent)
         XCTAssertNil(decision.headroomPercent)
         XCTAssertNil(decision.validUntil)
+    }
+
+    func testR09_04_staleNonPeakWindowMakesAccountIneligible() {
+        let mixedA = account(
+            "/a",
+            accountID: "claude_code:a",
+            windows: [
+                window(1, observedAt: now.addingTimeInterval(-1_801), type: .session),
+                window(20, observedAt: now, type: .weekly)
+            ]
+        )
+        let freshB = account(
+            "/b",
+            accountID: "claude_code:b",
+            windows: [window(50, observedAt: now)]
+        )
+
+        let headline = AccountQuotaDecision.headline(
+            among: [mixedA, freshB],
+            providerID: .claudeCode,
+            now: now
+        )
+
+        XCTAssertEqual(headline?.account.accountID, "claude_code:b")
+    }
+
+    func testR09_04_validUntilIncludesEveryApplicableObservation() throws {
+        let sessionObservedAt = now.addingTimeInterval(-1_799)
+        let mixed = account(
+            "/a",
+            accountID: "claude_code:a",
+            windows: [
+                window(1, observedAt: sessionObservedAt, type: .session),
+                window(20, observedAt: now, type: .weekly)
+            ]
+        )
+
+        let decision = AccountQuotaDecision.evaluate(mixed, providerID: .claudeCode, now: now)
+
+        XCTAssertLessThanOrEqual(
+            try XCTUnwrap(decision.validUntil),
+            sessionObservedAt.addingTimeInterval(RouteTargetPolicy.agent.maxRoutableAge)
+        )
+    }
+
+    func testR09_04_validUntilIncludesEveryApplicableReset() throws {
+        let resetAt = now.addingTimeInterval(1)
+        let mixed = account(
+            "/a",
+            accountID: "claude_code:a",
+            windows: [
+                window(1, observedAt: now, type: .session, resetAt: resetAt),
+                window(20, observedAt: now, type: .weekly)
+            ]
+        )
+
+        let decision = AccountQuotaDecision.evaluate(mixed, providerID: .claudeCode, now: now)
+
+        XCTAssertLessThanOrEqual(try XCTUnwrap(decision.validUntil), resetAt)
+    }
+
+    func testR09_04_mixedConfidenceTiedPeaksAreIneligibleRegardlessOfOrder() {
+        let official = window(20, observedAt: now, type: .session)
+        let estimated = window(20, confidence: .estimated, observedAt: now, type: .weekly)
+
+        for windows in [[official, estimated], [estimated, official]] {
+            let decision = AccountQuotaDecision.evaluate(
+                account("/a", accountID: "claude_code:a", windows: windows),
+                providerID: .claudeCode,
+                now: now
+            )
+            XCTAssertFalse(decision.isEligible)
+            XCTAssertEqual(decision.status, .unknown)
+        }
     }
 }

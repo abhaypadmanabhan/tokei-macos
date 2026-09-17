@@ -29,8 +29,46 @@ public struct AccountSelector: Codable, Sendable, Equatable {
     private static func sanitized(_ env: [String: String]) -> [String: String] {
         env.filter { key, value in
             Self.allowedEnvironmentKeys.contains(key)
-                && !value.unicodeScalars.contains(where: { $0.value == 0 || $0.value < 0x20 })
+                && !containsControlCharacter(value)
         }
+    }
+
+    private static func containsControlCharacter(_ value: String) -> Bool {
+        value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+    }
+
+    /// Returns a selector only when it is executable for exactly one provider adapter.
+    /// Decoded selectors remain historical data; callers must cross this boundary before
+    /// publishing or acting on one.
+    public func executable(
+        forProvider provider: String,
+        fileManager: FileManager = .default
+    ) -> AccountSelector? {
+        let expectedKey: String
+        switch provider {
+        case "claude_code": expectedKey = "CLAUDE_CONFIG_DIR"
+        case "codex": expectedKey = "CODEX_HOME"
+        default: return nil
+        }
+        return executable(environmentKey: expectedKey, fileManager: fileManager)
+    }
+
+    private func executable(
+        environmentKey: String,
+        fileManager: FileManager
+    ) -> AccountSelector? {
+        guard env.count == 1,
+              let path = env[environmentKey],
+              !path.isEmpty,
+              path.hasPrefix("/"),
+              !Self.containsControlCharacter(path)
+        else { return nil }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else { return nil }
+        return AccountSelector(env: [environmentKey: path])
     }
 
     public static func verified(
@@ -38,17 +76,9 @@ public struct AccountSelector: Codable, Sendable, Equatable {
         root: URL,
         fileManager: FileManager = .default
     ) -> AccountSelector? {
-        let standardizedRoot = root.standardizedFileURL
-        let path = standardizedRoot.path
-        var isDirectory: ObjCBool = false
-        guard allowedEnvironmentKeys.contains(environmentKey),
-              standardizedRoot.isFileURL,
-              path.hasPrefix("/"),
-              fileManager.fileExists(atPath: path, isDirectory: &isDirectory),
-              isDirectory.boolValue,
-              !path.unicodeScalars.contains(where: { $0.value == 0 || $0.value < 0x20 })
-        else { return nil }
-        return AccountSelector(env: [environmentKey: path])
+        guard allowedEnvironmentKeys.contains(environmentKey), root.isFileURL else { return nil }
+        let candidate = AccountSelector(env: [environmentKey: root.standardizedFileURL.path])
+        return candidate.executable(environmentKey: environmentKey, fileManager: fileManager)
     }
 }
 
@@ -380,6 +410,16 @@ public extension AgentSnapshot {
                 target: nil,
                 avoidAccounts: recommendation.avoidAccounts,
                 validUntil: validUntil
+            )
+        } else if let target = recommendation.target,
+                  target.selector?.executable(forProvider: target.provider) == nil {
+            replacement = AgentRecommendation(
+                routeTo: recommendation.routeTo,
+                avoid: recommendation.avoid,
+                reason: recommendation.reason,
+                target: nil,
+                avoidAccounts: recommendation.avoidAccounts,
+                validUntil: recommendation.validUntil
             )
         } else if recommendation.validUntil == nil, recommendation.target != nil {
             // Legacy provider advice had no expiry. Preserve it, but never expose an
