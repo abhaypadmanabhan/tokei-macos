@@ -4,47 +4,14 @@ import Foundation
 /// Small stamp cache for the nonsecret identity subset of Claude config files. Discovery still
 /// enumerates roots on every refresh, but unchanged metadata does not cause config JSON rereads.
 public final class ClaudeAccountMetadataCache: @unchecked Sendable {
-    private struct Stamp: Equatable {
-        let size: UInt64
-        let modifiedAt: Date?
-        let fileNumber: UInt64?
-    }
-
-    private struct Entry {
-        let stamp: Stamp
-        let identity: String?
-    }
-
-    private let lock = NSLock()
-    private var entries: [String: Entry] = [:]
+    private let cache = FileMetadataCache<String>()
 
     public init() {}
 
     fileprivate func identity(at url: URL, fileManager: FileManager) -> String? {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
-              let size = (attributes[.size] as? NSNumber)?.uint64Value else {
-            lock.lock()
-            entries.removeValue(forKey: url.path)
-            lock.unlock()
-            return nil
+        cache.value(at: url, fileManager: fileManager) {
+            ClaudeAccount.accountUUID(inConfigAt: url, fileManager: fileManager)
         }
-        let stamp = Stamp(
-            size: size,
-            modifiedAt: attributes[.modificationDate] as? Date,
-            fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-        )
-        lock.lock()
-        if let cached = entries[url.path], cached.stamp == stamp {
-            lock.unlock()
-            return cached.identity
-        }
-        lock.unlock()
-
-        let identity = ClaudeAccount.accountUUID(inConfigAt: url, fileManager: fileManager)
-        lock.lock()
-        entries[url.path] = Entry(stamp: stamp, identity: identity)
-        lock.unlock()
-        return identity
     }
 }
 
