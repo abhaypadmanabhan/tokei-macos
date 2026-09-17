@@ -18,12 +18,12 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 - [x] t04 Cursor — UI clutter audit → `tasks/t04.result.md`
 
 ## Phase 2 — triage + Patch Bible
-- [ ] Read all four results; rank `user_impact × release_value ÷ risk`
-- [ ] Write `tasks/patch-bibles/2026-09-17.md`: ≤4 work packages, disjoint file scopes, merge order
-- [ ] Worktrees from `dev` under `../tokei-worktrees/2026-09-17-<slug>` with the pre-commit hook
+- [x] Read all four results; ranked
+- [x] Patch Bible written (`722297e`)
+- [x] Worktrees created with the pre-commit hook
 
 ## Phase 3 — implement (Sol / Cursor, worktree isolation)
-- [ ] WP-UI also: **animated live numbers** — every figure that refreshes (menu bar total, Overview totals, gauges, per-account rows, drill-in) transitions smoothly (SwiftUI `contentTransition(.numericText())` / interpolated rolling) instead of snapping; honours `accessibilityReduceMotion`; read `$UIUX_VAULT/Motion and Micro-interactions.md` first
+- [x] WP-UI also: **animated live numbers** — every figure that refreshes (menu bar total, Overview totals, gauges, per-account rows, drill-in) transitions smoothly (SwiftUI `contentTransition(.numericText())` / interpolated rolling) instead of snapping; honours `accessibilityReduceMotion`; read `$UIUX_VAULT/Motion and Micro-interactions.md` first
 - [x] WP per Bible (all four landed; WP-1/WP-2 partial only for full-corpus benches → reviewers); each ends with a result file + commits, tests green in its worktree
 - [x] Reviewer on a different seat per WP — r07 MERGE; r05/r06/r08 BLOCK → fix rounds → r06b/r08b MERGE-WITH-FIXES (applied, diff-verified); r05b in flight
 
@@ -33,15 +33,15 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 - [x] Debug build; before/after on the same corpus: peak footprint 7,683 MB → 645 MB, RSS 3.0 GB → 0.3 GB, cold CPU 6:20 → 3:31, steady CPU 16.6 % → 12.1 % (Debug vs Release) — Bible §8
 
 ## Phase 5 — release (`/dev-approved`, inline)
-- [ ] `/security-review` on `main...dev`, triage every finding
-- [ ] `/simplify` pass, re-run build + test
-- [ ] Real-corpus smoke tests (`*RealLogsSmokeTests`) opt-in via `TOKEI_REAL_LOGS=1` — default scheme burns ~3 CPU-min per run on this box (2026-09-17 hot-Mac report)
-- [ ] Bump `MARKETING_VERSION` → 0.9.0, CHANGELOG, `docs/08` schema doc
-- [ ] `scripts/release.sh` (sign, notarize, staple, DMG, appcast) — **ask before the outward steps**
-- [ ] Website `website/lib/site.ts` version + download URL + highlights; deploy only when told
+- [x] Security review (Astra, `main...dev`): 0 crit/high, 2 medium, 2 low → all fixed (`ddcabfd`, `802904a`), re-probed SHIP-WITH-NOTES
+- [x] Simplify pass (Sol): −72 net lines, 3 helper families shared, dead code out (`1d076ff`)
+- [x] Real-corpus smoke tests opt-in via `TOKEI_REAL_LOGS=1` — default scheme burns ~3 CPU-min per run on this box (2026-09-17 hot-Mac report)
+- [x] Bump `MARKETING_VERSION` → 0.9.0 (build 9), CHANGELOG, docs 06/08/09, README
+- [~] `scripts/release.sh` running (local artifact); GitHub release / appcast push / main merge / `vercel --prod` **staged for the owner**
+- [x] Website `lib/site.ts` 0.9.0 + download URL + account-aware MCP copy, builds, committed `e0a7052`; deploy only when told
 
 ## Verify (real artifact)
-- [ ] Both Claude accounts show correct, independently recomputed totals in the app and CLI
-- [ ] `tokei status --json` + MCP expose per-account headroom a consumer can route on
-- [ ] RSS/CPU measured before vs after on this machine's corpus (numbers in the Bible)
-- [ ] Notarized DMG launches; Sparkle appcast valid; website shows 0.9.0
+- [x] Both Claude accounts: independent recompute reconciles to zero residual on 1,722 files (r05); live snapshot shows both with accountID/quota/selector
+- [x] `tokei status --json` + MCP expose accountID/quota/headlineAccountID/target/avoidAccounts; herd-budget joins on account_id
+- [x] RSS/CPU before vs after: peak 7.7 GB → 645 MB, RSS 3.0 → 0.3 GB, cold CPU 6:20 → 3:31 (Bible §8)
+- [~] Notarized DMG in progress; website 0.9.0 committed (not deployed)
