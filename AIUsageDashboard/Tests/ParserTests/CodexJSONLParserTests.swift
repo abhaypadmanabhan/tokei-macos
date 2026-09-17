@@ -316,6 +316,124 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertTrue(usage.quotaWindows.allSatisfy { $0.confidence == .estimated })
     }
 
+    func testD5UnchangedCumulativeUsageAddsNoTokensWhileQuotaAdvances() async {
+        let lines = CodexFixtures.d5CumulativeSequence()
+        let url = writeFixture(lines.joined(separator: "\n"), named: "d5-cumulative.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 150)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, 150)
+        XCTAssertEqual(usage.finalReportedTotalTokens, 150)
+        XCTAssertEqual(usage.quotaWindows.first { $0.type == .session }?.used, 30)
+    }
+
+    func testD5DuplicateCumulativeAcrossAppendAddsNoTokens() async throws {
+        let lines = CodexFixtures.d5CumulativeSequence()
+        let url = writeFixture(lines[0], named: "d5-append.jsonl")
+        let parser = makeParser()
+        _ = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+
+        try appendLine(lines[1], to: url)
+        let source = makeSourceWithModificationDate(url: url)
+        let incremental = await parser.parse(logSources: [source])
+        let cold = await makeParser().parse(logSources: [source])
+
+        assertEqual(incremental, cold)
+        XCTAssertEqual(incremental.lifetime.totalTokens, 100)
+        XCTAssertEqual(incremental.quotaWindows.first { $0.type == .session }?.used, 20)
+    }
+
+    func testD5CumulativeDecreaseStartsANewCountedRun() async {
+        let lines = CodexFixtures.d5CumulativeSequence(
+            cumulative: [100, 50, 75],
+            deltas: [100, 50, 25]
+        )
+        let url = writeFixture(lines.joined(separator: "\n"), named: "d5-reset.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 175)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, 175)
+        XCTAssertEqual(usage.finalReportedTotalTokens, 75)
+    }
+
+    func testA3EveryCodexQuotaWindowUsesEventObservedAtAndStaleEventIsNotRoutable() async {
+        let now = referenceNow()
+        let eventDate = now.addingTimeInterval(-2 * 3_600)
+        let url = writeFixture(
+            CodexFixtures.a3QuotaEvent(timestamp: isoString(eventDate)),
+            named: "a3-observed-at.jsonl"
+        )
+
+        let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.quotaWindows.count, 5)
+        XCTAssertTrue(usage.quotaWindows.allSatisfy { $0.observedAt == eventDate })
+        for window in usage.quotaWindows {
+            guard let percent = window.used ?? window.remaining.map({ 100 - $0 }) else { continue }
+            let utilization = Utilization(
+                providerID: .codex,
+                window: window.type,
+                usedPercent: percent,
+                confidence: window.confidence,
+                observedAt: window.observedAt
+            )
+            XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(utilization, now: now))
+        }
+    }
+
+    func testA3CodexFreshnessBoundaryUsesEventTime() async {
+        let now = referenceNow()
+        for age in [1_799.0, 1_801.0] {
+            let eventDate = now.addingTimeInterval(-age)
+            let url = writeFixture(
+                CodexFixtures.a3QuotaEvent(timestamp: isoString(eventDate)),
+                named: "a3-boundary-\(Int(age)).jsonl"
+            )
+            let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+            let session = try! XCTUnwrap(usage.quotaWindows.first { $0.type == .session })
+            let utilization = Utilization(
+                providerID: .codex,
+                window: session.type,
+                usedPercent: session.used ?? 0,
+                confidence: session.confidence,
+                observedAt: session.observedAt
+            )
+            XCTAssertEqual(RouteTargetPolicy.agent.isRoutable(utilization, now: now), age < 1_800)
+        }
+    }
+
+    func testF4UnchangedModelDetectionCachesBothModelAndNilFiles() async throws {
+        let older = writeFixture(
+            CodexFixtures.sessionWithModel(model: "gpt-5.5"),
+            named: "model-older.jsonl"
+        )
+        let newest = writeFixture(CodexFixtures.ignoredEvent, named: "model-newest.jsonl")
+        let parser = makeParser()
+        let sources = [makeSource(url: older), makeSource(url: newest)]
+
+        let firstModel = await parser.detectLatestModel(logSources: sources)
+        let firstReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(firstModel, "gpt-5.5")
+        XCTAssertEqual(firstReadCount, 2)
+        let cachedModel = await parser.detectLatestModel(logSources: sources)
+        let cachedReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(cachedModel, "gpt-5.5")
+        XCTAssertEqual(cachedReadCount, 2)
+
+        try appendLine(
+            """
+            {"timestamp":"2026-07-06T12:00:00.000Z","type":"turn_context","payload":{"model":"gpt-6-ultra"}}
+            """,
+            to: newest
+        )
+        let appendedModel = await parser.detectLatestModel(logSources: sources)
+        let appendedReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(appendedModel, "gpt-6-ultra")
+        XCTAssertEqual(appendedReadCount, 3)
+    }
+
     func testNullRateLimitFieldsDoNotCrash() async {
         let url = writeFixture(CodexFixtures.nullRateLimitFields(), named: "nulls.jsonl")
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])
