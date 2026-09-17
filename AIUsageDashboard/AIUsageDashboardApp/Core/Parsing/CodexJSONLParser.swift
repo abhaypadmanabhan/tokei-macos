@@ -86,7 +86,11 @@ public actor CodexJSONLParser {
             do {
                 var incrementalAggregate = FileAggregate.empty
                 let sessionKey = source.sessionID ?? path
-                let parseResult: (malformedCount: Int, finalOffset: UInt64)
+                let parseResult: (
+                    malformedCount: Int,
+                    finalOffset: UInt64,
+                    discardingOversizedRecord: Bool
+                )
 
                 if let cached = fileCache[path],
                    let cachedModificationDate = cached.modificationDate,
@@ -102,7 +106,8 @@ public actor CodexJSONLParser {
                     fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
-                        startingAtByte: cached.byteOffset
+                        startingAtByte: cached.byteOffset,
+                        startingInOversizedRecord: cached.discardingOversizedRecord
                     ) { [self] record in
                         self.accumulate(
                             into: &incrementalAggregate,
@@ -122,7 +127,8 @@ public actor CodexJSONLParser {
                             endingAt: parseResult.finalOffset
                         ),
                         aggregate: updatedAggregate,
-                        malformedCount: cached.malformedCount + parseResult.malformedCount
+                        malformedCount: cached.malformedCount + parseResult.malformedCount,
+                        discardingOversizedRecord: parseResult.discardingOversizedRecord
                     )
                     fileCache[path] = updatedEntry
                     apply(
@@ -163,7 +169,8 @@ public actor CodexJSONLParser {
                             endingAt: parseResult.finalOffset
                         ),
                         aggregate: incrementalAggregate,
-                        malformedCount: parseResult.malformedCount
+                        malformedCount: parseResult.malformedCount,
+                        discardingOversizedRecord: parseResult.discardingOversizedRecord
                     )
                     fileCache[path] = entry
                     apply(
@@ -229,6 +236,7 @@ public actor CodexJSONLParser {
         var continuityTail: Data
         var aggregate: FileAggregate
         var malformedCount: Int
+        var discardingOversizedRecord: Bool
     }
 
     private func continuityTail(at url: URL, endingAt byteOffset: UInt64) throws -> Data {

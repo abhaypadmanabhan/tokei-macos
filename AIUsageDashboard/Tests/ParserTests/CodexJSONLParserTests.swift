@@ -25,6 +25,22 @@ final class CodexJSONLParserTests: XCTestCase {
         return url
     }
 
+    private func writeFixture(_ data: Data, named: String) throws -> URL {
+        let url = tempDirectory.appendingPathComponent(named)
+        try data.write(to: url)
+        return url
+    }
+
+    private func ignoredRecord(byteCount: Int) -> Data {
+        let prefix = Data(#"{"ignored":""#.utf8)
+        let suffix = Data(#""}"#.utf8)
+        precondition(byteCount >= prefix.count + suffix.count)
+        var record = prefix
+        record.append(Data(repeating: 0x78, count: byteCount - prefix.count - suffix.count))
+        record.append(suffix)
+        return record
+    }
+
     private func makeSource(url: URL, sessionID: String = "codex-session") -> LogSource {
         LogSource(providerID: .codex, url: url, sessionID: sessionID)
     }
@@ -176,6 +192,47 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(usage.lifetime.totalTokens, 0)
         XCTAssertTrue(usage.quotaWindows.isEmpty)
         XCTAssertTrue(usage.warnings.isEmpty)
+    }
+
+    func testS01CodexAcceptsRecordsThroughSixteenMiBAtChunkBoundaries() async throws {
+        for mebibytes in [1, 4, 16] {
+            var fixture = ignoredRecord(byteCount: mebibytes * 1024 * 1024)
+            fixture.append(0x0A)
+            let url = try writeFixture(fixture, named: "s01-codex-\(mebibytes)-mib.jsonl")
+
+            let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+            XCTAssertEqual(usage.lifetime.totalTokens, 0)
+            XCTAssertTrue(usage.warnings.isEmpty, "\(mebibytes) MiB should be accepted")
+        }
+    }
+
+    func testS01CodexSkipsOversizedIncompleteRecordOnceAndResumesAfterDelimiter() async throws {
+        let url = try writeFixture(
+            ignoredRecord(byteCount: 17 * 1024 * 1024),
+            named: "s01-codex-oversized.jsonl"
+        )
+        let parser = makeParser()
+
+        let incomplete = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+        XCTAssertEqual(incomplete.lifetime.totalTokens, 0)
+        XCTAssertEqual(incomplete.warnings.count, 1)
+        XCTAssertLessThan(try XCTUnwrap(incomplete.warnings.first).message.utf8.count, 256)
+
+        let valid = tokenCountLine(
+            timestamp: "2026-07-06T12:00:00.000Z",
+            delta: 7,
+            cumulative: 7,
+            rateLimitUsedPercent: 7
+        )
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n\(valid)".utf8))
+        try handle.close()
+
+        let resumed = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+        XCTAssertEqual(resumed.lifetime.totalTokens, 7)
+        XCTAssertEqual(resumed.warnings.count, 1, "one oversized record emits one warning")
     }
 
     func testBucketsDailyTotalsByEventTimestamp() async {
