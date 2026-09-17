@@ -135,24 +135,10 @@ extension View {
     }
 }
 
-/// Categorical + sequential color for DATA ONLY (design spec §2). Per-METRIC hues
-/// (input/output/cache) for stacked token-type splits; never on buttons, nav, or
-/// active ticks. (Per-AGENT identity colour lives in `AgentTint`.)
+/// Chart-only colors for deltas and the neutral area fill.
 public enum PadzyChartPalette {
-    public static let input = Color(hex: "4C86FF")
-    public static let output = Color(hex: "3DBE8B")
-    public static let cacheRead = Color(hex: "A46BFF")
-    public static let cacheWrite = Color(hex: "E8912D")
-
     public static let deltaUp = Color(hex: "3DBE8B")
     public static let deltaDown = Color(hex: "FF4D4D")
-
-    /// Neutral heatmap cell colour for a 0…1 intensity (mockup formula:
-    /// `rgba(196,196,204, 0.05 + intensity*0.85)`).
-    public static func heatCell(_ intensity: Double) -> Color {
-        Color(.sRGB, red: 196.0 / 255, green: 196.0 / 255, blue: 204.0 / 255,
-              opacity: 0.05 + max(0, min(1, intensity)) * 0.85)
-    }
 
     /// The one sanctioned gradient: a neutral ink→transparent fill under line/area
     /// charts (WP-5 recoloured from pink to neutral; per-agent history tints its own).

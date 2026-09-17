@@ -62,6 +62,9 @@ cd AIUsageDashboard
 xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test
 ```
 
+The four live-corpus smoke suites skip by default. Run them explicitly with
+`TOKEI_REAL_LOGS=1` only when reading this Mac's provider logs is intended.
+
 ## Multiple Claude Code accounts
 
 Claude Code supports several accounts on one Mac by pointing `CLAUDE_CONFIG_DIR` at

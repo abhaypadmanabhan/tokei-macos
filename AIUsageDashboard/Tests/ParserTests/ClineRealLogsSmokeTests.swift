@@ -5,6 +5,8 @@ import XCTest
 /// Skips on machines without logs. Prints token totals and real dollar cost.
 final class ClineRealLogsSmokeTests: XCTestCase {
     func testRealClineLogsParse() async throws {
+        try requireRealLogsOptIn()
+
         let cline = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cline", isDirectory: true)
         let sessions = cline.appendingPathComponent("data/sessions", isDirectory: true)

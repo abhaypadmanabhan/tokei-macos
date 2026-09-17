@@ -162,23 +162,3 @@ public enum ProviderAccountNormalizer {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
-
-/// Protocol-compatible fallback for providers without a multi-account adapter yet.
-public struct SingleAccountDiscoverer: AccountDiscovering {
-    public let providerID: ProviderID
-    public let root: URL
-
-    public init(providerID: ProviderID, root: URL) {
-        self.providerID = providerID
-        self.root = root
-    }
-
-    public func discover(context: DiscoveryContext) throws -> [ProviderAccount] {
-        ProviderAccountNormalizer.normalize(
-            providerID: providerID,
-            candidates: [
-                .init(root: root, label: "default", quotaIdentity: nil, selector: nil)
-            ]
-        )
-    }
-}

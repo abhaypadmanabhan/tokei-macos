@@ -104,10 +104,10 @@ extension ProviderDetailView {
     private func resetCountdown(_ resetAt: Date?) -> some View {
         if let resetAt {
             if reduceMotion {
-                countdownLabel(ProviderOverviewRow.format(until: resetAt, now: Date()))
+                countdownLabel(resetCountdownText(until: resetAt, now: Date()))
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    countdownLabel(ProviderOverviewRow.format(until: resetAt, now: context.date))
+                    countdownLabel(resetCountdownText(until: resetAt, now: context.date))
                 }
             }
         } else {
@@ -121,6 +121,20 @@ extension ProviderDetailView {
             .monospacedDigit()
             .foregroundColor(PadzyTheme.ink4)
             .lineLimit(1)
+    }
+
+    private func resetCountdownText(until date: Date, now: Date) -> String {
+        let interval = date.timeIntervalSince(now)
+        guard interval > 0 else { return "NOW" }
+        let totalSeconds = Int(interval)
+        let totalHours = totalSeconds / 3_600
+        if totalHours >= 24 { return "\(totalHours / 24)d \(totalHours % 24)h" }
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        if totalHours > 0 {
+            return String(format: "%02d:%02d:%02d", totalHours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     // MARK: 7 · Daily history

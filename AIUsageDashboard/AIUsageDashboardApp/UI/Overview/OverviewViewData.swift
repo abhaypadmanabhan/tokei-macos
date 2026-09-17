@@ -15,13 +15,13 @@ extension OverviewView {
     /// Whether the provider's live-quota flag is on (same UserDefaults key the
     /// Connections/Agents toggle writes). `false` for local-only providers.
     func liveQuotaEnabled(_ id: ProviderID) -> Bool {
-        guard let key = ProviderOverviewRow.liveEnabledKey(for: id) else { return false }
+        guard let key = ProviderMetadata.liveQuotaEnabledKey(for: id) else { return false }
         return UserDefaults.standard.bool(forKey: key)
     }
 
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderOverviewRow.connectableProviders.contains(id) {
+        if ProviderMetadata.liveQuotaProviders.contains(id) {
             return liveQuotaEnabled(id) ? .fetching : .connect
         }
         return .localOnly
@@ -77,7 +77,13 @@ extension OverviewView {
             // D25: the quota lens already has the bars. Don't repeat % + "% left" here.
             let used = Int(round(max(0, min(100, util.usedPercent))))
             stat = "\(used)%"
-            statColor = ProviderOverviewRow.thresholdColor(util.usedPercent)
+            if util.usedPercent >= 90 {
+                statColor = PadzyTheme.accent
+            } else if util.usedPercent >= 70 {
+                statColor = PadzyTheme.accent.opacity(0.6)
+            } else {
+                statColor = PadzyTheme.ink
+            }
             substat = nil
             substatColor = PadzyTheme.ink5
         case .fetching:

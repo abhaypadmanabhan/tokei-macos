@@ -49,3 +49,28 @@ public struct TokenUsage: Sendable {
     }
 }
 
+enum UsageAggregation {
+    /// Preserve an unavailable field as `nil` and take confidence from a usage that
+    /// actually contributed numbers, rather than whichever provider happened to run first.
+    static func sum(_ usages: [TokenUsage]) -> TokenUsage {
+        func total(_ keyPath: KeyPath<TokenUsage, Int?>) -> Int? {
+            let values = usages.compactMap { $0[keyPath: keyPath] }
+            return values.isEmpty ? nil : values.reduce(0, +)
+        }
+        return TokenUsage(
+            inputTokens: total(\.inputTokens),
+            outputTokens: total(\.outputTokens),
+            cacheReadTokens: total(\.cacheReadTokens),
+            cacheCreationTokens: total(\.cacheCreationTokens),
+            reasoningTokens: total(\.reasoningTokens),
+            confidence: usages.first { $0.totalTokens != nil }?.confidence ?? .unavailable
+        )
+    }
+
+    static func merge(_ totals: [[Date: Int]]) -> [Date: Int]? {
+        guard !totals.isEmpty else { return nil }
+        return totals.reduce(into: [:]) { merged, next in
+            merged.merge(next, uniquingKeysWith: +)
+        }
+    }
+}

@@ -16,19 +16,7 @@ private struct CodexAuthTokenMetadata: Decodable {
 public final class CodexAccountDiscoverer: AccountDiscovering, @unchecked Sendable {
     public let providerID: ProviderID = .codex
 
-    private struct MetadataStamp: Equatable {
-        let size: UInt64
-        let modifiedAt: Date?
-        let fileNumber: UInt64?
-    }
-
-    private struct CachedIdentity {
-        let stamp: MetadataStamp
-        let identity: String?
-    }
-
-    private let lock = NSLock()
-    private var identityCache: [String: CachedIdentity] = [:]
+    private let identityCache = FileMetadataCache<String>()
 
     public init() {}
 
@@ -55,38 +43,12 @@ public final class CodexAccountDiscoverer: AccountDiscovering, @unchecked Sendab
 
     private func identity(at root: URL, fileManager: FileManager) -> String? {
         let authURL = root.appendingPathComponent("auth.json", isDirectory: false)
-        guard let attributes = try? fileManager.attributesOfItem(atPath: authURL.path),
-              let size = (attributes[.size] as? NSNumber)?.uint64Value else {
-            lock.lock()
-            identityCache.removeValue(forKey: authURL.path)
-            lock.unlock()
-            return nil
+        return identityCache.value(at: authURL, fileManager: fileManager) {
+            guard let data = fileManager.contents(atPath: authURL.path),
+                  let metadata = try? JSONDecoder().decode(CodexAuthMetadata.self, from: data)
+            else { return nil }
+            return metadata.tokens?.accountID.flatMap { $0.isEmpty ? nil : $0 }
         }
-        let stamp = MetadataStamp(
-            size: size,
-            modifiedAt: attributes[.modificationDate] as? Date,
-            fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-        )
-        lock.lock()
-        if let cached = identityCache[authURL.path], cached.stamp == stamp {
-            lock.unlock()
-            return cached.identity
-        }
-        lock.unlock()
-
-        let decodedIdentity: String?
-        if let data = fileManager.contents(atPath: authURL.path),
-           let metadata = try? JSONDecoder().decode(CodexAuthMetadata.self, from: data) {
-            decodedIdentity = metadata.tokens?.accountID
-        } else {
-            decodedIdentity = nil
-        }
-        let identity = decodedIdentity.flatMap { $0.isEmpty ? nil : $0 }
-
-        lock.lock()
-        identityCache[authURL.path] = CachedIdentity(stamp: stamp, identity: identity)
-        lock.unlock()
-        return identity
     }
 
     private func label(for root: URL, defaultRoot: URL) -> String {
