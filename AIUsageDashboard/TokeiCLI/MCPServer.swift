@@ -1,5 +1,6 @@
 import Foundation
 import CoreFoundation
+import Darwin
 
 // The `tokei` target compiles Core/Agent/AgentSnapshot.swift directly and does NOT link
 // the Core framework (it must stay standalone). The AIUsageDashboardCoreTests bundle
@@ -33,13 +34,23 @@ struct MCPFrameReader {
     }
 
     init(fileHandle: FileHandle) {
+        self.init(fileDescriptor: fileHandle.fileDescriptor)
+    }
+
+    init(fileDescriptor: Int32) {
         self.init { requestedBytes in
-            guard let data = try? fileHandle.read(upToCount: requestedBytes),
-                  !data.isEmpty
-            else {
-                return nil
+            var bytes = [UInt8](repeating: 0, count: requestedBytes)
+            while true {
+                let byteCount = bytes.withUnsafeMutableBytes {
+                    Darwin.read(fileDescriptor, $0.baseAddress, $0.count)
+                }
+                if byteCount > 0 {
+                    return Data(bytes.prefix(byteCount))
+                }
+                if byteCount == 0 || errno != EINTR {
+                    return nil
+                }
             }
-            return data
         }
     }
 

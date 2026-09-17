@@ -121,6 +121,8 @@ targets:
       - path: TokeiCLI/StatusFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
+      - target: tokei
+        link: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.CoreTests
