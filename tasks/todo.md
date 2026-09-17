@@ -25,10 +25,10 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 ## Phase 3 — implement (Sol / Cursor, worktree isolation)
 - [ ] WP-UI also: **animated live numbers** — every figure that refreshes (menu bar total, Overview totals, gauges, per-account rows, drill-in) transitions smoothly (SwiftUI `contentTransition(.numericText())` / interpolated rolling) instead of snapping; honours `accessibilityReduceMotion`; read `$UIUX_VAULT/Motion and Micro-interactions.md` first
 - [x] WP per Bible (all four landed; WP-1/WP-2 partial only for full-corpus benches → reviewers); each ends with a result file + commits, tests green in its worktree
-- [~] Reviewer on a different seat per WP — r07 MERGE; r05/r06/r08 BLOCK → fix rounds t05b t06b t08b in flight; re-review after
+- [x] Reviewer on a different seat per WP — r07 MERGE; r05/r06/r08 BLOCK → fix rounds → r06b/r08b MERGE-WITH-FIXES (applied, diff-verified); r05b in flight
 
 ## Phase 4 — integrate (`/agents-done` steps, inline)
-- [ ] Quarantine gate, diff review, targeted tests, `--no-ff` merge in Bible order
+- [~] Quarantine gate, diff review, targeted tests, `--no-ff` merge — WP-3 `96ac609`, WP-2 `26dbdf4`, WP-4 `c8b192d` merged; WP-1 after r05b
 - [ ] `bash .claude/gates/run-all.sh full` on `dev`
 - [ ] Debug build; before/after RSS + CPU on the same corpus; before/after `tokei status --json`
 
