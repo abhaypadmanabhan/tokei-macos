@@ -342,4 +342,36 @@ final class AccountQuotaDecisionTests: XCTestCase {
             XCTAssertEqual(decision.status, .unknown)
         }
     }
+
+    func testR2_codexSingleFreshOfficialWeeklyWindowIsCompleteCoverage() {
+        let unavailableSession = QuotaWindow(
+            providerID: .codex,
+            type: .session,
+            confidence: .unavailable,
+            source: "Codex session window is not supplied for this plan"
+        )
+        let weekly = QuotaWindow(
+            providerID: .codex,
+            type: .weekly,
+            used: 60,
+            limit: 100,
+            remaining: 40,
+            resetAt: now.addingTimeInterval(86_400),
+            confidence: .providerReported,
+            source: "Codex CLI rate_limits (pro plan, weekly window)",
+            observedAt: now.addingTimeInterval(-60)
+        )
+        let codex = account(
+            "/codex",
+            accountID: "codex:account",
+            windows: [unavailableSession, weekly]
+        )
+
+        let decision = AccountQuotaDecision.evaluate(codex, providerID: .codex, now: now)
+
+        XCTAssertTrue(decision.isEligible)
+        XCTAssertEqual(decision.status, .eligible)
+        XCTAssertEqual(decision.usedPercent, 60)
+        XCTAssertEqual(decision.bindingWindowIndex, 1)
+    }
 }

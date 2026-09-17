@@ -155,17 +155,20 @@ private final class RecordingKeychainReader: KeychainPasswordSpawning, @unchecke
 final class ClaudeAccountCredentialsReaderTests: XCTestCase {
     private let home = URL(fileURLWithPath: "/Users/abhayp", isDirectory: true)
 
-    func testReaderRequestsTheAccountsOwnKeychainService() async throws {
+    func testR1_accountOneReaderUsesStableServiceAndReturnsValidCredentials() async throws {
         let account = ClaudeAccount(
             configDirectory: home.appendingPathComponent(".claude-account-1"),
             home: home
         )
-        let spawner = RecordingKeychainReader(payload: #"{"claudeAiOauth":{"accessToken":"tok-1"}}"#)
+        let spawner = RecordingKeychainReader(
+            payload: #"{"claudeAiOauth":{"accessToken":"tok-1","expiresAt":"2099-01-01T00:00:00Z"}}"#
+        )
         let reader = DefaultClaudeUsageCredentialsReader(account: account, keychainReader: spawner)
 
         let credentials = try await reader.readCredentials()
 
         XCTAssertEqual(credentials.accessToken, "tok-1")
+        XCTAssertFalse(credentials.isExpired(at: Date()))
         XCTAssertEqual(spawner.requestedServices, ["Claude Code-credentials-a337dfc1"])
     }
 
