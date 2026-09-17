@@ -146,15 +146,15 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             displayName: displayName,
             authStatus: liveQuotaAuthenticated ? .authenticated : .unknown,
             quotaWindows: quotaWindows,
-            todayUsage: Self.sum(perAccountUsage.map(\.today)),
-            weekUsage: Self.sum(perAccountUsage.map(\.week)),
-            monthUsage: Self.sum(perAccountUsage.map(\.month)),
-            lifetimeUsage: Self.sum(perAccountUsage.map(\.lifetime)),
+            todayUsage: UsageAggregation.sum(perAccountUsage.map(\.today)),
+            weekUsage: UsageAggregation.sum(perAccountUsage.map(\.week)),
+            monthUsage: UsageAggregation.sum(perAccountUsage.map(\.month)),
+            lifetimeUsage: UsageAggregation.sum(perAccountUsage.map(\.lifetime)),
             costUsage: nil,
             warnings: warnings,
             lastSyncedAt: fetchedAt,
-            dailyTotals: Self.merged(perAccountUsage.map(\.dailyTotals)),
-            hourlyTotals: Self.merged(perAccountUsage.compactMap(\.hourlyTotals)),
+            dailyTotals: UsageAggregation.merge(perAccountUsage.map(\.dailyTotals)),
+            hourlyTotals: UsageAggregation.merge(perAccountUsage.compactMap(\.hourlyTotals)),
             accounts: accountUsages,
             // Internal/UI compatibility: ProviderSnapshot names the legacy account row id.
             // The public AgentSnapshot writer projects the stable accountID separately.
@@ -376,35 +376,9 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     /// Token totals sum across accounts — "how much work did I do on Claude" spans every
     /// account. A field stays `nil` only when *no* account reported it, so "unavailable"
     /// isn't silently turned into a zero.
-    private static func sum(_ usages: [TokenUsage]) -> TokenUsage {
-        func total(_ field: (TokenUsage) -> Int?) -> Int? {
-            let values = usages.compactMap(field)
-            return values.isEmpty ? nil : values.reduce(0, +)
-        }
-        // Take the confidence from an account that actually contributed numbers. Using
-        // `usages.first` would report `.unavailable` whenever the first account happened
-        // to have no logs, mislabelling a total that other accounts really did measure.
-        let contributing = usages.first { $0.totalTokens != nil }
-        return TokenUsage(
-            inputTokens: total(\.inputTokens),
-            outputTokens: total(\.outputTokens),
-            cacheReadTokens: total(\.cacheReadTokens),
-            cacheCreationTokens: total(\.cacheCreationTokens),
-            reasoningTokens: total(\.reasoningTokens),
-            confidence: contributing?.confidence ?? .unavailable
-        )
-    }
-
     private static func sum(_ usages: [TokenUsage?]) -> TokenUsage? {
         let present = usages.compactMap { $0 }
-        return present.isEmpty ? nil : sum(present)
-    }
-
-    private static func merged(_ totals: [[Date: Int]]) -> [Date: Int]? {
-        guard !totals.isEmpty else { return nil }
-        return totals.reduce(into: [Date: Int]()) { merged, next in
-            merged.merge(next, uniquingKeysWith: +)
-        }
+        return present.isEmpty ? nil : UsageAggregation.sum(present)
     }
 
     /// Every account's log sources, unioned — callers (file watching, log counts) want all

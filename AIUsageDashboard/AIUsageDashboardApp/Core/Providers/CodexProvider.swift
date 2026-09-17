@@ -82,7 +82,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             providerID: id,
             now: fetchedAt
         )
-        let lifetime = Self.sum(collected.aggregates.map(\.lifetime))
+        let lifetime = UsageAggregation.sum(collected.aggregates.map(\.lifetime))
         let costUsage = await costUsage(for: lifetime, logs: collected.logs)
 
         return ProviderSnapshot(
@@ -90,15 +90,15 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             displayName: displayName,
             authStatus: try await authenticate(),
             quotaWindows: headline?.account.quotaWindows ?? [],
-            todayUsage: Self.sum(collected.aggregates.map(\.today)),
-            weekUsage: Self.sum(collected.aggregates.map(\.week)),
-            monthUsage: Self.sum(collected.aggregates.map(\.month)),
+            todayUsage: UsageAggregation.sum(collected.aggregates.map(\.today)),
+            weekUsage: UsageAggregation.sum(collected.aggregates.map(\.week)),
+            monthUsage: UsageAggregation.sum(collected.aggregates.map(\.month)),
             lifetimeUsage: lifetime,
             costUsage: costUsage,
             warnings: collected.warnings,
             lastSyncedAt: fetchedAt,
-            dailyTotals: Self.merged(collected.aggregates.map(\.dailyTotals)),
-            hourlyTotals: Self.merged(collected.aggregates.compactMap(\.hourlyTotals)),
+            dailyTotals: UsageAggregation.merge(collected.aggregates.map(\.dailyTotals)),
+            hourlyTotals: UsageAggregation.merge(collected.aggregates.compactMap(\.hourlyTotals)),
             accounts: attributedUsages.isEmpty ? nil : attributedUsages,
             headlineAccountID: headline?.account.id
         )
@@ -189,27 +189,6 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         await parser.updateCalendar(calendar)
     }
 
-    private static func sum(_ usages: [TokenUsage]) -> TokenUsage {
-        func total(_ field: (TokenUsage) -> Int?) -> Int? {
-            let values = usages.compactMap(field)
-            return values.isEmpty ? nil : values.reduce(0, +)
-        }
-        return TokenUsage(
-            inputTokens: total(\.inputTokens),
-            outputTokens: total(\.outputTokens),
-            cacheReadTokens: total(\.cacheReadTokens),
-            cacheCreationTokens: total(\.cacheCreationTokens),
-            reasoningTokens: total(\.reasoningTokens),
-            confidence: usages.first { $0.totalTokens != nil }?.confidence ?? .unavailable
-        )
-    }
-
-    private static func merged(_ totals: [[Date: Int]]) -> [Date: Int]? {
-        guard !totals.isEmpty else { return nil }
-        return totals.reduce(into: [Date: Int]()) {
-            $0.merge($1, uniquingKeysWith: +)
-        }
-    }
 }
 
 extension CodexProvider: CalendarAwareProvider {}
