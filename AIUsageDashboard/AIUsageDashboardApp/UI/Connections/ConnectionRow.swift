@@ -12,7 +12,7 @@ import AIUsageDashboardCore
 ///   per-agent "pause", so the dot is an honest status indicator, not a fake
 ///   toggle.
 /// - **Live quota** only appears for the three providers that actually expose an
-///   online connector (`ProviderOverviewRow.connectableProviders`); its switch is
+///   online connector (`ProviderMetadata.liveQuotaProviders`); its switch is
 ///   the same `@AppStorage` flag the connector reads at fetch time, and the OFF /
 ///   CONNECTING / LIVE state is derived from whether a live window has landed.
 ///   Local-only agents read "LOCAL LOGS ONLY" instead of a dead toggle.
@@ -39,7 +39,7 @@ struct ConnectionRow: View {
         _hiddenFlag = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
         _liveEnabled = AppStorage(
             wrappedValue: false,
-            ProviderOverviewRow.liveEnabledKey(for: providerID) ?? "connections.noLive.\(providerID.rawValue)"
+            ProviderMetadata.liveQuotaEnabledKey(for: providerID) ?? "connections.noLive.\(providerID.rawValue)"
         )
     }
 
@@ -61,7 +61,7 @@ struct ConnectionRow: View {
     }
 
     private var connectable: Bool {
-        ProviderOverviewRow.connectableProviders.contains(providerID)
+        ProviderMetadata.liveQuotaProviders.contains(providerID)
     }
 
     private var hasLiveData: Bool {
