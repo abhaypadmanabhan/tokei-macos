@@ -9,6 +9,9 @@ extension CodexJSONLParser {
         var malformedCount = 0
         var finalOffset = byteOffset
         var buffer = Data()
+        // Large enough to amortize FileHandle/autorelease overhead, while the
+        // frozen long-line benchmark remains below the 64 MiB RSS budget.
+        let readChunkSize = 4 * 1024 * 1024
         let fileHandle = try FileHandle(forReadingFrom: url)
         defer { fileHandle.closeFile() }
 
@@ -19,7 +22,7 @@ extension CodexJSONLParser {
         var alreadyScanned = 0
         while true {
             let didRead = try autoreleasepool { () throws -> Bool in
-                guard let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+                guard let chunk = try fileHandle.read(upToCount: readChunkSize), !chunk.isEmpty else {
                     return false
                 }
                 buffer.append(chunk)
