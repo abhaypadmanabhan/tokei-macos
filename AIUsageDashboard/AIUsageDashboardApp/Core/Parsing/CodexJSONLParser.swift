@@ -319,7 +319,7 @@ public actor CodexJSONLParser {
         aggregate.dailyReportedTotals[day, default: 0] += deltaReportedTotalTokens
 
         guard deltaReportedTotalTokens > 0,
-              let hour = hourStart(for: timestamp) else { return }
+              let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar) else { return }
         aggregate.hourlyTotals[hour, default: 0] += deltaReportedTotalTokens
     }
 
@@ -452,10 +452,6 @@ public actor CodexJSONLParser {
         fileReadCount
     }
 
-    private func hourStart(for timestamp: Date) -> Date? {
-        let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
-        return calendar.date(from: components)
-    }
 }
 
 enum CodexLineParseOutcome: Sendable {
