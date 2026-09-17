@@ -153,6 +153,27 @@ final class StatusFormattingTests: XCTestCase {
     XCTAssertTrue(output.contains("5%"))
   }
 
+  func testD7TwoAccountStatusListsLabelsTokensAndQuotaUnderProvider() throws {
+    let output = try table(json: AgentSnapshotFixtures.twoAccountsOneWithoutQuota)
+
+    let providerIndex = try XCTUnwrap(output.range(of: "Claude Code")?.lowerBound)
+    let defaultIndex = try XCTUnwrap(output.range(of: "↳ default")?.lowerBound)
+    let accountIndex = try XCTUnwrap(output.range(of: "↳ account-1")?.lowerBound)
+    XCTAssertLessThan(providerIndex, defaultIndex, "accounts must be listed under their provider")
+    XCTAssertLessThan(defaultIndex, accountIndex)
+
+    let defaultRow = try line(containing: "↳ default", in: output)
+    XCTAssertTrue(defaultRow.contains("0 tok today"))
+    XCTAssertTrue(defaultRow.contains("no quota window"), "absence must not be rendered as 0%")
+    XCTAssertFalse(defaultRow.contains("0%"))
+
+    let accountRow = try line(containing: "↳ account-1", in: output)
+    XCTAssertTrue(accountRow.contains("157000000 tok today"))
+    XCTAssertTrue(accountRow.contains("weekly"))
+    XCTAssertTrue(accountRow.contains("81%"))
+    XCTAssertTrue(accountRow.contains("official"))
+  }
+
   func testAggregateUtilizationIsRendered() throws {
     XCTAssertTrue(
       try table().contains("Aggregate utilization: \(AgentSnapshotFixtures.aggregateUtilizationPercent)%")
@@ -163,7 +184,11 @@ final class StatusFormattingTests: XCTestCase {
     let output = try table()
 
     // Three providers report a "weekly" window; pick Claude's by its 5% figure.
-    let weeklyRow = try line(containing: "5%", in: rows(of: output))
+    let weeklyRows = rows(of: output).split(separator: "\n").filter {
+      $0.contains("5%") && !$0.contains("↳")
+    }
+    XCTAssertEqual(weeklyRows.count, 1)
+    let weeklyRow = try XCTUnwrap(weeklyRows.first.map(String.init))
     XCTAssertTrue(weeklyRow.contains("weekly"))
     XCTAssertTrue(weeklyRow.hasSuffix("oauth_usage_api"), "no trailing padding on the last column")
     // The claude weekly window resets far in the future, so it shows a compact countdown.

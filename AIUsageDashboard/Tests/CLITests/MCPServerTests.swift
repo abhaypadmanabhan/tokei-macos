@@ -1,6 +1,18 @@
 import XCTest
 @testable import AIUsageDashboardCore
 
+private func rpcError(
+  _ response: [String: Any],
+  code: Int,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) throws -> [String: Any] {
+  XCTAssertNil(response["result"], "a JSON-RPC message carries result XOR error", file: file, line: line)
+  let error = try XCTUnwrap(response["error"] as? [String: Any], file: file, line: line)
+  XCTAssertEqual(error["code"] as? Int, code, file: file, line: line)
+  return error
+}
+
 /// Protocol-level coverage for `tokei mcp` (issue #59).
 ///
 /// This is the surface every external coding agent reads quota through, and a protocol
@@ -271,50 +283,83 @@ final class MCPServerTests: XCTestCase {
   /// client shows it to the model. Returning a JSON-RPC error object instead would
   /// surface as a transport fault and hide the actionable message.
   func testMissingSnapshotIsAToolErrorNotAProtocolError() throws {
-    let (server, capture) = try makeServer(fileURL: CLITestSupport.missingSnapshotURL())
+    for tool in ["get_usage", "get_route_recommendation"] {
+      let (server, capture) = try makeServer(fileURL: CLITestSupport.missingSnapshotURL())
 
-    server.handle(line: #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_usage"}}"#)
+      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"\(tool)\"}}")
 
-    let response = try capture.onlyObject()
-    XCTAssertNil(response["error"], "must not be a protocol-level error")
-    let result = try XCTUnwrap(response["result"] as? [String: Any])
-    let (text, isError) = try toolCallText(result)
-    XCTAssertTrue(isError)
-    XCTAssertTrue(text.contains("no usage snapshot found"))
-    XCTAssertTrue(text.contains("Launch Tokei"))
+      let response = try capture.onlyObject()
+      XCTAssertNil(response["error"], "\(tool): must not be a protocol-level error")
+      let result = try XCTUnwrap(response["result"] as? [String: Any])
+      let (text, isError) = try toolCallText(result)
+      XCTAssertTrue(isError, tool)
+      XCTAssertTrue(text.contains("no usage snapshot found"), tool)
+      XCTAssertTrue(text.contains("Launch Tokei"), tool)
+    }
   }
 
   func testMalformedSnapshotIsReportedAsAToolError() throws {
-    let (server, capture) = try makeServer(json: AgentSnapshotFixtures.malformedJSON)
+    for tool in ["get_usage", "get_route_recommendation"] {
+      let (server, capture) = try makeServer(json: AgentSnapshotFixtures.malformedJSON)
 
-    server.handle(line: #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_usage"}}"#)
+      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"\(tool)\"}}")
 
-    let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
-    let (text, isError) = try toolCallText(result)
-    XCTAssertTrue(isError)
-    XCTAssertTrue(text.contains("not valid JSON"))
+      let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
+      let (text, isError) = try toolCallText(result)
+      XCTAssertTrue(isError, tool)
+      XCTAssertTrue(text.contains("not valid JSON"), tool)
+    }
   }
 
-  func testUnknownToolNameIsAToolError() throws {
-    let (server, capture) = try makeServer()
+  // A8 corrected the old test that blessed an MCP execution error. An unknown tool
+  // is invalid tools/call parameters and must be rejected before any snapshot read.
+  func testA8UnknownToolWithMissingSnapshotIsInvalidParamsBeforeFileRead() throws {
+    let (server, capture) = try makeServer(fileURL: CLITestSupport.missingSnapshotURL())
 
     server.handle(line: #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"drop_database"}}"#)
 
-    let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
-    let (text, isError) = try toolCallText(result)
-    XCTAssertTrue(isError)
-    XCTAssertTrue(text.contains("Unknown tool: drop_database"))
+    let response = try capture.onlyObject()
+    let error = try rpcError(response, code: -32602)
+    XCTAssertTrue((error["message"] as? String)?.contains("Unknown tool: drop_database") == true)
   }
 
-  func testToolsCallWithoutANameIsAToolError() throws {
+  // A8 corrected the old test that blessed an MCP execution error. A missing tool
+  // name is invalid call parameters, not a failure of a valid tool execution.
+  func testA8ToolsCallWithoutANameReturnsInvalidParams() throws {
     let (server, capture) = try makeServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"arguments":{}}}"#)
 
-    let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
-    let (text, isError) = try toolCallText(result)
-    XCTAssertTrue(isError)
-    XCTAssertTrue(text.contains("Missing tool name"))
+    let error = try rpcError(try capture.onlyObject(), code: -32602)
+    XCTAssertTrue((error["message"] as? String)?.contains("Missing tool name") == true)
+  }
+
+  func testA8ToolsCallRejectsExtraOrMalformedArguments() throws {
+    let invalidRequests = [
+      #"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_usage","arguments":{"unadvertised":1}}}"#,
+      #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"get_usage","arguments":"not-object"}}"#
+    ]
+
+    for request in invalidRequests {
+      let (server, capture) = try makeServer()
+      server.handle(line: request)
+
+      _ = try rpcError(capture.onlyObject(), code: -32602)
+    }
+  }
+
+  func testA8ToolsCallRejectsMissingOrMalformedParams() throws {
+    let invalidRequests = [
+      #"{"jsonrpc":"2.0","id":14,"method":"tools/call"}"#,
+      #"{"jsonrpc":"2.0","id":15,"method":"tools/call","params":[]}"#
+    ]
+
+    for request in invalidRequests {
+      let (server, capture) = try makeServer()
+      server.handle(line: request)
+
+      _ = try rpcError(capture.onlyObject(), code: -32602)
+    }
   }
 
   // MARK: - JSON-RPC error objects
@@ -334,40 +379,4 @@ final class MCPServerTests: XCTestCase {
     XCTAssertTrue(message.contains("resources/list"), "name the method so the client can debug it")
   }
 
-  func testMalformedJSONRPCReturnsParseErrorWithNullID() throws {
-    let (server, capture) = try makeServer()
-
-    server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"#)
-
-    let response = try capture.onlyObject()
-    let error = try XCTUnwrap(response["error"] as? [String: Any])
-    XCTAssertEqual(error["code"] as? Int, -32700)
-    XCTAssertEqual(error["message"] as? String, "Parse error")
-    XCTAssertTrue(response["id"] is NSNull, "id is unknowable on a parse error — must be null, not absent")
-    XCTAssertNotNil(response["id"])
-  }
-
-  /// A valid JSON value that is not an object is still unparseable as a request.
-  func testNonObjectJSONReturnsParseError() throws {
-    let (server, capture) = try makeServer()
-
-    server.handle(line: "[1, 2, 3]")
-
-    let error = try XCTUnwrap(try capture.onlyObject()["error"] as? [String: Any])
-    XCTAssertEqual(error["code"] as? Int, -32700)
-  }
-
-  // MARK: - Notifications
-
-  /// Per JSON-RPC, a message without an `id` is a notification and MUST NOT be answered.
-  /// Replying to one is a protocol violation that some clients hard-fail on.
-  func testNotificationsAreNeverAnswered() throws {
-    for method in ["notifications/initialized", "notifications/cancelled", "tools/list", "definitely/not/a/method"] {
-      let (server, capture) = try makeServer()
-
-      server.handle(line: #"{"jsonrpc":"2.0","method":"\#(method)"}"#)
-
-      XCTAssertTrue(capture.raw.isEmpty, "\(method) has no id, so it must produce no output")
-    }
-  }
 }

@@ -38,11 +38,34 @@ guards against a secret-shaped field creeping in.
           "usedPercent": 42.0,             // 0…100, clamped
           "resetsAt": "2026-07-24T12:00:00Z", // omitted if the provider doesn't report it
           "confidence": "official",        // official | local_estimate | unavailable
-          "source": "oauth_usage_api"      // diagnostic label
+          "source": "oauth_usage_api",     // diagnostic label
+          "observedAt": "2026-07-24T09:11:40Z" // when this reading was taken
         }
       ],
       "tokensToday": 1834000,              // omitted if not derivable
-      "lastUpdated": "2026-07-24T09:11:40Z"
+      "lastUpdated": "2026-07-24T09:11:40Z",
+      "accounts": [                        // omitted for providers without account detail
+        {
+          "id": "/Users/me/.claude",
+          "label": "default",
+          "windows": [],
+          "tokensToday": 0
+        },
+        {
+          "id": "/Users/me/.claude-account-1",
+          "label": "account-1",
+          "windows": [
+            {
+              "type": "weekly",
+              "usedPercent": 42.0,
+              "confidence": "official",
+              "source": "oauth_usage_api",
+              "observedAt": "2026-07-24T09:11:40Z"
+            }
+          ],
+          "tokensToday": 1834000
+        }
+      ]
     }
   ],
   "aggregateUtilizationPercent": 61.5,     // peak-per-provider, averaged; omitted if none
@@ -54,8 +77,9 @@ guards against a secret-shaped field creeping in.
 }
 ```
 
-Fields are **omitted when absent** (not `null`), except `recommendation.routeTo`
-which is explicitly nullable.
+Fields are **omitted when absent**. Readers must treat an absent
+`recommendation.routeTo` and an explicit `"routeTo": null` identically: there is no
+routing target. The current synthesized Swift encoder omits a nil `routeTo`.
 
 #### Reader-computed staleness (never written to disk)
 
@@ -155,18 +179,19 @@ args = ["mcp"]
 
 ## 4. Recommendation semantics
 
-`AgentRecommendationEngine` (Core, pure) mirrors the least-filled-provider logic
-behind the human-facing "Route work here" chip (`MaxxerMath.routeTarget`, #37). It
-takes each provider's **peak** window utilization, then:
+`RouteTargetPolicy` is the shared decision implementation. The machine-facing
+`AgentRecommendationEngine` calls its `.agent` tuning; the human-facing "Route work
+here" surfaces call its `.human` tuning through `MaxxerMath.routeTarget`. Both reduce
+each provider to its **peak** window and apply the same trust-first rule; only the
+presentation thresholds differ. The agent tuning then:
 
 - `avoid` = every provider at/over **85%** (issue-specified), tightest first.
 - `routeTo` = the least-utilized provider, only when ≥ 2 providers reported quota
   **and** the least one is below 85% (so it never routes you into a wall).
 - returns `nil` when there's nothing worth saying (< 2 readings and nothing to avoid).
 
-> FOLLOW-UP: `MaxxerMath` lives under `UI/` and isn't compiled into Core, so the two
-> engines are separate today. When `MaxxerMath` moves into Core, collapse them into
-> one so the chip and the snapshot are guaranteed identical.
+The shared policy is the contract. Consumers must not reimplement peak selection,
+confidence gating, or freshness checks from the formatted recommendation text.
 
 ## Out of scope (v1)
 

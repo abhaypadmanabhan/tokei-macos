@@ -61,6 +61,7 @@ enum StatusFormatting {
                     ])
                 }
             }
+            rows.append(contentsOf: accountRows(for: provider))
         }
 
         if rows.isEmpty { return ["(no providers reported)"] }
@@ -85,10 +86,43 @@ enum StatusFormatting {
     }
 
     private static func tokensNote(_ provider: AgentProvider) -> String {
-        if let tokens = provider.tokensToday {
-            return "no quota window · \(tokens) tok today"
+        noQuotaNote(tokensToday: provider.tokensToday)
+    }
+
+    /// D7: text status must expose the same account breakdown as JSON/MCP. Account
+    /// rows sit directly beneath their provider and use only the existing public shape.
+    private static func accountRows(for provider: AgentProvider) -> [[String]] {
+        guard let accounts = provider.accounts else { return [] }
+
+        return accounts.flatMap { account in
+            let label = "  ↳ \(account.label)"
+            if account.windows.isEmpty {
+                return [[label, "—", "—", "—", "—", noQuotaNote(tokensToday: account.tokensToday)]]
+            }
+
+            return account.windows.enumerated().map { index, window in
+                var source = window.source
+                if index == 0 {
+                    source += " · \(tokensNote(tokensToday: account.tokensToday))"
+                }
+                return [
+                    index == 0 ? label : "",
+                    window.type,
+                    "\(percent(window.usedPercent))%",
+                    window.resetsAt.map(resetColumn(from:)) ?? "—",
+                    window.confidence,
+                    source
+                ]
+            }
         }
-        return "no quota window"
+    }
+
+    private static func noQuotaNote(tokensToday: Int?) -> String {
+        "no quota window · \(tokensNote(tokensToday: tokensToday))"
+    }
+
+    private static func tokensNote(tokensToday: Int?) -> String {
+        tokensToday.map { "\($0) tok today" } ?? "tokens today unavailable"
     }
 
     // MARK: - Column layout

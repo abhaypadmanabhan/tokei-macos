@@ -96,6 +96,19 @@ final class SnapshotReaderTests: XCTestCase {
     XCTAssertEqual(AgentSnapshot.currentSchemaVersion, 1, "frozen contract — external agents consume this")
   }
 
+  func testA10OldOptionalFieldsAbsentStillDecodes() throws {
+    let url = try CLITestSupport.writeSnapshot(AgentSnapshotFixtures.oldOptionalFieldsAbsent)
+    trackForCleanup(url)
+    let reader = SnapshotReader(fileURL: url, now: snapshotClock(plus: 60))
+
+    let snapshot = try reader.read()
+    let provider = try XCTUnwrap(snapshot.providers.first)
+    XCTAssertEqual(provider.id, "codex")
+    XCTAssertNil(provider.accounts)
+    XCTAssertNil(provider.lastUpdated)
+    XCTAssertNil(provider.windows.first?.observedAt)
+  }
+
   // MARK: - Staleness (the f725bac contract, reader side)
 
   func testFreshSnapshotIsNotStaleAndCarriesAge() throws {
@@ -191,5 +204,17 @@ final class SnapshotReaderTests: XCTestCase {
     XCTAssertTrue(snapshot.providers.isEmpty)
     XCTAssertNil(snapshot.recommendation)
     XCTAssertNil(snapshot.aggregateUtilizationPercent)
+  }
+
+  func testA10AbsentAndNullRouteToBothDecodeAsNoTarget() throws {
+    for json in [AgentSnapshotFixtures.routeToAbsent, AgentSnapshotFixtures.routeToNull] {
+      let url = try CLITestSupport.writeSnapshot(json)
+      trackForCleanup(url)
+      let reader = SnapshotReader(fileURL: url, now: snapshotClock(plus: 60))
+
+      let recommendation = try XCTUnwrap(reader.read().recommendation)
+      XCTAssertNil(recommendation.routeTo)
+      XCTAssertEqual(recommendation.avoid, ["codex"])
+    }
   }
 }

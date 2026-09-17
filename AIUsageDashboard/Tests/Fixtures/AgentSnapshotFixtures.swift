@@ -104,6 +104,71 @@ enum AgentSnapshotFixtures {
     {"schemaVersion": 1, "generatedAt": "2026-07-27T12:00:00Z", "providers": []}
     """
 
+  /// D7: both accounts must remain visible in text status even when one has no quota
+  /// window. Zero tokens and no window is unknown capacity, not a 0% reading.
+  static let twoAccountsOneWithoutQuota = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [
+        {
+          "id": "claude_code",
+          "displayName": "Claude Code",
+          "tokensToday": 157000000,
+          "windows": [
+            {"type": "weekly", "usedPercent": 81, "confidence": "official",
+             "source": "oauth_usage_api"}
+          ],
+          "accounts": [
+            {"id": "/Users/test/.claude", "label": "default", "tokensToday": 0,
+             "windows": []},
+            {"id": "/Users/test/.claude-account-1", "label": "account-1",
+             "tokensToday": 157000000,
+             "windows": [
+               {"type": "weekly", "usedPercent": 81, "confidence": "official",
+                "source": "oauth_usage_api"}
+             ]}
+          ]
+        }
+      ]
+    }
+    """
+
+  static let routeToAbsent = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [],
+      "recommendation": {"avoid": ["codex"], "reason": "fixture"}
+    }
+    """
+
+  static let routeToNull = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [],
+      "recommendation": {"routeTo": null, "avoid": ["codex"], "reason": "fixture"}
+    }
+    """
+
+  static let oldOptionalFieldsAbsent = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [
+        {
+          "id": "codex",
+          "displayName": "Codex",
+          "windows": [
+            {"type": "weekly", "usedPercent": 20, "confidence": "official",
+             "source": "fixture"}
+          ]
+        }
+      ]
+    }
+    """
+
   /// Forward-compat contract: a reader must decode what it understands from a NEWER
   /// schema rather than refusing the file. `schemaVersion` itself stays 1 for anything
   /// Tokei writes — this fixture models a future writer, not a change to the contract.
