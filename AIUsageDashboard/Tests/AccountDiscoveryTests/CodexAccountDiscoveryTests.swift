@@ -67,13 +67,12 @@ final class CodexAccountDiscoveryTests: XCTestCase {
 
     private func appendEvent(
         to root: URL,
-        session: String,
         totalTokens: Int,
         lastTokens: Int,
         usedPercent: Int,
         timestamp: String
     ) throws {
-        let file = root.appendingPathComponent("sessions/2026/09/17/\(session).jsonl")
+        let file = root.appendingPathComponent("sessions/2026/09/17/session-10.jsonl")
         var data = try Data(contentsOf: file)
         data.append(0x0A)
         data.append(Data(codexEventLine(
@@ -224,7 +223,9 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertTrue(refreshedDecision.isEligible)
         XCTAssertEqual(refreshedNewAccount.quotaWindows.first?.used, 35)
     }
+}
 
+extension CodexAccountDiscoveryTests {
     func testR09_07_transitionObservationRejectsOldIdentityEventBeforeReauth() async throws {
         now = ISO8601DateFormatter().date(from: "2026-09-17T02:14:00Z")!
         let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
@@ -234,7 +235,6 @@ final class CodexAccountDiscoveryTests: XCTestCase {
 
         try appendEvent(
             to: root,
-            session: "session-10",
             totalTokens: 20,
             lastTokens: 10,
             usedPercent: 5,
@@ -251,7 +251,6 @@ final class CodexAccountDiscoveryTests: XCTestCase {
 
         try appendEvent(
             to: root,
-            session: "session-10",
             totalTokens: 30,
             lastTokens: 10,
             usedPercent: 35,
@@ -305,7 +304,6 @@ final class CodexAccountDiscoveryTests: XCTestCase {
 
         try appendEvent(
             to: firstRoot,
-            session: "session-10",
             totalTokens: 20,
             lastTokens: 10,
             usedPercent: 35,
@@ -330,7 +328,6 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         now = ISO8601DateFormatter().date(from: "2026-09-18T02:16:40Z")!
         try appendEvent(
             to: root,
-            session: "session-10",
             totalTokens: 15,
             lastTokens: 5,
             usedPercent: 35,
