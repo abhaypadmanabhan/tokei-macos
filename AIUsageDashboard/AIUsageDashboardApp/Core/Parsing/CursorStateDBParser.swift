@@ -9,6 +9,7 @@ public actor CursorStateDBParser {
         public let email: String?
         public let acceptedLinesByDate: [Date: Int]
         public let warnings: [ProviderWarning]
+        let accessToken: String?
 
         public init(
             isAuthenticated: Bool,
@@ -24,6 +25,25 @@ public actor CursorStateDBParser {
             self.email = email
             self.acceptedLinesByDate = acceptedLinesByDate
             self.warnings = warnings
+            self.accessToken = nil
+        }
+
+        init(
+            isAuthenticated: Bool,
+            membershipType: String?,
+            subscriptionStatus: String?,
+            email: String?,
+            acceptedLinesByDate: [Date: Int],
+            warnings: [ProviderWarning],
+            accessToken: String?
+        ) {
+            self.isAuthenticated = isAuthenticated
+            self.membershipType = membershipType
+            self.subscriptionStatus = subscriptionStatus
+            self.email = email
+            self.acceptedLinesByDate = acceptedLinesByDate
+            self.warnings = warnings
+            self.accessToken = accessToken
         }
 
         /// Display plan label composed from the structured membership/subscription
@@ -44,7 +64,6 @@ public actor CursorStateDBParser {
 
     private let fileManager: FileManager
     private let calendar: Calendar
-    private let now: @Sendable () -> Date
 
     public init(
         fileManager: FileManager = .default,
@@ -53,7 +72,7 @@ public actor CursorStateDBParser {
     ) {
         self.fileManager = fileManager
         self.calendar = calendar
-        self.now = now
+        _ = now // Kept for source compatibility with the public initializer.
     }
 
     public func parse(stateDatabaseURL: URL) async -> OfflineState {
@@ -62,7 +81,11 @@ public actor CursorStateDBParser {
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try copyDatabase(from: stateDatabaseURL, to: databaseCopyURL)
+            try SQLiteSidecarCopy.copyDatabase(
+                from: stateDatabaseURL,
+                to: databaseCopyURL,
+                using: fileManager
+            )
             return try parseCopiedDatabase(at: databaseCopyURL)
         } catch {
             return OfflineState(
@@ -86,7 +109,11 @@ public actor CursorStateDBParser {
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try copyDatabase(from: stateDatabaseURL, to: databaseCopyURL)
+            try SQLiteSidecarCopy.copyDatabase(
+                from: stateDatabaseURL,
+                to: databaseCopyURL,
+                using: fileManager
+            )
             return try readAccessTokenValue(at: databaseCopyURL)
         } catch {
             return nil
@@ -100,10 +127,6 @@ public actor CursorStateDBParser {
             .appendingPathComponent("TokeiCursorStateDB-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    private func copyDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        try SQLiteSidecarCopy.copyDatabase(from: sourceURL, to: destinationURL, using: fileManager)
     }
 
     private func parseCopiedDatabase(at url: URL) throws -> OfflineState {
@@ -127,6 +150,7 @@ public actor CursorStateDBParser {
         var membershipType: String?
         var subscriptionStatus: String?
         var email: String?
+        var accessToken: String?
         var acceptedLinesByDate: [Date: Int] = [:]
 
         while sqlite3_step(statement) == SQLITE_ROW {
@@ -137,6 +161,7 @@ public actor CursorStateDBParser {
             case "cursorAuth/accessToken":
                 if let data = value, let token = stringValue(from: data), !token.isEmpty {
                     isAuthenticated = true
+                    accessToken = token
                 }
             case "cursorAuth/stripeMembershipType":
                 membershipType = value.flatMap { stringValue(from: $0) }
@@ -168,7 +193,8 @@ public actor CursorStateDBParser {
             subscriptionStatus: subscriptionStatus,
             email: email,
             acceptedLinesByDate: acceptedLinesByDate,
-            warnings: warnings
+            warnings: warnings,
+            accessToken: accessToken
         )
     }
 

@@ -60,7 +60,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(noTokenStatus, .unauthenticated)
     }
 
-    func testFlagOffUsesOfflineOnly() async throws {
+    func testD11FlagOffKeepsAcceptedLinesOutOfTokenHistory() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
 
@@ -75,7 +75,8 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertNil(snapshot.monthUsage)
         XCTAssertNil(snapshot.costUsage)
         XCTAssertEqual(snapshot.warnings.map(\.message), ["Plan: Pro (active)"])
-        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 21)
+        // D11: accepted code lines are not tokens and must never enter token history.
+        XCTAssertNil(snapshot.dailyTotals)
         XCTAssertNil(snapshot.hourlyTotals)
     }
 
@@ -123,6 +124,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(quota.confidence, .providerReported)
         XCTAssertEqual(quota.label, "Pro (active)")
         XCTAssertNotNil(quota.resetAt)
+        XCTAssertEqual(quota.observedAt, referenceNow)
     }
 
     func testFlagOnKeepsTokensWhenSummaryFails() async throws {
@@ -141,7 +143,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
     }
 
-    func testFlagOnWithClientFailureFallsBackToOffline() async throws {
+    func testD11FlagOnFailureDoesNotRelabelAcceptedLinesAsTokens() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 1, composerAccepted: 2))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
@@ -151,9 +153,47 @@ final class CursorProviderTests: XCTestCase {
 
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
         assertUnavailable(snapshot.todayUsage)
-        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 3)
+        // D11: an online failure leaves token history unavailable, not code-line totals.
+        XCTAssertNil(snapshot.dailyTotals)
         XCTAssertEqual(snapshot.warnings.last?.level, .warning)
         XCTAssertTrue(snapshot.warnings.last?.message.contains("Falling back") == true)
+    }
+
+    func testD11EmptyOnlineCSVProducesEmptyTokenHistory() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 100, composerAccepted: 23))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let client = MockCursorUsageClient(
+            csv: .success("Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output,Total Tokens,Cost\n"),
+            summary: .success(Data(CursorFixtures.usageSummary.utf8))
+        )
+
+        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
+
+        XCTAssertNil(snapshot.dailyTotals)
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 0)
+    }
+
+    func testF5CursorFetchUsesOneTemporaryDatabaseSnapshotAndCleansItUp() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 1, composerAccepted: 2))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let fileManager = CountingFileManager()
+        let client = MockCursorUsageClient(
+            csv: .success(CursorFixtures.usageEventsCSV),
+            summary: .success(Data(CursorFixtures.usageSummary.utf8))
+        )
+
+        _ = try await makeProvider(
+            stateDB: stateDB,
+            client: client,
+            fileManager: fileManager
+        ).fetchSnapshot()
+
+        XCTAssertEqual(fileManager.cursorSnapshotDirectories.count, 1)
+        XCTAssertTrue(fileManager.cursorSnapshotDirectories.allSatisfy {
+            !FileManager.default.fileExists(atPath: $0.path)
+        })
     }
 
     func testFlagOnWithUnresolvableSessionAddsWarning() async throws {
@@ -175,12 +215,14 @@ final class CursorProviderTests: XCTestCase {
 
     private func makeProvider(
         stateDB: URL,
-        client: CursorUsageClient? = nil
+        client: CursorUsageClient? = nil,
+        fileManager: FileManager = .default
     ) -> CursorProvider {
         let fixedNow = referenceNow
         return CursorProvider(
+            fileManager: fileManager,
             stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
+            parser: CursorStateDBParser(fileManager: fileManager, calendar: calendar),
             usageClient: client,
             calendar: calendar,
             now: { fixedNow },
@@ -252,6 +294,30 @@ final class CursorProviderTests: XCTestCase {
         sqlite3_bind_text(statement, 1, key, -1, sqliteTransient)
         sqlite3_bind_text(statement, 2, value, -1, sqliteTransient)
         XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+    }
+}
+
+private final class CountingFileManager: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshotDirectories: [URL] = []
+
+    var cursorSnapshotDirectories: [URL] {
+        lock.withLock { snapshotDirectories }
+    }
+
+    override func createDirectory(
+        at url: URL,
+        withIntermediateDirectories createIntermediates: Bool,
+        attributes: [FileAttributeKey: Any]? = nil
+    ) throws {
+        if url.lastPathComponent.hasPrefix("TokeiCursorStateDB-") {
+            lock.withLock { snapshotDirectories.append(url) }
+        }
+        try super.createDirectory(
+            at: url,
+            withIntermediateDirectories: createIntermediates,
+            attributes: attributes
+        )
     }
 }
 
