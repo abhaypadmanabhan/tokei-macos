@@ -231,6 +231,53 @@ final class OpencodeStoreParserTests: XCTestCase {
         XCTAssertEqual(fileManager.opencodeSnapshotCount, 2)
     }
 
+    func testR0602RollbackJournalSpillNeverSurfacesUncommittedPages() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        let committed = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: 1_789_611_000_000,
+            input: 10, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("msg", "session", 1_789_611_000_000, committed)
+        ])
+
+        let cachedParser = makeParser()
+        let committedUsage = await cachedParser.parse(rootDirectory: root)
+        XCTAssertEqual(committedUsage.lifetime.totalTokens, 10)
+
+        var database: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_open_v2(
+                databaseURL.path, &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil
+            ),
+            SQLITE_OK
+        )
+        guard let database else { throw XCTSkip("SQLite rollback-journal setup failed") }
+        defer {
+            sqlite3_exec(database, "ROLLBACK", nil, nil, nil)
+            sqlite3_close(database)
+        }
+        try execute("PRAGMA journal_mode=DELETE; PRAGMA cache_size=1", database: database)
+        let uncommitted = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: 1_789_611_000_000,
+            input: 900, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try execute("BEGIN EXCLUSIVE; UPDATE message SET data = '\(uncommitted)' WHERE id = 'msg'", database: database)
+        XCTAssertEqual(sqlite3_db_cacheflush(database), SQLITE_OK)
+
+        let uncached = await makeParser().parse(rootDirectory: root)
+        XCTAssertEqual(uncached.sourceKind, .none)
+        XCTAssertEqual(uncached.lifetime.totalTokens, 0)
+        XCTAssertEqual(uncached.warnings.count, 1)
+
+        let cached = await cachedParser.parse(rootDirectory: root)
+        XCTAssertEqual(cached.sourceKind, .sqliteDatabase)
+        XCTAssertEqual(cached.lifetime.totalTokens, 10)
+        XCTAssertEqual(cached.warnings.count, 1)
+    }
+
     // MARK: - Helpers
 
     private func makeParser(

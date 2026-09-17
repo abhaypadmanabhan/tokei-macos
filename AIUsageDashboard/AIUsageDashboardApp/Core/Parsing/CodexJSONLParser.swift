@@ -573,14 +573,18 @@ extension CodexJSONLParser {
         let deltaReportedTotal = intValue(lastUsage["total_tokens"]) ?? deltaUsage.totalTokens ?? 0
         let cumulativeUsage = info["total_token_usage"] as? [String: Any]
         let cumulativeReportedTotal = cumulativeUsage.flatMap { intValue($0["total_tokens"]) }
-        let cumulativeSignature = cumulativeUsage.map {
-            CodexCumulativeUsageSignature(
+        let cumulativeSignature: CodexCumulativeUsageSignature? = cumulativeUsage.flatMap {
+            let signature = CodexCumulativeUsageSignature(
                 inputTokens: intValue($0["input_tokens"]),
                 outputTokens: intValue($0["output_tokens"]),
                 cachedInputTokens: intValue($0["cached_input_tokens"]),
                 reasoningOutputTokens: intValue($0["reasoning_output_tokens"]),
                 totalTokens: intValue($0["total_tokens"])
             )
+            guard signature.inputTokens != nil || signature.outputTokens != nil
+                || signature.cachedInputTokens != nil || signature.reasoningOutputTokens != nil
+                || signature.totalTokens != nil else { return nil }
+            return signature
         }
 
         return .usage(CodexUsageRecord(

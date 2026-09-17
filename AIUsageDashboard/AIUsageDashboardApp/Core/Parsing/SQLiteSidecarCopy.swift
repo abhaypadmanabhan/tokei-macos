@@ -5,9 +5,8 @@ import SQLite3
 ///
 /// Shared by the DB-backed parsers (Cursor / opencode / Antigravity). SQLite's online
 /// backup API reads the main image and committed WAL frames as one transactionally
-/// consistent snapshot. For compatibility with an exclusively locked rollback-journal
-/// database, the narrow busy/locked fallback copies only the main file; WAL-backed
-/// sources never use that weaker path.
+/// consistent snapshot. Busy/locked sources are retried briefly; a raw main-file copy
+/// is never used because rollback-journal pages may contain uncommitted writes.
 enum SQLiteSidecarCopy {
     static func copyDatabase(
         from sourceURL: URL,
@@ -30,7 +29,7 @@ enum SQLiteSidecarCopy {
             if let sourceDatabase { sqlite3_close(sourceDatabase) }
             throw SQLiteSnapshotError(message: message)
         }
-        sqlite3_busy_timeout(sourceDatabase, 1_000)
+        sqlite3_busy_timeout(sourceDatabase, 50)
 
         var destinationDatabase: OpaquePointer?
         let destinationResult = sqlite3_open_v2(
@@ -45,7 +44,7 @@ enum SQLiteSidecarCopy {
             sqlite3_close(sourceDatabase)
             throw SQLiteSnapshotError(message: message)
         }
-        sqlite3_busy_timeout(destinationDatabase, 1_000)
+        sqlite3_busy_timeout(destinationDatabase, 50)
 
         guard let backup = sqlite3_backup_init(
             destinationDatabase,
@@ -58,7 +57,12 @@ enum SQLiteSidecarCopy {
             sqlite3_close(sourceDatabase)
             throw SQLiteSnapshotError(message: message)
         }
-        let stepResult = sqlite3_backup_step(backup, -1)
+        var stepResult = SQLITE_OK
+        for attempt in 0..<5 {
+            stepResult = sqlite3_backup_step(backup, -1)
+            guard stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED else { break }
+            if attempt < 4 { sqlite3_sleep(50) }
+        }
         let finishResult = sqlite3_backup_finish(backup)
         if stepResult == SQLITE_DONE, finishResult == SQLITE_OK {
             var errorMessage: UnsafeMutablePointer<CChar>?
@@ -79,17 +83,12 @@ enum SQLiteSidecarCopy {
             return
         }
 
-        let message = sqliteMessage(destinationDatabase)
+        let message = (stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED)
+            ? "database remained busy or locked while creating a coherent snapshot"
+            : sqliteMessage(destinationDatabase)
         sqlite3_close(destinationDatabase)
         sqlite3_close(sourceDatabase)
-
-        let walURL = URL(fileURLWithPath: sourceURL.path + "-wal")
-        if (stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED),
-           !fileManager.fileExists(atPath: walURL.path) {
-            try? fileManager.removeItem(at: destinationURL)
-            try fileManager.copyItem(at: sourceURL, to: destinationURL)
-            return
-        }
+        try? fileManager.removeItem(at: destinationURL)
         throw SQLiteSnapshotError(message: message)
     }
 

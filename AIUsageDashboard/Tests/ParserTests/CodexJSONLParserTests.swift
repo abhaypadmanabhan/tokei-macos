@@ -358,6 +358,27 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(usage.finalReportedTotalTokens, 75)
     }
 
+    func testR0604EmptyNullAndUnrecognizedCumulativeObjectsKeepDeltas() async {
+        for (name, cumulative) in [
+            ("empty", "{}"),
+            ("null", "null"),
+            ("unrecognized", #"{"future_token_field":999}"#)
+        ] {
+            let prefix = #"{"timestamp":"2026-07-06T12:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":"#
+            let lastUsagePrefix = #","last_token_usage":{"input_tokens":"#
+            let lines = [100, 50].map { delta in
+                prefix + cumulative + lastUsagePrefix + String(delta)
+                    + #","total_tokens":"# + String(delta) + "}}}}"
+            }
+            let url = writeFixture(lines.joined(separator: "\n"), named: "r0604-\(name).jsonl")
+
+            let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+            XCTAssertEqual(usage.lifetime.totalTokens, 150, name)
+            XCTAssertEqual(usage.deltaReportedTotalTokens, 150, name)
+        }
+    }
+
     func testA3EveryCodexQuotaWindowUsesEventObservedAtAndStaleEventIsNotRoutable() async {
         let now = referenceNow()
         let eventDate = now.addingTimeInterval(-2 * 3_600)

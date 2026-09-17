@@ -90,11 +90,23 @@ public actor OpencodeStoreParser {
                 }
                 databaseCache.removeValue(forKey: databaseURL.path)
             } catch {
-                databaseCache.removeValue(forKey: databaseURL.path)
                 warnings.append(ProviderWarning(
                     message: "opencode database could not be read: \(error.localizedDescription)",
                     level: .warning
                 ))
+                if let cached = databaseCache[databaseURL.path]?.aggregate {
+                    return AggregateUsage(
+                        today: cached.today,
+                        week: cached.week,
+                        month: cached.month,
+                        lifetime: cached.lifetime,
+                        dailyTotals: cached.dailyTotals,
+                        hourlyTotals: cached.hourlyTotals,
+                        totalCost: cached.totalCost,
+                        sourceKind: cached.sourceKind,
+                        warnings: cached.warnings + warnings
+                    )
+                }
             }
         } else {
             databaseCache.removeValue(forKey: databaseURL.path)

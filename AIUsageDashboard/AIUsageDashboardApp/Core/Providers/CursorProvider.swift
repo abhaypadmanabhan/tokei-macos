@@ -148,10 +148,10 @@ public actor CursorProvider: UsageProvider {
             async let summaryData = fetchSummarySafely(cookie: cookie)
 
             let csv = try await csvResult
-            let summaryPayload = await summaryData
+            let summaryResponse = await summaryData
             let responseTime = now()
             let events = CursorUsageCSV.parseEvents(csv)
-            let summary = summaryPayload.flatMap(CursorUsageSummary.decode)
+            let summary = summaryResponse.flatMap { CursorUsageSummary.decode($0.payload) }
 
             var windows = UsageWindows(
                 calendar: calendar,
@@ -190,7 +190,7 @@ public actor CursorProvider: UsageProvider {
                 dailyTotals: windowed.dailyTotals,
                 hourlyTotals: windowed.hourlyTotals,
                 summary: summary,
-                summaryObservedAt: summary == nil ? nil : responseTime
+                summaryObservedAt: summary == nil ? nil : summaryResponse?.observedAt
             ))
         } catch {
             return .failure(error.localizedDescription)
@@ -199,7 +199,8 @@ public actor CursorProvider: UsageProvider {
 
     /// The quota summary is enrichment, not the headline — a failure here must not
     /// discard the token usage we did fetch, so it never throws.
-    private func fetchSummarySafely(cookie: String) async -> Data? {
-        try? await usageClient.fetchUsageSummary(cookie: cookie)
+    private func fetchSummarySafely(cookie: String) async -> (payload: Data, observedAt: Date)? {
+        guard let payload = try? await usageClient.fetchUsageSummary(cookie: cookie) else { return nil }
+        return (payload, now())
     }
 }

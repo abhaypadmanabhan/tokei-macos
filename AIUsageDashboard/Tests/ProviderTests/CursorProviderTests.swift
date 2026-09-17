@@ -298,6 +298,35 @@ final class CursorProviderTests: XCTestCase {
     }
 }
 
+extension CursorProviderTests {
+    func testR0603CursorObservedAtUsesQuotaResponseTimeWhenCSVCompletesLater() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 0, composerAccepted: 0))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let clock = AdvancingCursorClock(referenceNow)
+        let client = DelayedCursorCSVClient(clock: clock)
+        let provider = CursorProvider(
+            stateDatabaseURL: stateDB,
+            usageClient: client,
+            calendar: calendar,
+            now: { clock.value },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+        let quota = try XCTUnwrap(snapshot.quotaWindows.first)
+        XCTAssertEqual(quota.observedAt, referenceNow)
+        let utilization = Utilization(
+            providerID: .cursor,
+            window: quota.type,
+            usedPercent: quota.used ?? 0,
+            confidence: quota.confidence,
+            observedAt: quota.observedAt
+        )
+        XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(utilization, now: clock.value))
+    }
+}
+
 private final class CountingFileManager: FileManager, @unchecked Sendable {
     private let lock = NSLock()
     private var snapshotDirectories: [URL] = []
@@ -336,5 +365,37 @@ private struct MockCursorUsageClient: CursorUsageClient {
         case .failure(let error): throw error
         case nil: throw CursorUsageError.unexpectedResponse
         }
+    }
+}
+
+private final class AdvancingCursorClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Date
+
+    init(_ value: Date) { storedValue = value }
+
+    var value: Date { lock.withLock { storedValue } }
+
+    func advance(by interval: TimeInterval) { lock.withLock { storedValue += interval } }
+}
+
+private actor DelayedCursorCSVClient: CursorUsageClient {
+    private let clock: AdvancingCursorClock
+    private var summaryCompleted = false
+
+    init(clock: AdvancingCursorClock) {
+        self.clock = clock
+    }
+
+    func fetchUsageSummary(cookie: String) async throws -> Data {
+        summaryCompleted = true
+        return Data(CursorFixtures.usageSummary.utf8)
+    }
+
+    func fetchUsageEventsCSV(cookie: String) async throws -> String {
+        while !summaryCompleted { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(20))
+        clock.advance(by: 3_600)
+        return "Date,Total Tokens\n"
     }
 }
