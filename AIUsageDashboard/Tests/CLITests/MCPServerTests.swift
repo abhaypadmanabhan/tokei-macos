@@ -449,4 +449,26 @@ final class MCPServerTests: XCTestCase {
       XCTAssertTrue(message.hasSuffix(String(repeating: "x", count: 128)))
     }
   }
+
+  func testR14_03CombiningMarksKeepDiagnosticsWithinByteCap() throws {
+    let longName = "x" + String(repeating: "\u{0301}", count: 200_000)
+    let requests = [
+      (1, -32601, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\(longName)\"}"),
+      (
+        2,
+        -32602,
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
+          + "\"params\":{\"name\":\"\(longName)\"}}"
+      )
+    ]
+
+    for (_, code, request) in requests {
+      let (server, capture) = try makeServer()
+      server.handle(line: request)
+
+      let error = try rpcError(capture.onlyObject(), code: code)
+      let message = try XCTUnwrap(error["message"] as? String)
+      XCTAssertLessThanOrEqual(message.utf8.count, 200)
+    }
+  }
 }

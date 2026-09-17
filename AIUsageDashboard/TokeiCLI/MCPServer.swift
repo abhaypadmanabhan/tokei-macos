@@ -120,7 +120,7 @@ struct MCPServer {
     static let protocolVersion = "2024-11-05"
     static let serverName = "tokei"
     static let oversizedFrameMessage = "Invalid Request: frame exceeds 1048576 bytes."
-    private static let maximumDiagnosticNameCharacters = 128
+    private static let maximumDiagnosticNameBytes = 128
 
     private enum ToolName: String {
         case usage = "get_usage"
@@ -269,7 +269,14 @@ struct MCPServer {
     }
 
     private static func boundedDiagnosticName(_ name: String) -> String {
-        String(name.prefix(maximumDiagnosticNameCharacters))
+        var bytes = Array(name.utf8.prefix(maximumDiagnosticNameBytes))
+        while !bytes.isEmpty {
+            if let bounded = String(bytes: bytes, encoding: .utf8) {
+                return bounded
+            }
+            bytes.removeLast()
+        }
+        return ""
     }
 
     private static func isValidID(_ value: Any?) -> Bool {
