@@ -2,6 +2,25 @@ import Foundation
 import XCTest
 @testable import AIUsageDashboardCore
 
+let mcpTestVersion = "9.9.9"
+
+func rpcError(
+  _ response: [String: Any],
+  code: Int,
+  file: StaticString = #filePath,
+  line: UInt = #line
+) throws -> [String: Any] {
+  XCTAssertNil(
+    response["result"],
+    "a JSON-RPC message carries result XOR error",
+    file: file,
+    line: line
+  )
+  let error = try XCTUnwrap(response["error"] as? [String: Any], file: file, line: line)
+  XCTAssertEqual(error["code"] as? Int, code, file: file, line: line)
+  return error
+}
+
 struct AccountAwareCLIFixture {
   let directory: URL
   let snapshotURL: URL
@@ -119,6 +138,38 @@ extension XCTestCase {
   func snapshotClock(plus seconds: TimeInterval) -> () -> Date {
     let now = AgentSnapshotFixtures.generatedAt.addingTimeInterval(seconds)
     return { now }
+  }
+
+  func makeProtocolServer(
+    json: String = AgentSnapshotFixtures.full,
+    secondsAfterGeneration: TimeInterval = 60
+  ) throws -> (MCPServer, FrameCapture) {
+    let url = try CLITestSupport.writeSnapshot(json)
+    trackForCleanup(url)
+    return try makeProtocolServer(fileURL: url, secondsAfterGeneration: secondsAfterGeneration)
+  }
+
+  func makeProtocolServer(
+    fileURL: URL,
+    secondsAfterGeneration: TimeInterval = 60
+  ) throws -> (MCPServer, FrameCapture) {
+    let capture = FrameCapture()
+    let reader = SnapshotReader(fileURL: fileURL, now: snapshotClock(plus: secondsAfterGeneration))
+    return (MCPServer(reader: reader, version: mcpTestVersion, output: capture.write), capture)
+  }
+
+  func toolCallText(
+    _ result: [String: Any],
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) throws -> (text: String, isError: Bool) {
+    let content = try XCTUnwrap(result["content"] as? [[String: Any]], file: file, line: line)
+    XCTAssertFalse(content.isEmpty, "at least one text block per call", file: file, line: line)
+    XCTAssertEqual(content[0]["type"] as? String, "text", file: file, line: line)
+    return (
+      try XCTUnwrap(content[0]["text"] as? String, file: file, line: line),
+      try XCTUnwrap(result["isError"] as? Bool, file: file, line: line)
+    )
   }
 }
 

@@ -185,56 +185,6 @@ public actor ClaudeJSONLParser {
         didMutateFileCache()
     }
 
-    private struct PreparedAccount {
-        let id: String
-        let entries: [FileCacheEntry]
-        let warnings: [ProviderWarning]
-    }
-
-    private struct ClaimedRecord {
-        var record: ClaudeUsageRecord
-        let ownerID: String
-        var ambiguous: Bool
-    }
-
-    private struct AllocationResult {
-        let byAccountID: [String: FileAggregate]
-        let ambiguousKeys: Int
-        let ambiguousOwnerIDs: Set<String>
-        let claimCount: Int
-    }
-
-    private struct AllocationAccountMembership: Equatable {
-        let id: String
-        let paths: [String]
-    }
-
-    private struct AllocationCacheKey: Equatable {
-        let generation: UInt64
-        let accounts: [AllocationAccountMembership]
-    }
-
-    private struct AllocationCache {
-        let key: AllocationCacheKey
-        let result: AllocationResult
-    }
-
-    struct FileAggregate: Sendable {
-        var lifetime: TokenUsage
-        var dailyUsage: [Date: TokenUsage]
-        var hourlyTotals: [Date: Int]
-        var arithmeticOverflowed: Bool
-
-        static var empty: FileAggregate {
-            FileAggregate(
-                lifetime: TokenUsage(confidence: .localParsed),
-                dailyUsage: [:],
-                hourlyTotals: [:],
-                arithmeticOverflowed: false
-            )
-        }
-    }
-
     func accumulate(
         into aggregate: inout FileAggregate,
         record: ClaudeUsageRecord,
@@ -288,7 +238,7 @@ public actor ClaudeJSONLParser {
             return TokenArithmetic.adding(current, contribution, overflowed: &overflowed)
         }
 
-        return TokenUsage(
+        let adjusted = TokenUsage(
             inputTokens: adjustedComponent(usage.inputTokens ?? 0, record.inputTokens),
             outputTokens: adjustedComponent(usage.outputTokens ?? 0, record.outputTokens),
             cacheReadTokens: adjustedComponent(usage.cacheReadTokens ?? 0, record.cacheReadInputTokens),
@@ -299,6 +249,8 @@ public actor ClaudeJSONLParser {
             reasoningTokens: usage.reasoningTokens ?? 0,
             confidence: .localParsed
         )
+        _ = adjusted.totalTokens(overflowed: &overflowed)
+        return adjusted
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {

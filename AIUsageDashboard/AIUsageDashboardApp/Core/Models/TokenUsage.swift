@@ -83,9 +83,14 @@ public struct TokenUsage: Sendable {
     public let cacheCreationTokens: Int?
     public let reasoningTokens: Int?
     public var totalTokens: Int? {
+        var overflowed = false
+        return totalTokens(overflowed: &overflowed)
+    }
+
+    func totalTokens(overflowed: inout Bool) -> Int? {
         let all: [Int?] = [inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, reasoningTokens]
         if all.allSatisfy({ $0 == nil }) { return nil }
-        return TokenArithmetic.sum(all.compactMap { $0 })
+        return TokenArithmetic.sum(all.compactMap { $0 }, overflowed: &overflowed)
     }
     public let confidence: MetricConfidence
 
@@ -113,7 +118,7 @@ public struct TokenUsage: Sendable {
     }
 
     func merging(_ other: TokenUsage, overflowed: inout Bool) -> TokenUsage {
-        TokenUsage(
+        let merged = TokenUsage(
             inputTokens: TokenArithmetic.adding(
                 inputTokens ?? 0,
                 other.inputTokens ?? 0,
@@ -141,6 +146,8 @@ public struct TokenUsage: Sendable {
             ),
             confidence: minConfidence(confidence, other.confidence)
         )
+        _ = merged.totalTokens(overflowed: &overflowed)
+        return merged
     }
 
     private func minConfidence(_ a: MetricConfidence, _ b: MetricConfidence) -> MetricConfidence {
