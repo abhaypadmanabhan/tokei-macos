@@ -1,5 +1,13 @@
 import Foundation
 import XCTest
+@testable import AIUsageDashboardCore
+
+struct AccountAwareCLIFixture {
+  let directory: URL
+  let snapshotURL: URL
+  let selectorDirectory: URL
+  let validUntil: Date
+}
 
 /// Shared scaffolding for the `tokei` CLI / MCP tests (issue #59).
 ///
@@ -7,15 +15,88 @@ import XCTest
 /// unique temp path and points a `SnapshotReader` at it with an injected clock. Nothing
 /// touches `~/Library/Application Support`, and nothing depends on the wall clock.
 enum CLITestSupport {
-  /// Writes `json` to a fresh temp file and returns its URL. Caller owns cleanup via
-  /// `XCTestCase.trackForCleanup(_:)`.
-  static func writeSnapshot(_ json: String) throws -> URL {
+  static func temporaryDirectory() throws -> URL {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("tokei-cli-tests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  /// Writes `json` to a fresh temp file and returns its URL. Caller owns cleanup via
+  /// `XCTestCase.trackForCleanup(_:)`.
+  static func writeSnapshot(_ json: String) throws -> URL {
+    let directory = try temporaryDirectory()
     let url = directory.appendingPathComponent("agent-snapshot.json")
     try Data(json.utf8).write(to: url)
     return url
+  }
+
+  static func writeSnapshot(_ snapshot: AgentSnapshot, in directory: URL) throws -> URL {
+    let url = directory.appendingPathComponent("agent-snapshot.json")
+    try AgentSnapshot.makeEncoder().encode(snapshot).write(to: url)
+    return url
+  }
+
+  static func accountAwareFixture(validFor seconds: TimeInterval) throws -> AccountAwareCLIFixture {
+    let directory = try temporaryDirectory()
+    let selectorDirectory = directory.appendingPathComponent("profile with spaces 'quotes' $(literal)")
+    try FileManager.default.createDirectory(at: selectorDirectory, withIntermediateDirectories: true)
+    let validUntil = AgentSnapshotFixtures.generatedAt.addingTimeInterval(seconds)
+    let snapshot = accountAwareSnapshot(selectorDirectory: selectorDirectory, validUntil: validUntil)
+    return AccountAwareCLIFixture(
+      directory: directory,
+      snapshotURL: try writeSnapshot(snapshot, in: directory),
+      selectorDirectory: selectorDirectory,
+      validUntil: validUntil
+    )
+  }
+
+  private static func accountAwareSnapshot(
+    selectorDirectory: URL,
+    validUntil: Date
+  ) -> AgentSnapshot {
+    let target = AgentRecommendationTarget(
+      provider: "codex",
+      accountID: "codex:fixture-account",
+      selector: AccountSelector(env: ["CODEX_HOME": selectorDirectory.path])
+    )
+    let account = AgentAccount(
+      id: selectorDirectory.path,
+      label: "default",
+      windows: [],
+      tokensToday: 0,
+      accountID: "codex:fixture-account",
+      selector: target.selector,
+      quota: AgentAccountQuota(
+        status: "eligible",
+        usedPercent: 20,
+        headroomPercent: 80,
+        bindingWindowIndex: 0,
+        validUntil: validUntil
+      )
+    )
+    let provider = AgentProvider(
+      id: "codex",
+      displayName: "OpenAI Codex",
+      windows: [],
+      tokensToday: 0,
+      lastUpdated: AgentSnapshotFixtures.generatedAt,
+      accounts: [account],
+      headlineAccountID: account.accountID
+    )
+    return AgentSnapshot(
+      generatedAt: AgentSnapshotFixtures.generatedAt,
+      providers: [provider],
+      aggregateUtilizationPercent: 20,
+      recommendation: AgentRecommendation(
+        routeTo: "codex",
+        avoid: [],
+        reason: "fresh fixture",
+        target: target,
+        avoidAccounts: [],
+        validUntil: validUntil
+      )
+    )
   }
 
   /// A path that is guaranteed not to exist.
