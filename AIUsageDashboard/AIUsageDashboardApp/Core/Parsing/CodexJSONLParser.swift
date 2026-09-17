@@ -88,11 +88,7 @@ public actor CodexJSONLParser {
             do {
                 var incrementalAggregate = FileAggregate.empty
                 let sessionKey = source.sessionID ?? path
-                let parseResult: (
-                    malformedCount: Int,
-                    finalOffset: UInt64,
-                    discardingOversizedRecord: Bool
-                )
+                let parseResult: JSONLParseResult
 
                 if let cached = fileCache[path],
                    let cachedModificationDate = cached.modificationDate,
@@ -323,21 +319,7 @@ public actor CodexJSONLParser {
             overflowed: &aggregate.arithmeticOverflowed
         )
 
-        if let cumulativeTotal = record.cumulativeReportedTotalTokens {
-            let current = aggregate.finalTotalsBySession[sessionKey]
-            if current == nil || record.isNewerThan(current!) {
-                aggregate.finalTotalsBySession[sessionKey] = CodexSessionFinalTotal(
-                    timestamp: record.timestamp,
-                    totalTokens: cumulativeTotal
-                )
-            }
-        }
-
-        if let rateLimits = record.rateLimits,
-           aggregate.latestRateLimits == nil
-            || rateLimits.timestamp > aggregate.latestRateLimits!.timestamp {
-            aggregate.latestRateLimits = rateLimits
-        }
+        recordLatestSnapshots(into: &aggregate, from: record, sessionKey: sessionKey)
 
         guard let timestamp = record.timestamp else { return }
         let day = calendar.startOfDay(for: timestamp)
@@ -357,6 +339,27 @@ public actor CodexJSONLParser {
             deltaReportedTotalTokens,
             overflowed: &aggregate.arithmeticOverflowed
         )
+    }
+
+    private func recordLatestSnapshots(
+        into aggregate: inout FileAggregate,
+        from record: CodexUsageRecord,
+        sessionKey: String
+    ) {
+        if let cumulativeTotal = record.cumulativeReportedTotalTokens {
+            let current = aggregate.finalTotalsBySession[sessionKey]
+            if current == nil || record.isNewerThan(current!) {
+                aggregate.finalTotalsBySession[sessionKey] = CodexSessionFinalTotal(
+                    timestamp: record.timestamp,
+                    totalTokens: cumulativeTotal
+                )
+            }
+        }
+        if let rateLimits = record.rateLimits,
+           aggregate.latestRateLimits == nil
+            || rateLimits.timestamp > aggregate.latestRateLimits!.timestamp {
+            aggregate.latestRateLimits = rateLimits
+        }
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
@@ -725,32 +728,9 @@ extension CodexJSONLParser {
         let deltaReportedValue = CheckedNumericConversion.optionalTokenCount(lastUsage["total_tokens"])
         guard deltaReportedValue.isValid else { return .malformed }
         let deltaReportedTotal = deltaReportedValue.value ?? deltaUsage.totalTokens ?? 0
-        let cumulativeUsage = info["total_token_usage"] as? [String: Any]
-        let cumulativeSignature: CodexCumulativeUsageSignature?
-        if let cumulativeUsage {
-            let input = CheckedNumericConversion.optionalTokenCount(cumulativeUsage["input_tokens"])
-            let output = CheckedNumericConversion.optionalTokenCount(cumulativeUsage["output_tokens"])
-            let cached = CheckedNumericConversion.optionalTokenCount(cumulativeUsage["cached_input_tokens"])
-            let reasoning = CheckedNumericConversion.optionalTokenCount(
-                cumulativeUsage["reasoning_output_tokens"]
-            )
-            let total = CheckedNumericConversion.optionalTokenCount(cumulativeUsage["total_tokens"])
-            guard input.isValid, output.isValid, cached.isValid, reasoning.isValid, total.isValid else {
-                return .malformed
-            }
-            let signature = CodexCumulativeUsageSignature(
-                inputTokens: input.value,
-                outputTokens: output.value,
-                cachedInputTokens: cached.value,
-                reasoningOutputTokens: reasoning.value,
-                totalTokens: total.value
-            )
-            cumulativeSignature = signature.inputTokens != nil || signature.outputTokens != nil
-                || signature.cachedInputTokens != nil || signature.reasoningOutputTokens != nil
-                || signature.totalTokens != nil ? signature : nil
-        } else {
-            cumulativeSignature = nil
-        }
+        let cumulative = cumulativeUsageSignature(from: info)
+        guard cumulative.isValid else { return .malformed }
+        let cumulativeSignature = cumulative.value
         let cumulativeReportedTotal = cumulativeSignature?.totalTokens
 
         return .usage(CodexUsageRecord(
@@ -762,6 +742,33 @@ extension CodexJSONLParser {
             cumulativeUsageSignature: cumulativeSignature,
             rateLimits: rateLimits(from: payload["rate_limits"], timestamp: timestamp)
         ))
+    }
+
+    private func cumulativeUsageSignature(
+        from info: [String: Any]
+    ) -> (isValid: Bool, value: CodexCumulativeUsageSignature?) {
+        guard let usage = info["total_token_usage"] as? [String: Any] else {
+            return (true, nil)
+        }
+        let input = CheckedNumericConversion.optionalTokenCount(usage["input_tokens"])
+        let output = CheckedNumericConversion.optionalTokenCount(usage["output_tokens"])
+        let cached = CheckedNumericConversion.optionalTokenCount(usage["cached_input_tokens"])
+        let reasoning = CheckedNumericConversion.optionalTokenCount(usage["reasoning_output_tokens"])
+        let total = CheckedNumericConversion.optionalTokenCount(usage["total_tokens"])
+        guard input.isValid, output.isValid, cached.isValid, reasoning.isValid, total.isValid else {
+            return (false, nil)
+        }
+        let signature = CodexCumulativeUsageSignature(
+            inputTokens: input.value,
+            outputTokens: output.value,
+            cachedInputTokens: cached.value,
+            reasoningOutputTokens: reasoning.value,
+            totalTokens: total.value
+        )
+        let hasValue = signature.inputTokens != nil || signature.outputTokens != nil
+            || signature.cachedInputTokens != nil || signature.reasoningOutputTokens != nil
+            || signature.totalTokens != nil
+        return (true, hasValue ? signature : nil)
     }
 
     private func tokenUsage(from json: [String: Any]) -> TokenUsage? {

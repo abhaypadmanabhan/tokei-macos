@@ -6,11 +6,7 @@ extension CodexJSONLParser {
         startingAtByte byteOffset: UInt64,
         startingInOversizedRecord: Bool = false,
         onRecord: (CodexUsageRecord) -> Void
-    ) async throws -> (
-        malformedCount: Int,
-        finalOffset: UInt64,
-        discardingOversizedRecord: Bool
-    ) {
+    ) async throws -> JSONLParseResult {
         var malformedCount = 0
         var finalOffset = byteOffset
         var buffer = Data()
@@ -85,7 +81,11 @@ extension CodexJSONLParser {
         }
 
         guard !buffer.isEmpty, !discardingOversizedRecord else {
-            return (malformedCount, finalOffset, discardingOversizedRecord)
+            return JSONLParseResult(
+                malformedCount: malformedCount,
+                finalOffset: finalOffset,
+                discardingOversizedRecord: discardingOversizedRecord
+            )
         }
 
         switch parseLine(buffer) {
@@ -100,7 +100,11 @@ extension CodexJSONLParser {
             malformedCount += 1
             finalOffset += UInt64(buffer.count)
         }
-        return (malformedCount, finalOffset, discardingOversizedRecord)
+        return JSONLParseResult(
+            malformedCount: malformedCount,
+            finalOffset: finalOffset,
+            discardingOversizedRecord: discardingOversizedRecord
+        )
     }
 
     private func process(

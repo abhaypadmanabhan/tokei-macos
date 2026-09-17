@@ -1,18 +1,6 @@
 import XCTest
 @testable import AIUsageDashboardCore
 
-private func rpcError(
-  _ response: [String: Any],
-  code: Int,
-  file: StaticString = #filePath,
-  line: UInt = #line
-) throws -> [String: Any] {
-  XCTAssertNil(response["result"], "a JSON-RPC message carries result XOR error", file: file, line: line)
-  let error = try XCTUnwrap(response["error"] as? [String: Any], file: file, line: line)
-  XCTAssertEqual(error["code"] as? Int, code, file: file, line: line)
-  return error
-}
-
 /// Protocol-level coverage for `tokei mcp` (issue #59).
 ///
 /// This is the surface every external coding agent reads quota through, and a protocol
@@ -22,48 +10,12 @@ private func rpcError(
 /// error objects. Anything an MCP client would reject must fail here first.
 final class MCPServerTests: XCTestCase {
 
-  private let testVersion = "9.9.9"
-
-  /// A server backed by `json` on disk, with the clock `seconds` after `generatedAt`.
-  private func makeServer(
-    json: String = AgentSnapshotFixtures.full,
-    secondsAfterGeneration: TimeInterval = 60
-  ) throws -> (MCPServer, FrameCapture) {
-    let url = try CLITestSupport.writeSnapshot(json)
-    trackForCleanup(url)
-    return try makeServer(fileURL: url, secondsAfterGeneration: secondsAfterGeneration)
-  }
-
-  private func makeServer(
-    fileURL: URL,
-    secondsAfterGeneration: TimeInterval = 60
-  ) throws -> (MCPServer, FrameCapture) {
-    let capture = FrameCapture()
-    let reader = SnapshotReader(fileURL: fileURL, now: snapshotClock(plus: secondsAfterGeneration))
-    return (MCPServer(reader: reader, version: testVersion, output: capture.write), capture)
-  }
-
-  /// The `content[0].text` of a `tools/call` result, plus its `isError` flag.
-  private func toolCallText(
-    _ result: [String: Any],
-    file: StaticString = #filePath,
-    line: UInt = #line
-  ) throws -> (text: String, isError: Bool) {
-    let content = try XCTUnwrap(result["content"] as? [[String: Any]], file: file, line: line)
-    XCTAssertFalse(content.isEmpty, "at least one text block per call", file: file, line: line)
-    XCTAssertEqual(content[0]["type"] as? String, "text", file: file, line: line)
-    return (
-      try XCTUnwrap(content[0]["text"] as? String, file: file, line: line),
-      try XCTUnwrap(result["isError"] as? Bool, file: file, line: line)
-    )
-  }
-
   // MARK: - Framing
 
   /// Newline-delimited JSON: exactly one frame per request, terminated by exactly one
   /// `\n`, with no stray bytes. Get this wrong and every client hangs.
   func testEachResponseIsOneNewlineTerminatedFrame() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
 
@@ -75,7 +27,7 @@ final class MCPServerTests: XCTestCase {
   /// The read loop: blank lines are skipped, and each message produces its own frame in
   /// order. This covers the stdio transport, not just the dispatcher.
   func testRunLoopSkipsBlankLinesAndFramesEachMessage() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
     var inbox = [
       #"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
       "",
@@ -124,7 +76,7 @@ final class MCPServerTests: XCTestCase {
   }
 
   func testS03OversizedFrameAndIDReturnFixedErrorThenContinue() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
     let oversizedID = String(repeating: "i", count: MCPFrameReader.maximumFrameBytes)
     let input = Data(
       "{\"jsonrpc\":\"2.0\",\"id\":\"\(oversizedID)\",\"method\":\"ping\"}\n"
@@ -150,7 +102,7 @@ final class MCPServerTests: XCTestCase {
   }
 
   func testResponseEnvelopeCarriesJSONRPCVersionAndEchoesID() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":"abc-123","method":"ping"}"#)
 
@@ -169,7 +121,7 @@ final class MCPServerTests: XCTestCase {
   /// `claude mcp add tokei` register and then never connect. Echoing the client's value
   /// back is the opposite bug — claiming support we do not have.
   func testInitializeAnswersWithOurProtocolVersionNotTheClientsRequest() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: """
       {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25",\
@@ -185,7 +137,7 @@ final class MCPServerTests: XCTestCase {
   }
 
   func testInitializeAdvertisesToolsCapabilityAndServerInfo() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
 
@@ -195,13 +147,13 @@ final class MCPServerTests: XCTestCase {
 
     let serverInfo = try XCTUnwrap(result["serverInfo"] as? [String: Any])
     XCTAssertEqual(serverInfo["name"] as? String, "tokei")
-    XCTAssertEqual(serverInfo["version"] as? String, testVersion, "version is injected, not hardcoded")
+    XCTAssertEqual(serverInfo["version"] as? String, mcpTestVersion, "version is injected, not hardcoded")
   }
 
   /// `instructions` is surfaced to the model once at connect time; it is what makes an
   /// agent call the tools unprompted. Losing it is a silent behavioural regression.
   func testInitializeCarriesInstructionsWithTheTrustRules() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
 
@@ -220,7 +172,7 @@ final class MCPServerTests: XCTestCase {
   // MARK: - tools/list
 
   func testToolsListAdvertisesExactlyTheTwoTools() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#)
 
@@ -232,7 +184,7 @@ final class MCPServerTests: XCTestCase {
   /// Every tool needs a non-empty description and a valid JSON Schema, or clients drop
   /// it from the model's tool list without saying why.
   func testEachToolHasADescriptionAndAClosedObjectInputSchema() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#)
 
@@ -252,7 +204,7 @@ final class MCPServerTests: XCTestCase {
   // MARK: - tools/call · get_usage
 
   func testGetUsageReturnsTheDecodableSnapshot() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_usage","arguments":{}}}"#)
 
@@ -272,7 +224,7 @@ final class MCPServerTests: XCTestCase {
   // MARK: - tools/call · get_route_recommendation
 
   func testGetRouteRecommendationReturnsOnlyTheRecommendation() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: """
       {"jsonrpc":"2.0","id":3,"method":"tools/call",\
@@ -297,7 +249,7 @@ final class MCPServerTests: XCTestCase {
   /// not only in a flag it might ignore.
   func testStaleSnapshotKeepsJSONFirstAndAddsAWarningOnBothTools() throws {
     for tool in ["get_usage", "get_route_recommendation"] {
-      let (server, capture) = try makeServer(secondsAfterGeneration: 7200)
+      let (server, capture) = try makeProtocolServer(secondsAfterGeneration: 7200)
 
       server.handle(line: #"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"\#(tool)"}}"#)
 
@@ -314,7 +266,7 @@ final class MCPServerTests: XCTestCase {
   }
 
   func testFreshSnapshotHasNoStaleWarning() throws {
-    let (server, capture) = try makeServer()
+    let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_usage"}}"#)
 
@@ -326,149 +278,4 @@ final class MCPServerTests: XCTestCase {
     XCTAssertTrue(text.contains("\"stale\" : false"))
   }
 
-  // MARK: - tools/call · errors
-
-  /// A tool failure is `isError: true` inside a *successful* JSON-RPC result — an MCP
-  /// client shows it to the model. Returning a JSON-RPC error object instead would
-  /// surface as a transport fault and hide the actionable message.
-  func testMissingSnapshotIsAToolErrorNotAProtocolError() throws {
-    for tool in ["get_usage", "get_route_recommendation"] {
-      let (server, capture) = try makeServer(fileURL: CLITestSupport.missingSnapshotURL())
-
-      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"\(tool)\"}}")
-
-      let response = try capture.onlyObject()
-      XCTAssertNil(response["error"], "\(tool): must not be a protocol-level error")
-      let result = try XCTUnwrap(response["result"] as? [String: Any])
-      let (text, isError) = try toolCallText(result)
-      XCTAssertTrue(isError, tool)
-      XCTAssertTrue(text.contains("no usage snapshot found"), tool)
-      XCTAssertTrue(text.contains("Launch Tokei"), tool)
-    }
-  }
-
-  func testMalformedSnapshotIsReportedAsAToolError() throws {
-    for tool in ["get_usage", "get_route_recommendation"] {
-      let (server, capture) = try makeServer(json: AgentSnapshotFixtures.malformedJSON)
-
-      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"\(tool)\"}}")
-
-      let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
-      let (text, isError) = try toolCallText(result)
-      XCTAssertTrue(isError, tool)
-      XCTAssertTrue(text.contains("not valid JSON"), tool)
-    }
-  }
-
-  // A8 corrected the old test that blessed an MCP execution error. An unknown tool
-  // is invalid tools/call parameters and must be rejected before any snapshot read.
-  func testA8UnknownToolWithMissingSnapshotIsInvalidParamsBeforeFileRead() throws {
-    let (server, capture) = try makeServer(fileURL: CLITestSupport.missingSnapshotURL())
-
-    server.handle(line: #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"drop_database"}}"#)
-
-    let response = try capture.onlyObject()
-    let error = try rpcError(response, code: -32602)
-    XCTAssertTrue((error["message"] as? String)?.contains("Unknown tool: drop_database") == true)
-  }
-
-  // A8 corrected the old test that blessed an MCP execution error. A missing tool
-  // name is invalid call parameters, not a failure of a valid tool execution.
-  func testA8ToolsCallWithoutANameReturnsInvalidParams() throws {
-    let (server, capture) = try makeServer()
-
-    server.handle(line: #"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"arguments":{}}}"#)
-
-    let error = try rpcError(try capture.onlyObject(), code: -32602)
-    XCTAssertTrue((error["message"] as? String)?.contains("Missing tool name") == true)
-  }
-
-  func testA8ToolsCallRejectsExtraOrMalformedArguments() throws {
-    let invalidRequests = [
-      #"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"get_usage","arguments":{"unadvertised":1}}}"#,
-      #"{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"get_usage","arguments":"not-object"}}"#
-    ]
-
-    for request in invalidRequests {
-      let (server, capture) = try makeServer()
-      server.handle(line: request)
-
-      _ = try rpcError(capture.onlyObject(), code: -32602)
-    }
-  }
-
-  func testA8ToolsCallRejectsMissingOrMalformedParams() throws {
-    let invalidRequests = [
-      #"{"jsonrpc":"2.0","id":14,"method":"tools/call"}"#,
-      #"{"jsonrpc":"2.0","id":15,"method":"tools/call","params":[]}"#
-    ]
-
-    for request in invalidRequests {
-      let (server, capture) = try makeServer()
-      server.handle(line: request)
-
-      _ = try rpcError(capture.onlyObject(), code: -32602)
-    }
-  }
-
-  // MARK: - JSON-RPC error objects
-
-  func testUnknownMethodReturnsMethodNotFound() throws {
-    let (server, capture) = try makeServer()
-
-    server.handle(line: #"{"jsonrpc":"2.0","id":42,"method":"resources/list"}"#)
-
-    let response = try capture.onlyObject()
-    XCTAssertEqual(response["jsonrpc"] as? String, "2.0")
-    XCTAssertEqual(response["id"] as? Int, 42, "an error must still echo the request id")
-    XCTAssertNil(response["result"], "a JSON-RPC message carries result XOR error")
-    let error = try XCTUnwrap(response["error"] as? [String: Any])
-    XCTAssertEqual(error["code"] as? Int, -32601)
-    let message = try XCTUnwrap(error["message"] as? String)
-    XCTAssertTrue(message.contains("resources/list"), "name the method so the client can debug it")
-  }
-
-  func testS03OneMiBUnknownNamesProduceBoundedErrors() throws {
-    let longName = String(repeating: "x", count: 1024 * 1024)
-
-    do {
-      let (server, capture) = try makeServer()
-      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\(longName)\"}")
-      let error = try rpcError(capture.onlyObject(), code: -32601)
-      let message = try XCTUnwrap(error["message"] as? String)
-      XCTAssertLessThan(message.utf8.count, 256)
-      XCTAssertTrue(message.hasSuffix(String(repeating: "x", count: 128)))
-    }
-
-    do {
-      let (server, capture) = try makeServer()
-      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"\(longName)\"}}")
-      let error = try rpcError(capture.onlyObject(), code: -32602)
-      let message = try XCTUnwrap(error["message"] as? String)
-      XCTAssertLessThan(message.utf8.count, 256)
-      XCTAssertTrue(message.hasSuffix(String(repeating: "x", count: 128)))
-    }
-  }
-
-  func testR14_03CombiningMarksKeepDiagnosticsWithinByteCap() throws {
-    let longName = "x" + String(repeating: "\u{0301}", count: 200_000)
-    let requests = [
-      (1, -32601, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\(longName)\"}"),
-      (
-        2,
-        -32602,
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
-          + "\"params\":{\"name\":\"\(longName)\"}}"
-      )
-    ]
-
-    for (_, code, request) in requests {
-      let (server, capture) = try makeServer()
-      server.handle(line: request)
-
-      let error = try rpcError(capture.onlyObject(), code: code)
-      let message = try XCTUnwrap(error["message"] as? String)
-      XCTAssertLessThanOrEqual(message.utf8.count, 200)
-    }
-  }
 }

@@ -540,7 +540,8 @@ final class CodexJSONLParserTests: XCTestCase {
     }
 
     func testS02CodexExtremeDoubleFixtureIsRejectedAsMalformedInsteadOfTrapping() async {
-        let fixture = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1e100}}}}"#
+        let prefix = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"#
+        let fixture = prefix + #""input_tokens":1e100}}}}"#
         let url = writeFixture(fixture, named: "s02-codex-extreme.jsonl")
 
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])
@@ -551,9 +552,13 @@ final class CodexJSONLParserTests: XCTestCase {
     }
 
     func testS02CodexCrossRecordOverflowSaturatesWithWarning() async {
+        let prefix = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"#
+        let suffix = #"}}}}"#
         let fixture = [
-            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":9223372036854775806,"total_tokens":9223372036854775806}}}}"#,
-            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2,"total_tokens":2}}}}"#
+            prefix
+                + #""input_tokens":9223372036854775806,"total_tokens":9223372036854775806"#
+                + suffix,
+            prefix + #""input_tokens":2,"total_tokens":2"# + suffix
         ].joined(separator: "\n")
         let url = writeFixture(fixture, named: "s02-codex-cross-record-overflow.jsonl")
 

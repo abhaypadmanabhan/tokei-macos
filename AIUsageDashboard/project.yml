@@ -116,7 +116,9 @@ targets:
       # The TOKEI_CLI_TESTS condition below flips on their `import AIUsageDashboardCore`,
       # which the tool target must NOT have (it compiles AgentSnapshot.swift directly).
       # main.swift and StatusCommand.swift stay out: they own process entry / stdout.
+      - path: TokeiCLI/MCPFrameReader.swift
       - path: TokeiCLI/MCPServer.swift
+      - path: TokeiCLI/MCPServer+Instructions.swift
       - path: TokeiCLI/SnapshotReader.swift
       - path: TokeiCLI/StatusFormatting.swift
     dependencies:
