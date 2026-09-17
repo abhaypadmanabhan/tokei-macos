@@ -1,20 +1,36 @@
 import Foundation
 
 public actor CodexJSONLParser {
+    struct FileUsage: Sendable {
+        let path: String
+        let firstEventAt: Date?
+        let lastEventAt: Date?
+        let lifetime: TokenUsage
+        let dailyUsage: [Date: TokenUsage]
+        let dailyTotals: [Date: Int]
+        let hourlyTotals: [Date: Int]
+    }
+
     public struct AggregateUsage: Sendable {
         public let today: TokenUsage
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
+        /// Raw token components keyed by the parser calendar's start of day.
+        /// Codex identity attribution consumes these dated totals instead of a
+        /// date-relative `today` snapshot so midnight cannot move old usage.
+        public let dailyUsage: [Date: TokenUsage]
         public let dailyTotals: [Date: Int]
+        public let todayStart: Date
         public let hourlyTotals: [Date: Int]?
         public let quotaWindows: [QuotaWindow]
         public let deltaReportedTotalTokens: Int
         public let finalReportedTotalTokens: Int
         public let warnings: [ProviderWarning]
+        let files: [FileUsage]
     }
 
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: () -> Date
 
     /// Caches per-file aggregates so unchanged logs are not re-parsed on every sync.
@@ -23,6 +39,7 @@ public actor CodexJSONLParser {
     private var fileCache: [String: FileCacheEntry] = [:]
     private var modelDetectionCache: [String: ModelDetectionCacheEntry] = [:]
     private var modelDetectionFileReadCount = 0
+    private var fileReadCount = 0
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -33,10 +50,12 @@ public actor CodexJSONLParser {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
+        var dailyUsage: [Date: TokenUsage] = [:]
         var hourlyTotals: [Date: Int] = [:]
         var latestRateLimits: CodexRateLimitSnapshot?
         var deltaReportedTotalTokens = 0
         var finalTotalsBySession: [String: CodexSessionFinalTotal] = [:]
+        var files: [FileUsage] = []
 
         for source in logSources {
             let path = source.url.path
@@ -51,11 +70,13 @@ public actor CodexJSONLParser {
                 apply(
                     cached.aggregate,
                     to: &windows,
+                    dailyUsage: &dailyUsage,
                     hourlyTotals: &hourlyTotals,
                     latestRateLimits: &latestRateLimits,
                     deltaReportedTotalTokens: &deltaReportedTotalTokens,
                     finalTotalsBySession: &finalTotalsBySession
                 )
+                files.append(fileUsage(path: path, aggregate: cached.aggregate))
                 if cached.malformedCount > 0 {
                     warnings.append(malformedWarning(count: cached.malformedCount, url: source.url))
                 }
@@ -78,6 +99,7 @@ public actor CodexJSONLParser {
                     == cached.continuityTail {
                     incrementalAggregate.lastCumulativeUsageBySession =
                         cached.aggregate.lastCumulativeUsageBySession
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
                         startingAtByte: cached.byteOffset
@@ -106,11 +128,13 @@ public actor CodexJSONLParser {
                     apply(
                         updatedEntry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
                         finalTotalsBySession: &finalTotalsBySession
                     )
+                    files.append(fileUsage(path: path, aggregate: updatedEntry.aggregate))
                     if updatedEntry.malformedCount > 0 {
                         warnings.append(malformedWarning(
                             count: updatedEntry.malformedCount,
@@ -118,6 +142,7 @@ public actor CodexJSONLParser {
                         ))
                     }
                 } else {
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
                         startingAtByte: 0
@@ -144,11 +169,13 @@ public actor CodexJSONLParser {
                     apply(
                         entry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
                         finalTotalsBySession: &finalTotalsBySession
                     )
+                    files.append(fileUsage(path: path, aggregate: entry.aggregate))
                     if entry.malformedCount > 0 {
                         warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
                     }
@@ -165,17 +192,15 @@ public actor CodexJSONLParser {
         // unbounded — Codex creates a new per-session log file continually, and a
         // long-running menu-bar app would otherwise retain every one ever seen.
         //
-        // HAZARD, if Codex ever gains multiple accounts/config directories: filtering on
-        // *this call's* source list is only safe because `CodexProvider` makes exactly one
-        // `parse` call, so the list is the whole corpus. The moment a second caller shares
-        // this parser, each call's list becomes a slice and each one evicts the other's
-        // entries — the cache then never hits and every refresh re-reads everything. That
-        // is precisely what happened to `ClaudeJSONLParser`; see 50276d2, which changed the
-        // predicate to existence on disk. Copy that fix here rather than rediscovering it.
+        // CodexProvider parses one account slice at a time. Retain entries outside this
+        // slice while their files still exist, or alternating accounts evict and re-read
+        // each other's cache on every refresh. This mirrors Claude's multi-root fix.
         // The cross-file dedup ordering bug the Claude fix then exposed does not apply:
         // Codex aggregates per session file with no shared dedupe-key set.
         let activePaths = Set(logSources.map(\.url.path))
-        fileCache = fileCache.filter { activePaths.contains($0.key) }
+        fileCache = fileCache.filter { path, _ in
+            activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
+        }
 
         let snapshot = windows.snapshot()
         return AggregateUsage(
@@ -183,12 +208,15 @@ public actor CodexJSONLParser {
             week: snapshot.week,
             month: snapshot.month,
             lifetime: snapshot.lifetime,
+            dailyUsage: dailyUsage,
             dailyTotals: snapshot.dailyTotals,
+            todayStart: calendar.startOfDay(for: referenceDate),
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
             finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
-            warnings: warnings
+            warnings: warnings,
+            files: files
         )
     }
 
@@ -222,6 +250,8 @@ public actor CodexJSONLParser {
         var finalTotalsBySession: [String: CodexSessionFinalTotal]
         var latestRateLimits: CodexRateLimitSnapshot?
         var lastCumulativeUsageBySession: [String: CodexCumulativeUsageSignature]
+        var firstEventAt: Date?
+        var lastEventAt: Date?
 
         static var empty: FileAggregate {
             FileAggregate(
@@ -232,7 +262,9 @@ public actor CodexJSONLParser {
                 deltaReportedTotalTokens: 0,
                 finalTotalsBySession: [:],
                 latestRateLimits: nil,
-                lastCumulativeUsageBySession: [:]
+                lastCumulativeUsageBySession: [:],
+                firstEventAt: nil,
+                lastEventAt: nil
             )
         }
     }
@@ -242,6 +274,12 @@ public actor CodexJSONLParser {
         record: CodexUsageRecord,
         sessionKey: String
     ) {
+        if let timestamp = record.timestamp {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
+        }
+        guard record.contributesUsage else { return }
+
         let repeatsCumulativeUsage: Bool
         if let signature = record.cumulativeUsageSignature {
             repeatsCumulativeUsage = aggregate.lastCumulativeUsageBySession[sessionKey] == signature
@@ -314,11 +352,30 @@ public actor CodexJSONLParser {
         for (sessionKey, signature) in incremental.lastCumulativeUsageBySession {
             aggregate.lastCumulativeUsageBySession[sessionKey] = signature
         }
+        if let firstEventAt = incremental.firstEventAt {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? firstEventAt, firstEventAt)
+        }
+        if let lastEventAt = incremental.lastEventAt {
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? lastEventAt, lastEventAt)
+        }
+    }
+
+    private func fileUsage(path: String, aggregate: FileAggregate) -> FileUsage {
+        FileUsage(
+            path: path,
+            firstEventAt: aggregate.firstEventAt,
+            lastEventAt: aggregate.lastEventAt,
+            lifetime: aggregate.lifetime,
+            dailyUsage: aggregate.dailyUsage,
+            dailyTotals: aggregate.dailyReportedTotals,
+            hourlyTotals: aggregate.hourlyTotals
+        )
     }
 
     private func apply(
         _ aggregate: FileAggregate,
         to windows: inout UsageWindows,
+        dailyUsage: inout [Date: TokenUsage],
         hourlyTotals: inout [Date: Int],
         latestRateLimits: inout CodexRateLimitSnapshot?,
         deltaReportedTotalTokens: inout Int,
@@ -326,6 +383,9 @@ public actor CodexJSONLParser {
     ) {
         windows.accumulate(aggregate.lifetime, timestamp: nil, dailyTotal: 0)
         for (day, usage) in aggregate.dailyUsage {
+            dailyUsage[day] = (
+                dailyUsage[day] ?? UsageWindows.emptyUsage(usage.confidence)
+            ).merging(usage)
             windows.accumulate(
                 usage,
                 timestamp: day,
@@ -377,6 +437,21 @@ public actor CodexJSONLParser {
         )
     }
 
+    /// Rebuild cached day/hour buckets after a timezone or calendar-rule change.
+    public func updateCalendar(_ calendar: Calendar) {
+        guard self.calendar.identifier != calendar.identifier
+            || self.calendar.timeZone.identifier != calendar.timeZone.identifier
+            || self.calendar.firstWeekday != calendar.firstWeekday
+            || self.calendar.minimumDaysInFirstWeek != calendar.minimumDaysInFirstWeek
+            || self.calendar.locale?.identifier != calendar.locale?.identifier else { return }
+        self.calendar = calendar
+        fileCache.removeAll(keepingCapacity: true)
+    }
+
+    func fileReadCountForTesting() -> Int {
+        fileReadCount
+    }
+
     private func hourStart(for timestamp: Date) -> Date? {
         let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
         return calendar.date(from: components)
@@ -391,6 +466,7 @@ enum CodexLineParseOutcome: Sendable {
 
 struct CodexUsageRecord: Sendable {
     let timestamp: Date?
+    let contributesUsage: Bool
     let deltaUsage: TokenUsage
     let deltaReportedTotalTokens: Int
     let cumulativeReportedTotalTokens: Int?
@@ -557,10 +633,21 @@ extension CodexJSONLParser {
             return .malformed
         }
 
+        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
+
         guard json["type"] as? String == "event_msg",
               let payload = json["payload"] as? [String: Any],
               payload["type"] as? String == "token_count" else {
-            return .skipped
+            guard let timestamp else { return .skipped }
+            return .usage(CodexUsageRecord(
+                timestamp: timestamp,
+                contributesUsage: false,
+                deltaUsage: UsageWindows.emptyUsage(.localParsed),
+                deltaReportedTotalTokens: 0,
+                cumulativeReportedTotalTokens: nil,
+                cumulativeUsageSignature: nil,
+                rateLimits: nil
+            ))
         }
 
         guard let info = payload["info"] as? [String: Any],
@@ -568,7 +655,6 @@ extension CodexJSONLParser {
             return .malformed
         }
 
-        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
         let deltaUsage = tokenUsage(from: lastUsage)
         let deltaReportedTotal = intValue(lastUsage["total_tokens"]) ?? deltaUsage.totalTokens ?? 0
         let cumulativeUsage = info["total_token_usage"] as? [String: Any]
@@ -589,6 +675,7 @@ extension CodexJSONLParser {
 
         return .usage(CodexUsageRecord(
             timestamp: timestamp,
+            contributesUsage: true,
             deltaUsage: deltaUsage,
             deltaReportedTotalTokens: deltaReportedTotal,
             cumulativeReportedTotalTokens: cumulativeReportedTotal,

@@ -68,7 +68,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
             remaining: 100 - used,
             resetAt: Date().addingTimeInterval(86_400),
             confidence: confidence,
-            source: "test"
+            source: "test",
+            observedAt: Date()
         )
     }
 
@@ -336,9 +337,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.confidence, .providerReported)
     }
 
-    /// With nothing confirmed anywhere, the rule falls back to headroom rather than
-    /// reporting no quota at all — an estimate is still better than a blank gauge.
-    func testHeadlineAccountFallsBackToHeadroomWhenNothingIsConfirmed() async throws {
+    /// A2: estimates are display-only; they cannot become an executable headline account.
+    func testHeadlineAccountIsNilWhenNothingIsConfirmed() async throws {
         let base = try makeAccountDirectory(".claude", outputTokens: 10)
         let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
 
@@ -356,7 +356,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
 
         let snapshot = try await provider.fetchSnapshot()
 
-        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 20)
+        XCTAssertNil(snapshot.headlineAccountID)
+        XCTAssertTrue(snapshot.quotaWindows.allSatisfy { $0.confidence == .unavailable })
     }
 
     /// No usable reading anywhere means there is no headline account to name — the field
@@ -541,6 +542,10 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertEqual(snapshot.accounts?.first?.quotaWindows.first?.used, 42)
+        XCTAssertEqual(
+            snapshot.accounts?.first?.selector?.env["CLAUDE_CONFIG_DIR"],
+            home.appendingPathComponent(".claude-account-2").path
+        )
         let canonicalCalls = await canonical.callCount()
         let siblingCalls = await sibling.callCount()
         XCTAssertEqual(canonicalCalls, 1, "the canonical is still tried first")

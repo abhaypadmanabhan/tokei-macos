@@ -1,6 +1,53 @@
 import CryptoKit
 import Foundation
 
+/// Small stamp cache for the nonsecret identity subset of Claude config files. Discovery still
+/// enumerates roots on every refresh, but unchanged metadata does not cause config JSON rereads.
+public final class ClaudeAccountMetadataCache: @unchecked Sendable {
+    private struct Stamp: Equatable {
+        let size: UInt64
+        let modifiedAt: Date?
+        let fileNumber: UInt64?
+    }
+
+    private struct Entry {
+        let stamp: Stamp
+        let identity: String?
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    public init() {}
+
+    fileprivate func identity(at url: URL, fileManager: FileManager) -> String? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.uint64Value else {
+            lock.lock()
+            entries.removeValue(forKey: url.path)
+            lock.unlock()
+            return nil
+        }
+        let stamp = Stamp(
+            size: size,
+            modifiedAt: attributes[.modificationDate] as? Date,
+            fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        )
+        lock.lock()
+        if let cached = entries[url.path], cached.stamp == stamp {
+            lock.unlock()
+            return cached.identity
+        }
+        lock.unlock()
+
+        let identity = ClaudeAccount.accountUUID(inConfigAt: url, fileManager: fileManager)
+        lock.lock()
+        entries[url.path] = Entry(stamp: stamp, identity: identity)
+        lock.unlock()
+        return identity
+    }
+}
+
 /// One Claude Code account — one **Anthropic identity**, not one config directory.
 ///
 /// Claude Code supports several accounts on one machine by pointing `CLAUDE_CONFIG_DIR` at
@@ -39,6 +86,32 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     public let isDefault: Bool
 
     public var id: String { configDirectory.path }
+
+    /// Provider-scoped stable identity used by the public agent contract.
+    public var accountID: String {
+        if let accountUUID {
+            return ProviderAccountNormalizer.stableID(
+                providerID: .claudeCode,
+                quotaIdentity: accountUUID
+            )
+        }
+        return ProviderAccountNormalizer.localID(
+            providerID: .claudeCode,
+            canonicalRoot: configDirectory
+        )
+    }
+
+    /// A selector from an actually present profile. The canonical path remains the legacy
+    /// id even when a usable sibling is the only profile left on disk.
+    public func selector(fileManager: FileManager = .default) -> AccountSelector? {
+        configDirectories.compactMap {
+            AccountSelector.verified(
+                environmentKey: "CLAUDE_CONFIG_DIR",
+                root: $0,
+                fileManager: fileManager
+            )
+        }.first
+    }
 
     public init(
         configDirectory: URL,
@@ -126,7 +199,10 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     /// before.
     public static func discover(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        fileManager: FileManager = .default
+        registeredRoots: [URL] = [],
+        inheritedRoot: URL? = nil,
+        fileManager: FileManager = .default,
+        metadataCache: ClaudeAccountMetadataCache? = nil
     ) -> [ClaudeAccount] {
         let contents = (try? fileManager.contentsOfDirectory(
             at: home,
@@ -147,41 +223,71 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
             .sorted { label(of: $0) < label(of: $1) }
 
         // The default directory is listed whether or not it exists — a fresh install still
-        // has credentials worth reading — so it always heads the list.
-        let directories = [home.appendingPathComponent(defaultDirectoryName, isDirectory: true)]
-            + siblings
+        // has credentials worth reading — so it always heads the list. Explicit nondefault
+        // roots are live registrations, not synthetic defaults, and disappear on refresh
+        // once their directory is removed.
+        let defaultRoot = home.appendingPathComponent(defaultDirectoryName, isDirectory: true)
+        let explicitRoots = ([inheritedRoot].compactMap { $0 } + registeredRoots).filter { root in
+            if root.standardizedFileURL.path == defaultRoot.standardizedFileURL.path { return true }
+            var isDirectory: ObjCBool = false
+            return fileManager.fileExists(atPath: root.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+        let directories = [defaultRoot] + siblings + explicitRoots
 
-        return group(directories, home: home, fileManager: fileManager)
+        return group(
+            directories,
+            home: home,
+            fileManager: fileManager,
+            metadataCache: metadataCache
+        )
     }
 
     /// Folds config directories into one account per identity, preserving input order.
     static func group(
         _ directories: [URL],
         home: URL,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        metadataCache: ClaudeAccountMetadataCache? = nil
     ) -> [ClaudeAccount] {
-        var order: [String] = []
-        var members: [String: [URL]] = [:]
+        let normalized = ProviderAccountNormalizer.normalize(
+            providerID: .claudeCode,
+            candidates: directories.map { directory in
+                ProviderAccountNormalizer.Candidate(
+                    root: directory,
+                    label: directory.standardizedFileURL.path
+                        == home.appendingPathComponent(defaultDirectoryName).standardizedFileURL.path
+                        ? "default"
+                        : label(of: directory),
+                    quotaIdentity: accountUUID(
+                        of: directory,
+                        fileManager: fileManager,
+                        metadataCache: metadataCache
+                    ),
+                    selector: AccountSelector.verified(
+                        environmentKey: "CLAUDE_CONFIG_DIR",
+                        root: directory,
+                        fileManager: fileManager
+                    )
+                )
+            }
+        )
 
-        for directory in directories {
-            let uuid = accountUUID(of: directory, fileManager: fileManager)
-            // An unreadable identity gets a key of its own. Two directories that both fail
-            // to identify themselves are not thereby the same account — merging them would
-            // silently fuse two people's usage, which is worse than listing one twice.
-            let key = uuid.map { "uuid:\($0)" } ?? "path:\(directory.standardizedFileURL.path)"
-            if members[key] == nil { order.append(key) }
-            members[key, default: []].append(directory)
-        }
-
-        return order.map { key in
-            let group = members[key] ?? []
+        return normalized.map { descriptor in
+            let group = descriptor.profiles.map(\.root)
             let canonical = canonicalDirectory(among: group, home: home)
             return ClaudeAccount(
                 configDirectory: canonical,
                 additionalDirectories: group.filter {
                     $0.standardizedFileURL.path != canonical.standardizedFileURL.path
                 },
-                accountUUID: key.hasPrefix("uuid:") ? String(key.dropFirst("uuid:".count)) : nil,
+                accountUUID: group.compactMap {
+                    accountUUID(
+                        of: $0,
+                        fileManager: fileManager,
+                        metadataCache: metadataCache
+                    )
+                }.first,
                 home: home
             )
         }
@@ -218,15 +324,32 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
     /// The Anthropic account a config directory is signed in to, or `nil` if that cannot be
     /// established. Reads only `oauthAccount.accountUuid`; the rest of the file — including
     /// the email address and the organization — is not this type's business.
-    static func accountUUID(of directory: URL, fileManager: FileManager = .default) -> String? {
+    static func accountUUID(
+        of directory: URL,
+        fileManager: FileManager = .default,
+        metadataCache: ClaudeAccountMetadataCache? = nil
+    ) -> String? {
         for url in configFileCandidates(for: directory) {
-            guard let data = fileManager.contents(atPath: url.path),
-                  let config = try? JSONDecoder().decode(ConfigIdentity.self, from: data),
-                  let uuid = config.oauthAccount?.accountUuid,
-                  !uuid.isEmpty else { continue }
-            return uuid
+            let identity: String?
+            if let metadataCache {
+                identity = metadataCache.identity(at: url, fileManager: fileManager)
+            } else {
+                identity = accountUUID(inConfigAt: url, fileManager: fileManager)
+            }
+            if let identity { return identity }
         }
         return nil
+    }
+
+    fileprivate static func accountUUID(
+        inConfigAt url: URL,
+        fileManager: FileManager
+    ) -> String? {
+        guard let data = fileManager.contents(atPath: url.path),
+              let config = try? JSONDecoder().decode(ConfigIdentity.self, from: data),
+              let uuid = config.oauthAccount?.accountUuid,
+              !uuid.isEmpty else { return nil }
+        return uuid
     }
 
     /// Where Claude Code keeps the config JSON holding `oauthAccount`, in the order to try.

@@ -7,82 +7,136 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
 
     private let fileManager: FileManager
     private let parser: CodexJSONLParser
-    private let codexDirectory: URL
     private let pricing: PricingService
+    private let discoverer: any AccountDiscovering
+    private let discoveryContext: DiscoveryContext
+    private let now: @Sendable () -> Date
+    private var identityAttribution = CodexIdentityAttribution()
+
+    private struct AccountCollection {
+        var profiles: [CodexIdentityAttribution.Profile] = []
+        var aggregates: [CodexJSONLParser.AggregateUsage] = []
+        var logs: [LogSource] = []
+        var warnings: [ProviderWarning] = []
+    }
 
     public init(
         fileManager: FileManager = .default,
         parser: CodexJSONLParser = .init(),
         codexDirectory: URL? = nil,
-        pricing: PricingService = .shared
+        pricing: PricingService = .shared,
+        homeDirectory: URL? = nil,
+        registeredDirectories: [URL] = [],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        discoverer: any AccountDiscovering = CodexAccountDiscoverer(),
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.fileManager = fileManager
         self.parser = parser
-        self.codexDirectory = codexDirectory ?? fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex", isDirectory: true)
         self.pricing = pricing
+        self.discoverer = discoverer
+        self.now = now
+
+        let home = homeDirectory ?? codexDirectory?.deletingLastPathComponent()
+            ?? fileManager.homeDirectoryForCurrentUser
+        let registered = codexDirectory.map { [$0] } ?? registeredDirectories
+        let inherited = codexDirectory == nil
+            ? environment["CODEX_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            : nil
+        self.discoveryContext = DiscoveryContext(
+            home: home,
+            registeredRoots: registered,
+            inheritedRoot: inherited,
+            fileManager: fileManager
+        )
     }
 
     public func detectAvailability() async -> ProviderAvailability {
-        fileManager.fileExists(atPath: codexDirectory.path) ? .installed : .notInstalled
+        ((try? discoverer.discover(context: discoveryContext)) ?? []).isEmpty
+            ? .notInstalled
+            : .installed
     }
 
     public func authenticate() async throws -> AuthStatus {
-        let auth = codexDirectory.appendingPathComponent("auth.json")
-        return fileManager.fileExists(atPath: auth.path) ? .authenticated : .unauthenticated
+        let accounts = try discoverer.discover(context: discoveryContext)
+        let hasAuth = accounts.flatMap(\.profiles).contains { profile in
+            fileManager.fileExists(
+                atPath: profile.root.appendingPathComponent("auth.json").path
+            )
+        }
+        return hasAuth ? .authenticated : .unauthenticated
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        var warnings: [ProviderWarning] = []
-        let logs: [LogSource]
-        do {
-            logs = try await discoverLogSources()
-        } catch {
-            warnings.append(ProviderWarning(
-                message: "Failed to discover Codex logs: \(error.localizedDescription)",
-                level: .warning
-            ))
-            logs = []
-        }
+        let accounts = try discoverer.discover(context: discoveryContext)
+        let fetchedAt = now()
+        let collected = try await collect(accounts)
+        let attributedUsages = identityAttribution.attribute(
+            accounts: accounts,
+            profiles: collected.profiles,
+            observedAt: fetchedAt
+        )
 
-        let usage = await parser.parse(logSources: logs)
-        warnings.append(contentsOf: usage.warnings)
-        if logs.isEmpty {
-            warnings.append(ProviderWarning(message: "No Codex session logs found", level: .info))
-        }
-
-        let costUsage = await costUsage(for: usage.lifetime, logs: logs)
+        let headline = AccountQuotaDecision.headline(
+            among: attributedUsages,
+            providerID: id,
+            now: fetchedAt
+        )
+        let lifetime = Self.sum(collected.aggregates.map(\.lifetime))
+        let costUsage = await costUsage(for: lifetime, logs: collected.logs)
 
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
             authStatus: try await authenticate(),
-            quotaWindows: usage.quotaWindows,
-            todayUsage: usage.today,
-            weekUsage: usage.week,
-            monthUsage: usage.month,
-            lifetimeUsage: usage.lifetime,
+            quotaWindows: headline?.account.quotaWindows ?? [],
+            todayUsage: Self.sum(collected.aggregates.map(\.today)),
+            weekUsage: Self.sum(collected.aggregates.map(\.week)),
+            monthUsage: Self.sum(collected.aggregates.map(\.month)),
+            lifetimeUsage: lifetime,
             costUsage: costUsage,
-            warnings: warnings,
-            lastSyncedAt: Date(),
-            dailyTotals: usage.dailyTotals,
-            hourlyTotals: usage.hourlyTotals
+            warnings: collected.warnings,
+            lastSyncedAt: fetchedAt,
+            dailyTotals: Self.merged(collected.aggregates.map(\.dailyTotals)),
+            hourlyTotals: Self.merged(collected.aggregates.compactMap(\.hourlyTotals)),
+            accounts: attributedUsages.isEmpty ? nil : attributedUsages,
+            headlineAccountID: headline?.account.id
         )
     }
 
-    /// Estimates lifetime cost via the resilient `PricingService` (curated seed +
-    /// live LiteLLM table), keyed by the most recently configured model found in the
-    /// logs. No public rate for that model (including slugs newer than the table)
-    /// yields `.unavailable`, never a guessed number. Costs for previously-known
-    /// models are unchanged: the curated seed carries the same OpenAI/Codex rows the
-    /// old static table did, and Codex tokens never include cache-creation tokens.
-    ///
-    /// The live table refresh is kicked off in the background (never awaited) so this
-    /// snapshot resolves immediately against the best data on hand and never blocks.
-    ///
-    /// Note: this prices the *entire* `lifetime` aggregate at that one model's rate,
-    /// not just tokens generated under it — a user who switched models mid-history
-    /// will see their whole total skew toward the current model's price.
+    private func collect(_ accounts: [ProviderAccount]) async throws -> AccountCollection {
+        var result = AccountCollection()
+        for account in accounts {
+            var accountHasLogs = false
+            for profile in account.profiles {
+                let logs = try discoverLogSources(in: profile.root)
+                accountHasLogs = accountHasLogs || !logs.isEmpty
+                result.logs.append(contentsOf: logs)
+                let aggregate = await parser.parse(logSources: logs)
+                result.profiles.append(CodexIdentityAttribution.Profile(
+                    account: account,
+                    profile: profile,
+                    aggregate: aggregate
+                ))
+                result.aggregates.append(aggregate)
+                result.warnings.append(contentsOf: aggregate.warnings)
+            }
+            if !accountHasLogs {
+                result.warnings.append(ProviderWarning(
+                    message: "No Codex session logs found for \(account.label)",
+                    level: .info
+                ))
+            }
+        }
+        if accounts.isEmpty {
+            result.warnings.append(ProviderWarning(
+                message: "No Codex session logs found",
+                level: .info
+            ))
+        }
+        return result
+    }
+
     private func costUsage(for lifetime: TokenUsage, logs: [LogSource]) async -> CostUsage {
         guard let model = await parser.detectLatestModel(logSources: logs) else {
             return CostUsage(confidence: .unavailable)
@@ -95,23 +149,31 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     }
 
     public func discoverLogSources() async throws -> [LogSource] {
-        let sessionsDirectory = codexDirectory.appendingPathComponent("sessions", isDirectory: true)
-        guard fileManager.fileExists(atPath: sessionsDirectory.path) else {
-            return []
-        }
+        try discoverer.discover(context: discoveryContext)
+            .flatMap { try discoverLogSources(for: $0) }
+            .sorted { $0.url.path < $1.url.path }
+    }
 
+    private func discoverLogSources(for account: ProviderAccount) throws -> [LogSource] {
+        try account.profiles.flatMap { try discoverLogSources(in: $0.root) }
+            .sorted { $0.url.path < $1.url.path }
+    }
+
+    private func discoverLogSources(in codexDirectory: URL) throws -> [LogSource] {
+        let sessionsDirectory = codexDirectory.appendingPathComponent("sessions", isDirectory: true)
+        guard fileManager.fileExists(atPath: sessionsDirectory.path) else { return [] }
         guard let enumerator = fileManager.enumerator(
             at: sessionsDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
+        ) else { return [] }
 
         var sources: [LogSource] = []
         while let file = enumerator.nextObject() as? URL {
             guard file.pathExtension == "jsonl" else { continue }
-            let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
+            let values = try? file.resourceValues(
+                forKeys: [.contentModificationDateKey, .isRegularFileKey]
+            )
             guard values?.isRegularFile != false else { continue }
             sources.append(LogSource(
                 providerID: id,
@@ -120,7 +182,34 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
                 lastModified: values?.contentModificationDate
             ))
         }
+        return sources
+    }
 
-        return sources.sorted { $0.url.path < $1.url.path }
+    public func updateCalendar(_ calendar: Calendar) async {
+        await parser.updateCalendar(calendar)
+    }
+
+    private static func sum(_ usages: [TokenUsage]) -> TokenUsage {
+        func total(_ field: (TokenUsage) -> Int?) -> Int? {
+            let values = usages.compactMap(field)
+            return values.isEmpty ? nil : values.reduce(0, +)
+        }
+        return TokenUsage(
+            inputTokens: total(\.inputTokens),
+            outputTokens: total(\.outputTokens),
+            cacheReadTokens: total(\.cacheReadTokens),
+            cacheCreationTokens: total(\.cacheCreationTokens),
+            reasoningTokens: total(\.reasoningTokens),
+            confidence: usages.first { $0.totalTokens != nil }?.confidence ?? .unavailable
+        )
+    }
+
+    private static func merged(_ totals: [[Date: Int]]) -> [Date: Int]? {
+        guard !totals.isEmpty else { return nil }
+        return totals.reduce(into: [Date: Int]()) {
+            $0.merge($1, uniquingKeysWith: +)
+        }
     }
 }
+
+extension CodexProvider: CalendarAwareProvider {}

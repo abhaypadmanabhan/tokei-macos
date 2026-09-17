@@ -13,7 +13,11 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
 
     private let fileManager: FileManager
     private let parser: ClaudeJSONLParser
-    private let accounts: [ClaudeAccount]
+    private let fixedAccounts: [ClaudeAccount]?
+    private let discoveryHome: URL
+    private let registeredDirectories: [URL]
+    private let inheritedDirectory: URL?
+    private let accountMetadataCache = ClaudeAccountMetadataCache()
     private let usageClientFactory: @Sendable (ClaudeAccount) -> ClaudeUsageClient
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
@@ -24,6 +28,9 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         fileManager: FileManager = .default,
         parser: ClaudeJSONLParser = .init(),
         accounts: [ClaudeAccount],
+        discoveryHome: URL? = nil,
+        registeredDirectories: [URL] = [],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         usageClientFactory: @escaping @Sendable (ClaudeAccount) -> ClaudeUsageClient = {
             ClaudeUsageClientImpl(account: $0)
         },
@@ -31,8 +38,14 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     ) {
         self.fileManager = fileManager
         self.parser = parser
-        // Never zero accounts: an empty list would silently report "Claude not installed".
-        self.accounts = accounts.isEmpty ? ClaudeAccount.discover() : accounts
+        // Empty means dynamic discovery; a non-empty explicit list remains deterministic
+        // fixture injection for tests.
+        self.fixedAccounts = accounts.isEmpty ? nil : accounts
+        self.discoveryHome = discoveryHome ?? fileManager.homeDirectoryForCurrentUser
+        self.registeredDirectories = registeredDirectories
+        self.inheritedDirectory = environment["CLAUDE_CONFIG_DIR"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        }
         self.usageClientFactory = usageClientFactory
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
@@ -66,6 +79,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     /// default wins the canonical pick, so checking only the canonical reported "not
     /// installed" for a machine whose logs `fetchSnapshot()` was parsing correctly.
     public func detectAvailability() async -> ProviderAvailability {
+        let accounts = currentAccounts()
         let installed = accounts.contains { account in
             account.configDirectories.contains { fileManager.fileExists(atPath: $0.path) }
         }
@@ -78,6 +92,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
+        let accounts = currentAccounts()
+        let fetchedAt = Date()
         let networkEnabled = userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled")
         // Only label warnings by account when there is more than one — a single-account
         // setup shouldn't grow noise it never had.
@@ -113,8 +129,13 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         // One account authenticating is enough to say Claude is connected.
         let liveQuotaAuthenticated = results.contains { $0.authenticated }
 
-        let headline = Self.headlineAccount(from: accountUsages)
-        let quotaWindows = headline?.quotaWindows ?? Self.unavailableQuotaWindows(providerID: id)
+        let headline = AccountQuotaDecision.headline(
+            among: accountUsages,
+            providerID: id,
+            now: fetchedAt
+        )
+        let quotaWindows = headline?.account.quotaWindows
+            ?? Self.unavailableQuotaWindows(providerID: id)
 
         if warnings.isEmpty && quotaWindows.allSatisfy({ $0.confidence == .unavailable }) {
             warnings.append(ProviderWarning(message: "Local logs only; quotas unavailable", level: .info))
@@ -131,11 +152,13 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             lifetimeUsage: Self.sum(perAccountUsage.map(\.lifetime)),
             costUsage: nil,
             warnings: warnings,
-            lastSyncedAt: Date(),
+            lastSyncedAt: fetchedAt,
             dailyTotals: Self.merged(perAccountUsage.map(\.dailyTotals)),
             hourlyTotals: Self.merged(perAccountUsage.compactMap(\.hourlyTotals)),
             accounts: accountUsages,
-            headlineAccountID: headline?.id
+            // Internal/UI compatibility: ProviderSnapshot names the legacy account row id.
+            // The public AgentSnapshot writer projects the stable accountID separately.
+            headlineAccountID: headline?.account.id
         )
     }
 
@@ -226,9 +249,11 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         var authenticated = false
         var quotaStatus: AccountQuotaStatus = networkEnabled ? .unknown : .disabled
         var quotaStatusDetail: String?
+        var selectedSelector = account.selector(fileManager: fileManager)
         if networkEnabled {
             do {
-                let liveWindows = try await liveQuotaWindows(for: account)
+                let liveResult = try await liveQuotaWindows(for: account)
+                let liveWindows = liveResult.windows
                 if !liveWindows.isEmpty {
                     accountWindows = liveWindows
                     quotaStatus = .eligible
@@ -237,6 +262,13 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                     // `.unknown`, which read as "not signed in" in the UI even while live
                     // quota was flowing.
                     authenticated = true
+                    if let profile = liveResult.profile {
+                        selectedSelector = AccountSelector.verified(
+                            environmentKey: "CLAUDE_CONFIG_DIR",
+                            root: profile.configDirectory,
+                            fileManager: fileManager
+                        )
+                    }
                 } else {
                     quotaStatus = .noQuotaSource
                     quotaStatusDetail = "Claude returned no quota windows."
@@ -258,6 +290,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         return AccountFetch(
             usage: ProviderAccountUsage(
                 id: account.id,
+                accountID: account.accountID,
+                selector: selectedSelector,
                 label: account.label,
                 quotaWindows: accountWindows,
                 todayUsage: parsed.today,
@@ -308,12 +342,14 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     /// required to exist on disk), signed out, or expired. Every directory of an identity
     /// authenticates to the same Anthropic account, so the fallback re-asks the same question
     /// about the same quota rather than adding a second account's worth of load.
-    private func liveQuotaWindows(for account: ClaudeAccount) async throws -> [QuotaWindow] {
+    private func liveQuotaWindows(
+        for account: ClaudeAccount
+    ) async throws -> (windows: [QuotaWindow], profile: ClaudeAccount?) {
         var firstFailure: Error?
         for candidate in account.credentialCandidates {
             do {
                 let windows = try await usageClientFactory(candidate).fetchQuotaWindows()
-                if !windows.isEmpty { return windows }
+                if !windows.isEmpty { return (windows, candidate) }
             } catch {
                 // Report the canonical's failure, not the last sibling's: the fallback is an
                 // internal retry, and naming a directory the user never pointed Tokei at
@@ -322,49 +358,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             }
         }
         if let firstFailure { throw firstFailure }
-        return []
-    }
-
-    /// The account whose windows become the provider's headline quota: the one with the
-    /// **most headroom**, i.e. the lowest peak utilization. `nil` when no account has a
-    /// usable reading.
-    ///
-    /// Work can be sent to whichever account you like (that's what `CLAUDE_CONFIG_DIR` is
-    /// for), so available capacity is the best account's — not the worst's, and not an
-    /// average, which would describe no account that actually exists. Accounts with no
-    /// usable reading are skipped rather than counted as 0%.
-    ///
-    /// Published on the snapshot as `headlineAccountID` so a surface can *name* the account
-    /// the gauge belongs to without re-deriving this rule. The drill-in used to recompute
-    /// "lowest peak wins" itself and then check its answer against the number on screen —
-    /// which meant two definitions of the same rule, differing (the copy excluded credits
-    /// windows, this does not) in a way that surfaced as the explanation silently going
-    /// vague rather than as anything a test could catch.
-    private static func headlineAccount(
-        from accountUsages: [ProviderAccountUsage]
-    ) -> ProviderAccountUsage? {
-        let withReadings = accountUsages.filter { usage in
-            usage.quotaWindows.contains { UtilizationEngine.usedPercent(from: $0) != nil }
-        }
-        // Headroom decides *within* a confidence tier, never across it. Only this account's
-        // windows go on the snapshot, so choosing a stale 10% over a confirmed 50% does not
-        // merely mislabel the gauge — it publishes an unroutable reading and
-        // `RouteTargetPolicy` drops Claude entirely, while the account it could have used
-        // sat right there. A confirmed number is worth more than a better-looking one.
-        let trusted = withReadings.filter(hasRoutableReading)
-        let pool = trusted.isEmpty ? withReadings : trusted
-        return pool.min { peakPercent($0.quotaWindows) < peakPercent($1.quotaWindows) }
-    }
-
-    private static func hasRoutableReading(_ usage: ProviderAccountUsage) -> Bool {
-        usage.quotaWindows.contains { window in
-            UtilizationEngine.usedPercent(from: window) != nil
-                && RouteTargetPolicy.defaultRoutableConfidences.contains(window.confidence)
-        }
-    }
-
-    private static func peakPercent(_ windows: [QuotaWindow]) -> Double {
-        windows.compactMap { UtilizationEngine.usedPercent(from: $0) }.max() ?? 0
+        return ([], nil)
     }
 
     /// A path that is simply not there, as opposed to one that refused to be read. Both
@@ -429,6 +423,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     /// that never installed Claude Code every account is synthetic — and Tokei tracks eight
     /// tools, so that is an ordinary state, not an error.
     public func discoverLogSources() async throws -> [LogSource] {
+        let accounts = currentAccounts()
         var sources: [LogSource] = []
         var failures: [Error] = []
         var existingDirectories = 0
@@ -449,6 +444,16 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             throw failure
         }
         return sources
+    }
+
+    private func currentAccounts() -> [ClaudeAccount] {
+        fixedAccounts ?? ClaudeAccount.discover(
+            home: discoveryHome,
+            registeredRoots: registeredDirectories,
+            inheritedRoot: inheritedDirectory,
+            fileManager: fileManager,
+            metadataCache: accountMetadataCache
+        )
     }
 
     private static func logSources(

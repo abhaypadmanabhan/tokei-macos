@@ -23,11 +23,9 @@ public struct ProviderSnapshot: Sendable, Identifiable {
     /// Which entry of `accounts` the headline `quotaWindows` were taken from, when the
     /// provider picked one rather than aggregating.
     ///
-    /// The rule that picks it (Claude: the account with the most headroom) lives in the
-    /// provider and nowhere else. A surface that wants to *say* which account the gauge
-    /// belongs to reads this; re-deriving the rule for display is how the explanation and
-    /// the number drift apart, and the display copy is exactly where a mismatch is
-    /// invisible. `nil` when there is no per-account breakdown or no usable reading.
+    /// The provider calls the shared `AccountQuotaDecision`; surfaces read this legacy row
+    /// id instead of re-deriving the rule. The public agent schema separately projects the
+    /// stable `accountID`. `nil` when there is no account breakdown or usable reading.
     public let headlineAccountID: String?
 
     public init(
@@ -75,16 +73,19 @@ public enum AccountQuotaStatus: String, Sendable {
     case unknown
 }
 
-/// One account's own usage within a provider that supports several signed-in accounts
-/// (currently only Claude Code, via `CLAUDE_CONFIG_DIR`).
+/// One account's own usage within a provider that supports several signed-in accounts.
 ///
 /// Kept as a field on a single `ProviderSnapshot` rather than emitting one snapshot per
 /// account, because `ProviderSnapshot.id` *is* its `ProviderID` — duplicate ids would
 /// break `Identifiable` for every store and view that keys off it. The aggregate stays
 /// the headline; this is the breakdown behind it.
 public struct ProviderAccountUsage: Sendable, Identifiable {
-    /// Stable id — the account's config-directory path.
+    /// Legacy local profile id, currently the canonical config-directory path.
     public let id: String
+    /// Stable provider-scoped identity. `id` remains the legacy local path for compatibility.
+    public let accountID: String?
+    /// Verified literal environment selector for this account, when the adapter has one.
+    public let selector: AccountSelector?
     /// Short label, e.g. `"default"` or `"account-2"`.
     public let label: String
     public let quotaWindows: [QuotaWindow]
@@ -111,6 +112,8 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
 
     public init(
         id: String,
+        accountID: String? = nil,
+        selector: AccountSelector? = nil,
         label: String,
         quotaWindows: [QuotaWindow],
         todayUsage: TokenUsage,
@@ -121,6 +124,8 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
         quotaStatusDetail: String? = nil
     ) {
         self.id = id
+        self.accountID = accountID
+        self.selector = selector
         self.label = label
         self.quotaWindows = quotaWindows
         self.todayUsage = todayUsage

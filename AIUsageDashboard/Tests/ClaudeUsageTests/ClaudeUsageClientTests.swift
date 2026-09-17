@@ -482,10 +482,28 @@ final class ClaudeCodeProviderQuotaTests: XCTestCase {
     }
 
     private func liveWindows() throws -> [QuotaWindow] {
-        try ClaudeUsageClientImpl.decodeQuotaWindows(
+        let now = Date()
+        return try ClaudeUsageClientImpl.decodeQuotaWindows(
             Data(ClaudeFixtures.oauthUsageResponse.utf8),
             providerID: .claudeCode
-        )
+        ).map { window in
+            // A2: the decoder fixture's reset dates are historical and the pure decoder has no
+            // observation clock. A mock live client must supply the same freshness contract
+            // as the real client before provider routing can consume its windows.
+            QuotaWindow(
+                providerID: window.providerID,
+                type: window.type,
+                used: window.used,
+                limit: window.limit,
+                remaining: window.remaining,
+                resetAt: now.addingTimeInterval(3_600),
+                confidence: window.confidence,
+                source: window.source,
+                label: window.label,
+                bucketKey: window.bucketKey,
+                observedAt: now
+            )
+        }
     }
 }
 

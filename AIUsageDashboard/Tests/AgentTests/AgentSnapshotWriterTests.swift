@@ -123,6 +123,39 @@ final class AgentSnapshotWriterTests: XCTestCase {
         XCTAssertEqual(provider.windows.first(where: { $0.type == "daily" })?.usedPercent, 70)
     }
 
+    func testR09_03_bindingWindowIndexUsesEmittedWindowProjection() throws {
+        let account = ProviderAccountUsage(
+            id: "/tmp/account",
+            accountID: "codex:account",
+            label: "account",
+            quotaWindows: [
+                window(.session, used: nil, limit: nil),
+                window(.daily, used: 20, observedAt: generatedAt),
+                window(.monthly, used: nil, limit: nil),
+                window(.weekly, used: 50, observedAt: generatedAt)
+            ],
+            todayUsage: .unavailable,
+            quotaStatus: .eligible
+        )
+        let snap = ProviderSnapshot(
+            providerID: .codex,
+            displayName: "Codex",
+            authStatus: .authenticated,
+            todayUsage: .unavailable,
+            weekUsage: .unavailable,
+            accounts: [account]
+        )
+
+        let emitted = try XCTUnwrap(
+            AgentSnapshotWriter.buildSnapshot(from: [snap], generatedAt: generatedAt)
+                .providers.first?.accounts?.first
+        )
+
+        XCTAssertEqual(emitted.windows.map(\.type), ["daily", "weekly"])
+        XCTAssertEqual(emitted.quota?.bindingWindowIndex, 1)
+        XCTAssertEqual(emitted.windows[1].usedPercent, emitted.quota?.usedPercent)
+    }
+
     /// The public schema must expose *when* a reading was taken, so an agent can judge
     /// freshness itself instead of parsing `"(stale)"` out of a diagnostic string.
     /// Additive, so `schemaVersion` stays 1.
