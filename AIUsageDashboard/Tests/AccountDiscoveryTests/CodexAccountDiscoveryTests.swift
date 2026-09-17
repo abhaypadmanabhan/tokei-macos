@@ -31,7 +31,7 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         let root = home.appendingPathComponent(name, isDirectory: true)
         let sessions = root.appendingPathComponent("sessions/2026/09/17", isDirectory: true)
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
-        let auth = identity.map { #"{"account":{"id":"\#($0)"},"email":"never-export@example.com"}"# }
+        let auth = identity.map { #"{"tokens":{"account_id":"\#($0)"},"email":"never-export@example.com"}"# }
             ?? "{}"
         try Data(auth.utf8).write(to: root.appendingPathComponent("auth.json"))
         let line = "{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{" +
@@ -67,7 +67,7 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(values.map(\.1), [20, 70])
     }
 
-    func testA6_sameCodexIdentityInTwoRootsFoldsAndRetainsBothSessions() async throws {
+    func testR09_01_authenticTokensAccountIDInTwoRootsFoldsAndRetainsBothSessions() async throws {
         _ = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
         let retired = try makeRoot(
             "codex-retired",
@@ -93,6 +93,19 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertNotEqual(snapshot.accounts?[0].accountID, snapshot.accounts?[1].accountID)
     }
 
+    func testR09_02_emptyCodexIdentitiesNeverMergeOnWarmDiscovery() async throws {
+        _ = try makeRoot(".codex", identity: "", tokens: 10, usedPercent: 20)
+        let second = try makeRoot("codex-work", identity: "", tokens: 30, usedPercent: 70)
+        let provider = provider(registered: [second])
+
+        let cold = try await provider.fetchSnapshot()
+        let warm = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(cold.accounts?.count, 2)
+        XCTAssertEqual(warm.accounts?.count, 2)
+        XCTAssertEqual(Set((warm.accounts ?? []).compactMap(\.accountID)).count, 2)
+    }
+
     func testA6_codexDiscoveryChangesWhenRegisteredRootAppearsAndDisappears() async throws {
         _ = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
         let future = home.appendingPathComponent("codex-future", isDirectory: true)
@@ -109,18 +122,64 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(removed.accounts?.count, 1)
     }
 
-    func testA6_codexIdentitySwitchInvalidatesMetadataCacheOnRefresh() async throws {
+    func testR09_01_authenticTokensAccountIDChangeChangesStableAccountID() async throws {
         let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
         let provider = provider(registered: [])
         let first = try await provider.fetchSnapshot()
 
-        try Data(#"{"account":{"id":"acct-c"}}"#.utf8).write(
+        try Data(#"{"tokens":{"account_id":"acct-c"}}"#.utf8).write(
             to: root.appendingPathComponent("auth.json"),
             options: .atomic
         )
         let switched = try await provider.fetchSnapshot()
 
         XCTAssertNotEqual(first.accounts?.first?.accountID, switched.accounts?.first?.accountID)
+    }
+
+    func testR09_07_reauthenticationRequiresNewQuotaObservationAndKeepsHistoricalTokens() async throws {
+        let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
+        let provider = provider(registered: [])
+        let first = try await provider.fetchSnapshot()
+        let oldAccountID = try XCTUnwrap(first.accounts?.first?.accountID)
+
+        try Data(#"{"tokens":{"account_id":"acct-new-a"}}"#.utf8).write(
+            to: root.appendingPathComponent("auth.json"),
+            options: .atomic
+        )
+        let switched = try await provider.fetchSnapshot()
+        let newAccount = try XCTUnwrap(switched.accounts?.first { $0.accountID != oldAccountID })
+        let oldAccount = try XCTUnwrap(switched.accounts?.first { $0.accountID == oldAccountID })
+        let switchedDecision = AccountQuotaDecision.evaluate(
+            newAccount,
+            providerID: .codex,
+            now: now
+        )
+
+        XCTAssertEqual(newAccount.quotaStatus, .unknown)
+        XCTAssertNil(switchedDecision.headroomPercent)
+        XCTAssertEqual(newAccount.todayUsage.totalTokens, 0)
+        XCTAssertEqual(oldAccount.todayUsage.totalTokens, 10)
+
+        _ = try makeRoot(
+            ".codex",
+            identity: "acct-new-a",
+            tokens: 20,
+            usedPercent: 35,
+            timestamp: "2026-09-17T02:15:00Z"
+        )
+        let refreshed = try await provider.fetchSnapshot()
+        let refreshedNewAccount = try XCTUnwrap(
+            refreshed.accounts?.first { $0.accountID == newAccount.accountID }
+        )
+        let refreshedDecision = AccountQuotaDecision.evaluate(
+            refreshedNewAccount,
+            providerID: .codex,
+            now: now
+        )
+
+        XCTAssertEqual(refreshedNewAccount.quotaStatus, .eligible)
+        XCTAssertTrue(refreshedDecision.isEligible)
+        XCTAssertEqual(refreshedNewAccount.quotaWindows.first?.used, 35)
     }
 
     func testA6_codexParserCacheRetainsOtherRootsBetweenAccountSlices() async throws {

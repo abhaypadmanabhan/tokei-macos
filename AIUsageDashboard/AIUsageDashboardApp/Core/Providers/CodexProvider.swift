@@ -11,6 +11,11 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let discoverer: any AccountDiscovering
     private let discoveryContext: DiscoveryContext
     private let now: @Sendable () -> Date
+    private var accountIDByRoot: [String: String] = [:]
+    private var latestActiveUsageByAccountID: [String: ProviderAccountUsage] = [:]
+    private var historicalUsageByAccountID: [String: ProviderAccountUsage] = [:]
+    private var usageBaselineByAccountID: [String: ProviderAccountUsage] = [:]
+    private var quotaObservationFloorByAccountID: [String: Date] = [:]
 
     private struct AccountCollection {
         var usages: [ProviderAccountUsage] = []
@@ -69,7 +74,9 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let accounts = try discoverer.discover(context: discoveryContext)
         let fetchedAt = now()
-        let collected = try await collect(accounts)
+        prepareIdentityTransitions(for: accounts)
+        var collected = try await collect(accounts)
+        collected.usages = attributedUsages(collected.usages)
 
         let headline = AccountQuotaDecision.headline(
             among: collected.usages,
@@ -96,6 +103,121 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             accounts: collected.usages.isEmpty ? nil : collected.usages,
             headlineAccountID: headline?.account.id
         )
+    }
+
+    /// A profile can keep the same logs while `auth.json` moves to a new account. The old
+    /// log-derived quota is not evidence for the new identity. Freeze the old row, subtract
+    /// its token baseline from the new row, and require a later rate-limit observation.
+    private func prepareIdentityTransitions(for accounts: [ProviderAccount]) {
+        var transitions: [(oldID: String, newID: String)] = []
+        for account in accounts {
+            historicalUsageByAccountID.removeValue(forKey: account.id)
+            for profile in account.profiles {
+                let root = profile.root.resolvingSymlinksInPath().standardizedFileURL.path
+                if let oldID = accountIDByRoot[root], oldID != account.id {
+                    transitions.append((oldID: oldID, newID: account.id))
+                }
+                accountIDByRoot[root] = account.id
+            }
+        }
+
+        for transition in transitions {
+            guard let oldUsage = latestActiveUsageByAccountID[transition.oldID] else { continue }
+            historicalUsageByAccountID[transition.oldID] = Self.historicalUsage(oldUsage)
+            usageBaselineByAccountID[transition.newID] = oldUsage
+            if let observation = Self.latestQuotaObservation(in: oldUsage) {
+                quotaObservationFloorByAccountID[transition.newID] = observation
+            }
+        }
+    }
+
+    private func attributedUsages(_ rawUsages: [ProviderAccountUsage]) -> [ProviderAccountUsage] {
+        let active = rawUsages.map { usage -> ProviderAccountUsage in
+            let accountID = usage.accountID ?? usage.id
+            let baseline = usageBaselineByAccountID[accountID]
+            let floor = quotaObservationFloorByAccountID[accountID]
+            let latestObservation = Self.latestQuotaObservation(in: usage)
+            let quotaIsAttributable = floor.map { floor in
+                latestObservation.map { $0 > floor } ?? false
+            } ?? true
+            if quotaIsAttributable {
+                quotaObservationFloorByAccountID.removeValue(forKey: accountID)
+            }
+
+            return ProviderAccountUsage(
+                id: usage.id,
+                accountID: usage.accountID,
+                selector: usage.selector,
+                label: usage.label,
+                quotaWindows: usage.quotaWindows,
+                todayUsage: baseline.map { Self.subtract(usage.todayUsage, baseline: $0.todayUsage) }
+                    ?? usage.todayUsage,
+                dailyTotals: baseline.map { Self.subtract(usage.dailyTotals, baseline: $0.dailyTotals) }
+                    ?? usage.dailyTotals,
+                configDirectories: usage.configDirectories,
+                unreadableDirectories: usage.unreadableDirectories,
+                quotaStatus: quotaIsAttributable ? usage.quotaStatus : .unknown,
+                quotaStatusDetail: quotaIsAttributable
+                    ? usage.quotaStatusDetail
+                    : "Awaiting a quota observation for the current Codex identity."
+            )
+        }
+
+        latestActiveUsageByAccountID = Dictionary(
+            uniqueKeysWithValues: active.map { (($0.accountID ?? $0.id), $0) }
+        )
+        let activeIDs = Set(latestActiveUsageByAccountID.keys)
+        let historical = historicalUsageByAccountID
+            .filter { !activeIDs.contains($0.key) }
+            .sorted { $0.key < $1.key }
+            .map(\.value)
+        return active + historical
+    }
+
+    private static func historicalUsage(_ usage: ProviderAccountUsage) -> ProviderAccountUsage {
+        ProviderAccountUsage(
+            id: usage.id,
+            accountID: usage.accountID,
+            selector: nil,
+            label: usage.label,
+            quotaWindows: [],
+            todayUsage: usage.todayUsage,
+            dailyTotals: usage.dailyTotals,
+            configDirectories: usage.configDirectories,
+            unreadableDirectories: usage.unreadableDirectories,
+            quotaStatus: .unknown,
+            quotaStatusDetail: "Historical usage from a previous Codex identity."
+        )
+    }
+
+    private static func latestQuotaObservation(in usage: ProviderAccountUsage) -> Date? {
+        usage.quotaWindows.compactMap(\.observedAt).max()
+    }
+
+    private static func subtract(_ usage: TokenUsage, baseline: TokenUsage) -> TokenUsage {
+        func difference(_ current: Int?, _ old: Int?) -> Int? {
+            guard current != nil || old != nil else { return nil }
+            return max(0, (current ?? 0) - (old ?? 0))
+        }
+        return TokenUsage(
+            inputTokens: difference(usage.inputTokens, baseline.inputTokens),
+            outputTokens: difference(usage.outputTokens, baseline.outputTokens),
+            cacheReadTokens: difference(usage.cacheReadTokens, baseline.cacheReadTokens),
+            cacheCreationTokens: difference(usage.cacheCreationTokens, baseline.cacheCreationTokens),
+            reasoningTokens: difference(usage.reasoningTokens, baseline.reasoningTokens),
+            confidence: usage.confidence
+        )
+    }
+
+    private static func subtract(
+        _ totals: [Date: Int]?,
+        baseline: [Date: Int]?
+    ) -> [Date: Int]? {
+        guard let totals else { return nil }
+        return totals.reduce(into: [Date: Int]()) { result, entry in
+            let value = max(0, entry.value - (baseline?[entry.key] ?? 0))
+            if value > 0 { result[entry.key] = value }
+        }
     }
 
     private func collect(_ accounts: [ProviderAccount]) async throws -> AccountCollection {

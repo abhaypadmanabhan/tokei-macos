@@ -1,19 +1,15 @@
 import Foundation
 
 private struct CodexAuthMetadata: Decodable {
-    let account: CodexAuthAccount?
-    let accountID: String?
-    let accountId: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case account
-        case accountID = "account_id"
-        case accountId
-    }
+    let tokens: CodexAuthTokenMetadata?
 }
 
-private struct CodexAuthAccount: Decodable {
-    let id: String?
+private struct CodexAuthTokenMetadata: Decodable {
+    let accountID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case accountID = "account_id"
+    }
 }
 
 /// Discovers isolated Codex homes without reading token fields from `auth.json`.
@@ -78,18 +74,19 @@ public final class CodexAccountDiscoverer: AccountDiscovering, @unchecked Sendab
         }
         lock.unlock()
 
-        let identity: String?
+        let decodedIdentity: String?
         if let data = fileManager.contents(atPath: authURL.path),
            let metadata = try? JSONDecoder().decode(CodexAuthMetadata.self, from: data) {
-            identity = metadata.account?.id ?? metadata.accountID ?? metadata.accountId
+            decodedIdentity = metadata.tokens?.accountID
         } else {
-            identity = nil
+            decodedIdentity = nil
         }
+        let identity = decodedIdentity.flatMap { $0.isEmpty ? nil : $0 }
 
         lock.lock()
         identityCache[authURL.path] = CachedIdentity(stamp: stamp, identity: identity)
         lock.unlock()
-        return identity?.isEmpty == false ? identity : nil
+        return identity
     }
 
     private func label(for root: URL, defaultRoot: URL) -> String {
