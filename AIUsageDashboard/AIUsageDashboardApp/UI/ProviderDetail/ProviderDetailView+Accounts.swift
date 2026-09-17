@@ -33,6 +33,7 @@ extension ProviderDetailView {
             .foregroundColor(PadzyTheme.ink3)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 640, alignment: .leading)
+            .rollingNumber(Double(accounts.count), reduceMotion: reduceMotion)
     }
 
     private var scopeSentence: String {

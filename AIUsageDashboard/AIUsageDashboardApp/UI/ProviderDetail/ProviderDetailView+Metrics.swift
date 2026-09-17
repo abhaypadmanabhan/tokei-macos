@@ -176,7 +176,7 @@ extension ProviderDetailView {
                                 .frame(width: geo.size.width * CGFloat(Double(segment.value) / Double(total)))
                                 .animation(
                                     LiveNumberMotion.animation(reduceMotion: reduceMotion),
-                                    value: segment.value
+                                    value: Double(segment.value) / Double(total)
                                 )
                         }
                     }

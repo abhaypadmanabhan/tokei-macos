@@ -163,7 +163,7 @@ struct MenuBarView: View {
                     .foregroundColor(PadzyTheme.ink5)
                 Spacer(minLength: 8)
                 Text("incl. cache")
-                    .font(.sans(size: 13))
+                    .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink5)
             }
 
@@ -225,7 +225,7 @@ struct MenuBarView: View {
                             .foregroundColor(PadzyTheme.ink)
                             .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
                         Text(tightest.accountLabel)
-                            .font(.sans(size: 13))
+                            .font(.sans(size: 15))
                             .foregroundColor(PadzyTheme.ink4)
                             .lineLimit(1)
                             .truncationMode(.tail)

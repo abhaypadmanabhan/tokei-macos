@@ -286,23 +286,31 @@ struct ProviderDetailView: View {
         snapshot.warnings.filter { $0.level != .info }
     }
 
-    /// Count stays visible. Messages (including an account's expired-credentials
-    /// reason) sit in a collapsed disclosure — no dots, no badges.
+    /// Count stays the full total. At most 8 messages are shown, each capped at
+    /// 200 characters, with a trailing "N more" line when the list is cut.
     @ViewBuilder
     private var warningDisclosure: some View {
         let warnings = nonInfoWarnings
         if !warnings.isEmpty {
+            let shown = warnings.prefix(Self.maxShownWarnings)
+            let more = warnings.count - shown.count
             VStack(alignment: .leading, spacing: 6) {
                 Text(warnings.count == 1 ? "1 warning" : "\(warnings.count) warnings")
                     .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink4)
+                    .rollingNumber(Double(warnings.count), reduceMotion: reduceMotion)
                 DisclosureGroup(isExpanded: $warningsExpanded) {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
-                            Text(warning.message)
+                        ForEach(Array(shown.enumerated()), id: \.offset) { _, warning in
+                            Text(Self.boundedWarningMessage(warning.message))
                                 .font(.mono(size: 13.5))
                                 .foregroundColor(PadzyTheme.ink)
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if more > 0 {
+                            Text("\(more) more")
+                                .font(.mono(size: 13.5))
+                                .foregroundColor(PadzyTheme.ink)
                         }
                     }
                     .padding(.top, 2)
@@ -314,6 +322,16 @@ struct ProviderDetailView: View {
                 .tint(PadzyTheme.ink)
             }
         }
+    }
+
+    private static let maxShownWarnings = 8
+    private static let maxWarningMessageCharacters = 200
+
+    /// Caps a warning at 200 characters. A truncated message ends with `…`.
+    private static func boundedWarningMessage(_ message: String) -> String {
+        guard message.count > maxWarningMessageCharacters else { return message }
+        let end = message.index(message.startIndex, offsetBy: maxWarningMessageCharacters - 1)
+        return String(message[..<end]) + "…"
     }
 
     private var statsFlow: some View {

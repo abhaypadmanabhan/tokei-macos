@@ -85,6 +85,7 @@ struct OverviewView: View {
                 .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.ink4)
                 .fixedSize(horizontal: false, vertical: true)
+                .rollingNumber(Double(activeAgentCount), reduceMotion: reduceMotion)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

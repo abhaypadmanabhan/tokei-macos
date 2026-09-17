@@ -343,6 +343,7 @@ struct ValueView: View {
                         .font(.mono(size: 10))
                         .foregroundColor(PadzyTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                        .rollingNumber(Double(lifetime.contributingProviders), reduceMotion: reduceMotion)
                 }
             } else {
                 SurfaceStateView(
