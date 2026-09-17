@@ -24,8 +24,8 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 
 ## Phase 3 — implement (Sol / Cursor, worktree isolation)
 - [ ] WP-UI also: **animated live numbers** — every figure that refreshes (menu bar total, Overview totals, gauges, per-account rows, drill-in) transitions smoothly (SwiftUI `contentTransition(.numericText())` / interpolated rolling) instead of snapping; honours `accessibilityReduceMotion`; read `$UIUX_VAULT/Motion and Micro-interactions.md` first
-- [ ] WP per Bible; each ends with a result file + commits, tests green in its worktree
-- [ ] Reviewer on a different seat per WP (Astra reviews Sol; Sol reviews Cursor)
+- [x] WP per Bible (all four landed; WP-1/WP-2 partial only for full-corpus benches → reviewers); each ends with a result file + commits, tests green in its worktree
+- [~] Reviewer on a different seat per WP — r07 MERGE; r05/r06/r08 BLOCK → fix rounds t05b t06b t08b in flight; re-review after
 
 ## Phase 4 — integrate (`/agents-done` steps, inline)
 - [ ] Quarantine gate, diff review, targeted tests, `--no-ff` merge in Bible order
@@ -35,6 +35,7 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 ## Phase 5 — release (`/dev-approved`, inline)
 - [ ] `/security-review` on `main...dev`, triage every finding
 - [ ] `/simplify` pass, re-run build + test
+- [ ] Real-corpus smoke tests (`*RealLogsSmokeTests`) opt-in via `TOKEI_REAL_LOGS=1` — default scheme burns ~3 CPU-min per run on this box (2026-09-17 hot-Mac report)
 - [ ] Bump `MARKETING_VERSION` → 0.9.0, CHANGELOG, `docs/08` schema doc
 - [ ] `scripts/release.sh` (sign, notarize, staple, DMG, appcast) — **ask before the outward steps**
 - [ ] Website `website/lib/site.ts` version + download URL + highlights; deploy only when told
