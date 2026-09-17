@@ -3,11 +3,11 @@ import SQLite3
 
 /// Creates one coherent SQLite snapshot without mutating the live database.
 ///
-/// Shared by the DB-backed parsers (Cursor / opencode / Antigravity), which each
-/// duplicated this loop verbatim. SQLite's online backup API reads the main image
-/// and committed WAL frames as one transactionally consistent snapshot. A sequential
-/// filesystem copy cannot provide that guarantee and can pair sidecars with the wrong
-/// main-file generation.
+/// Shared by the DB-backed parsers (Cursor / opencode / Antigravity). SQLite's online
+/// backup API reads the main image and committed WAL frames as one transactionally
+/// consistent snapshot. For compatibility with an exclusively locked rollback-journal
+/// database, the narrow busy/locked fallback copies only the main file; WAL-backed
+/// sources never use that weaker path.
 enum SQLiteSidecarCopy {
     static func copyDatabase(
         from sourceURL: URL,
