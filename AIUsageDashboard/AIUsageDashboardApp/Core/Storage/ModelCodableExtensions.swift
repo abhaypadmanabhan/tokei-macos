@@ -7,6 +7,7 @@ extension AuthStatus: Codable {}
 extension MetricConfidence: Codable {}
 extension QuotaWindowType: Codable {}
 extension ProviderWarning.Level: Codable {}
+extension AccountQuotaStatus: Codable {}
 
 // MARK: - Value types with custom Codable implementations
 //
@@ -75,17 +76,23 @@ extension ProviderSnapshot: Codable {
 extension ProviderAccountUsage: Codable {
     private enum CodingKeys: String, CodingKey {
         case id
+        case accountID
+        case selector
         case label
         case quotaWindows
         case todayUsage
         case dailyTotals
         case configDirectories
         case unreadableDirectories
+        case quotaStatus
+        case quotaStatusDetail
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        accountID = try container.decodeIfPresent(String.self, forKey: .accountID)
+        selector = try container.decodeIfPresent(AccountSelector.self, forKey: .selector)
         label = try container.decode(String.self, forKey: .label)
         quotaWindows = try container.decode([QuotaWindow].self, forKey: .quotaWindows)
         todayUsage = try container.decode(TokenUsage.self, forKey: .todayUsage)
@@ -95,11 +102,15 @@ extension ProviderAccountUsage: Codable {
         dailyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .dailyTotals)
         configDirectories = try container.decodeIfPresent([String].self, forKey: .configDirectories) ?? []
         unreadableDirectories = try container.decodeIfPresent([String].self, forKey: .unreadableDirectories) ?? []
+        quotaStatus = try container.decodeIfPresent(AccountQuotaStatus.self, forKey: .quotaStatus) ?? .unknown
+        quotaStatusDetail = try container.decodeIfPresent(String.self, forKey: .quotaStatusDetail)
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+        try container.encodeIfPresent(selector, forKey: .selector)
         try container.encode(label, forKey: .label)
         try container.encode(quotaWindows, forKey: .quotaWindows)
         try container.encode(todayUsage, forKey: .todayUsage)
@@ -110,6 +121,8 @@ extension ProviderAccountUsage: Codable {
         if !unreadableDirectories.isEmpty {
             try container.encode(unreadableDirectories, forKey: .unreadableDirectories)
         }
+        try container.encode(quotaStatus, forKey: .quotaStatus)
+        try container.encodeIfPresent(quotaStatusDetail, forKey: .quotaStatusDetail)
     }
 }
 

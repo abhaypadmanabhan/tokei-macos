@@ -6,6 +6,8 @@ import XCTest
 /// totals so the relay can verify the parser against Codex's own counters.
 final class CodexRealLogsSmokeTests: XCTestCase {
     func testRealCodexLogsParse() async throws {
+        try requireRealLogsOptIn()
+
         let codex = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex", isDirectory: true)
         let sessions = codex.appendingPathComponent("sessions", isDirectory: true)

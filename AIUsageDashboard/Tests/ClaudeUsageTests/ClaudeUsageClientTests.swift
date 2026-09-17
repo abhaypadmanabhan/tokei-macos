@@ -155,17 +155,20 @@ private final class RecordingKeychainReader: KeychainPasswordSpawning, @unchecke
 final class ClaudeAccountCredentialsReaderTests: XCTestCase {
     private let home = URL(fileURLWithPath: "/Users/abhayp", isDirectory: true)
 
-    func testReaderRequestsTheAccountsOwnKeychainService() async throws {
+    func testR1_accountOneReaderUsesStableServiceAndReturnsValidCredentials() async throws {
         let account = ClaudeAccount(
             configDirectory: home.appendingPathComponent(".claude-account-1"),
             home: home
         )
-        let spawner = RecordingKeychainReader(payload: #"{"claudeAiOauth":{"accessToken":"tok-1"}}"#)
+        let spawner = RecordingKeychainReader(
+            payload: #"{"claudeAiOauth":{"accessToken":"tok-1","expiresAt":"2099-01-01T00:00:00Z"}}"#
+        )
         let reader = DefaultClaudeUsageCredentialsReader(account: account, keychainReader: spawner)
 
         let credentials = try await reader.readCredentials()
 
         XCTAssertEqual(credentials.accessToken, "tok-1")
+        XCTAssertFalse(credentials.isExpired(at: Date()))
         XCTAssertEqual(spawner.requestedServices, ["Claude Code-credentials-a337dfc1"])
     }
 
@@ -482,10 +485,28 @@ final class ClaudeCodeProviderQuotaTests: XCTestCase {
     }
 
     private func liveWindows() throws -> [QuotaWindow] {
-        try ClaudeUsageClientImpl.decodeQuotaWindows(
+        let now = Date()
+        return try ClaudeUsageClientImpl.decodeQuotaWindows(
             Data(ClaudeFixtures.oauthUsageResponse.utf8),
             providerID: .claudeCode
-        )
+        ).map { window in
+            // A2: the decoder fixture's reset dates are historical and the pure decoder has no
+            // observation clock. A mock live client must supply the same freshness contract
+            // as the real client before provider routing can consume its windows.
+            QuotaWindow(
+                providerID: window.providerID,
+                type: window.type,
+                used: window.used,
+                limit: window.limit,
+                remaining: window.remaining,
+                resetAt: now.addingTimeInterval(3_600),
+                confidence: window.confidence,
+                source: window.source,
+                label: window.label,
+                bucketKey: window.bucketKey,
+                observedAt: now
+            )
+        }
     }
 }
 

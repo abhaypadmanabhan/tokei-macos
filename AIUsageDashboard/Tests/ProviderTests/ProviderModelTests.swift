@@ -53,6 +53,16 @@ final class ProviderModelTests: XCTestCase {
         XCTAssertEqual(merged.outputTokens, 15)
     }
 
+    func testS02TokenUsageArithmeticSaturatesInsteadOfTrapping() {
+        let maximum = TokenUsage(inputTokens: .max, outputTokens: 1, confidence: .localParsed)
+        XCTAssertEqual(maximum.totalTokens, .max)
+
+        let merged = TokenUsage(inputTokens: .max, confidence: .localParsed)
+            .merging(TokenUsage(inputTokens: 1, confidence: .localParsed))
+        XCTAssertEqual(merged.inputTokens, .max)
+        XCTAssertEqual(TokenArithmetic.subtracting(.min, 1), .min)
+    }
+
     func testProviderSnapshotIdentifiable() {
         let snapshot = ProviderSnapshot(
             providerID: .claudeCode,

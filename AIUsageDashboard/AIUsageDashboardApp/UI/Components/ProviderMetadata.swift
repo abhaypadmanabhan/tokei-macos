@@ -40,11 +40,20 @@ enum ProviderCapabilityTier {
     }
 }
 
-/// Static, UI-only facts about each provider that never need Core access: the
-/// exact local path(s) Tokei reads, and how to pull the plan/tier string out of
-/// the one sanctioned channel for that data (`ProviderWarning`, frozen contract
-/// per the Patch Bible — plan/tier/credits never get a new stored field).
+/// Static, UI-only facts about each provider that never need Core access: local
+/// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
+    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .cursor, .antigravity]
+
+    static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
+        switch providerID {
+        case .claudeCode: return "claudeNetworkUsageEnabled"
+        case .cursor: return "cursorNetworkUsageEnabled"
+        case .antigravity: return "antigravityOnlineQuotaEnabled"
+        default: return nil
+        }
+    }
+
     /// Exact local path(s) this provider reads from, for the "we only read this"
     /// disclosure. Sourced from each provider's real default file location
     /// (verified against Core/Providers/*.swift and the Patch Bible's machine-

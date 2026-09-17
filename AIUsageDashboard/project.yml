@@ -13,8 +13,8 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.8.0"
-    CURRENT_PROJECT_VERSION: "8"
+    MARKETING_VERSION: "0.9.0"
+    CURRENT_PROJECT_VERSION: "9"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
@@ -107,17 +107,24 @@ targets:
       # token/logic files with no app-target dependencies.
       - path: AIUsageDashboardApp/UI/Charts/AccountSeriesStyle.swift
       - path: AIUsageDashboardApp/UI/Components/PadzyTheme.swift
+      # F6 tick gate lives with the status strip, not the theme. Compiled here so
+      # CoreTests can prove it without a public view-model counter.
+      - path: AIUsageDashboardApp/UI/Dashboard/StatusStripTickGate.swift
       # Same mechanism, for the `tokei` CLI/MCP surface (issue #59). Those files ship in
       # the standalone `tokei` tool target, which does not link Core — so compile the
       # PURE-LOGIC ones in here to get them under `-scheme AIUsageDashboardCore test`.
       # The TOKEI_CLI_TESTS condition below flips on their `import AIUsageDashboardCore`,
       # which the tool target must NOT have (it compiles AgentSnapshot.swift directly).
       # main.swift and StatusCommand.swift stay out: they own process entry / stdout.
+      - path: TokeiCLI/MCPFrameReader.swift
       - path: TokeiCLI/MCPServer.swift
+      - path: TokeiCLI/MCPServer+Instructions.swift
       - path: TokeiCLI/SnapshotReader.swift
       - path: TokeiCLI/StatusFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
+      - target: tokei
+        link: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.AIUsageDashboard.CoreTests

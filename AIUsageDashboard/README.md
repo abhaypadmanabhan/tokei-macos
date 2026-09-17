@@ -62,6 +62,9 @@ cd AIUsageDashboard
 xcodebuild -project AIUsageDashboard.xcodeproj -scheme AIUsageDashboardCore -destination 'platform=macOS' test
 ```
 
+The four live-corpus smoke suites skip by default. Run them explicitly with
+`TOKEI_REAL_LOGS=1` only when reading this Mac's provider logs is intended.
+
 ## Multiple Claude Code accounts
 
 Claude Code supports several accounts on one Mac by pointing `CLAUDE_CONFIG_DIR` at
@@ -95,8 +98,9 @@ engineering detail behind it.
   as 0%.
 - **Per-account detail** is preserved: the dashboard labels each account (`default`,
   `account-2`, …), and `tokei status --json` / the MCP `get_usage` tool expose an
-  `accounts[]` array. `accounts[].id` is the directory path — that is exactly what you set
-  `CLAUDE_CONFIG_DIR` to in order to target that account.
+  `accounts[]` array. Join on the opaque provider-scoped `accountID`, not on
+  `accounts[].id` (the legacy local path) or the label. To launch an account, pass its
+  structured `selector.env` map to the process API without building a shell command.
 
 If an account's OAuth token has expired, Tokei reports it rather than refreshing it —
 refreshing would race the Claude CLI's own token rotation. Run
@@ -113,6 +117,41 @@ Gemini quota tracking is powered by the official [Google Gemini CLI](https://git
 If `~/.gemini/oauth_creds.json` is missing or unreadable, Tokei reports **"Gemini CLI is not signed in on this machine."** This is the expected empty state; sign in with `gemini` to resolve it.
 
 If your access token expires, Tokei reports **"Gemini access token expired and cannot be refreshed automatically."** Tokei intentionally does not bundle the gemini-cli OAuth client secret (the no-secret gate), so it cannot silently refresh an expired token. The supported recovery is to re-run `gemini` once; the CLI refreshes the token in `~/.gemini/oauth_creds.json`, and Tokei reads it on the next sync.
+
+## Agent-facing CLI and MCP
+
+The bundled read-only helper exposes `tokei status [--json]` and exactly two MCP
+tools: `get_usage` and `get_route_recommendation`. Claude Code and Codex are the
+first account-aware adapters. Other providers keep their provider-level rows until
+they gain a verified identity/selector adapter.
+
+An account-aware `get_route_recommendation` result is flat JSON in
+`content[0].text`:
+
+```json
+{
+  "generatedAt": "2026-09-17T02:16:40Z",
+  "ageSeconds": 6,
+  "stale": false,
+  "routeTo": "codex",
+  "avoid": [],
+  "reason": "route to OpenAI Codex (tightest window 31%)",
+  "target": {
+    "provider": "codex",
+    "accountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25",
+    "selector": { "env": { "CODEX_HOME": "/Users/me/.codex" } }
+  },
+  "avoidAccounts": [],
+  "validUntil": "2026-09-17T02:26:40Z"
+}
+```
+
+Treat `accountID` as an opaque provider-scoped join key. Pass `selector.env` as the
+environment dictionary to the process API; never concatenate it into a shell string.
+Only an account with `quota.status == "eligible"` and an unexpired `validUntil` is
+positive headroom. Feature-detect these additive fields: an old helper in front of a
+new app is a lossy proxy even though both use schema version 1, so ship the helper
+and app together.
 
 ## What Works (MVP, verified 2026-07-06)
 
@@ -150,8 +189,9 @@ If your access token expires, Tokei reports **"Gemini access token expired and c
   read-only `tokei` helper (`Tokei.app/Contents/Helpers/tokei`) exposes it via
   `tokei status [--json]` and a dependency-free stdio MCP server (`tokei mcp`, two
   tools: `get_usage`, `get_route_recommendation`) so orchestrating agents (Claude Code,
-  Codex CLI) can route work away from a near-exhausted provider. Never serves stale
-  data silently. Settings "Agent Access" registration UI is a follow-up, not yet built.
+  Codex CLI) can route work away from a near-exhausted provider and to an exact account.
+  Route output includes file/decision freshness and expired executable targets are
+  removed reader-side. Settings "Agent Access" registration UI is a follow-up, not yet built.
 - **GitHub Copilot provider detection (#26 Copilot half)** (2026-07-24): `CopilotProvider`
   detects local Copilot installs (CLI/config markers, VS Code/Cursor extension dirs,
   Copilot for Xcode) without ever reading credentials. Copilot doesn't expose a

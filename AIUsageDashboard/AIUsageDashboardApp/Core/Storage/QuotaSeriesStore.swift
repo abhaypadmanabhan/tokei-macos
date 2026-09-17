@@ -111,9 +111,7 @@ public actor QuotaSeriesStore {
         // Global backstop; only trims when the per-series pass still leaves the
         // total over the absolute cap.
         guard samples.count > retentionLimit else { return }
-        samples = Array(samples
-            .sorted { $0.sampledAt < $1.sampledAt }
-            .suffix(retentionLimit))
+        samples = Array(samples.suffix(retentionLimit))
     }
 
     private func seriesKey(for sample: QuotaSample) -> String {

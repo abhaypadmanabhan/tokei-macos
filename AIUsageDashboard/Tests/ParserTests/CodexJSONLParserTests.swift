@@ -25,6 +25,22 @@ final class CodexJSONLParserTests: XCTestCase {
         return url
     }
 
+    private func writeFixture(_ data: Data, named: String) throws -> URL {
+        let url = tempDirectory.appendingPathComponent(named)
+        try data.write(to: url)
+        return url
+    }
+
+    private func ignoredRecord(byteCount: Int) -> Data {
+        let prefix = Data(#"{"ignored":""#.utf8)
+        let suffix = Data(#""}"#.utf8)
+        precondition(byteCount >= prefix.count + suffix.count)
+        var record = prefix
+        record.append(Data(repeating: 0x78, count: byteCount - prefix.count - suffix.count))
+        record.append(suffix)
+        return record
+    }
+
     private func makeSource(url: URL, sessionID: String = "codex-session") -> LogSource {
         LogSource(providerID: .codex, url: url, sessionID: sessionID)
     }
@@ -178,6 +194,47 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertTrue(usage.warnings.isEmpty)
     }
 
+    func testS01CodexAcceptsRecordsThroughSixteenMiBAtChunkBoundaries() async throws {
+        for mebibytes in [1, 4, 16] {
+            var fixture = ignoredRecord(byteCount: mebibytes * 1024 * 1024)
+            fixture.append(0x0A)
+            let url = try writeFixture(fixture, named: "s01-codex-\(mebibytes)-mib.jsonl")
+
+            let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+            XCTAssertEqual(usage.lifetime.totalTokens, 0)
+            XCTAssertTrue(usage.warnings.isEmpty, "\(mebibytes) MiB should be accepted")
+        }
+    }
+
+    func testS01CodexSkipsOversizedIncompleteRecordOnceAndResumesAfterDelimiter() async throws {
+        let url = try writeFixture(
+            ignoredRecord(byteCount: 17 * 1024 * 1024),
+            named: "s01-codex-oversized.jsonl"
+        )
+        let parser = makeParser()
+
+        let incomplete = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+        XCTAssertEqual(incomplete.lifetime.totalTokens, 0)
+        XCTAssertEqual(incomplete.warnings.count, 1)
+        XCTAssertLessThan(try XCTUnwrap(incomplete.warnings.first).message.utf8.count, 256)
+
+        let valid = tokenCountLine(
+            timestamp: "2026-07-06T12:00:00.000Z",
+            delta: 7,
+            cumulative: 7,
+            rateLimitUsedPercent: 7
+        )
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n\(valid)".utf8))
+        try handle.close()
+
+        let resumed = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+        XCTAssertEqual(resumed.lifetime.totalTokens, 7)
+        XCTAssertEqual(resumed.warnings.count, 1, "one oversized record emits one warning")
+    }
+
     func testBucketsDailyTotalsByEventTimestamp() async {
         let now = referenceNow()
         let url = writeFixture(CodexFixtures.windowBucketLines(referenceNow: now), named: "windows.jsonl")
@@ -316,6 +373,146 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertTrue(usage.quotaWindows.allSatisfy { $0.confidence == .estimated })
     }
 
+    func testD5UnchangedCumulativeUsageAddsNoTokensWhileQuotaAdvances() async {
+        let lines = CodexFixtures.d5CumulativeSequence()
+        let url = writeFixture(lines.joined(separator: "\n"), named: "d5-cumulative.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 150)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, 150)
+        XCTAssertEqual(usage.finalReportedTotalTokens, 150)
+        XCTAssertEqual(usage.quotaWindows.first { $0.type == .session }?.used, 30)
+    }
+
+    func testD5DuplicateCumulativeAcrossAppendAddsNoTokens() async throws {
+        let lines = CodexFixtures.d5CumulativeSequence()
+        let url = writeFixture(lines[0], named: "d5-append.jsonl")
+        let parser = makeParser()
+        _ = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+
+        try appendLine(lines[1], to: url)
+        let source = makeSourceWithModificationDate(url: url)
+        let incremental = await parser.parse(logSources: [source])
+        let cold = await makeParser().parse(logSources: [source])
+
+        assertEqual(incremental, cold)
+        XCTAssertEqual(incremental.lifetime.totalTokens, 100)
+        XCTAssertEqual(incremental.quotaWindows.first { $0.type == .session }?.used, 20)
+    }
+
+    func testD5CumulativeDecreaseStartsANewCountedRun() async {
+        let lines = CodexFixtures.d5CumulativeSequence(
+            cumulative: [100, 50, 75],
+            deltas: [100, 50, 25]
+        )
+        let url = writeFixture(lines.joined(separator: "\n"), named: "d5-reset.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 175)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, 175)
+        XCTAssertEqual(usage.finalReportedTotalTokens, 75)
+    }
+
+    func testR0604EmptyNullAndUnrecognizedCumulativeObjectsKeepDeltas() async {
+        for (name, cumulative) in [
+            ("empty", "{}"),
+            ("null", "null"),
+            ("unrecognized", #"{"future_token_field":999}"#)
+        ] {
+            let prefix = #"{"timestamp":"2026-07-06T12:00:00.000Z","type":"event_msg","payload":{"type":"token_count","#
+                + #""info":{"total_token_usage":"#
+            let lastUsagePrefix = #","last_token_usage":{"input_tokens":"#
+            let lines = [100, 50].map { delta in
+                prefix + cumulative + lastUsagePrefix + String(delta)
+                    + #","total_tokens":"# + String(delta) + "}}}}"
+            }
+            let url = writeFixture(lines.joined(separator: "\n"), named: "r0604-\(name).jsonl")
+
+            let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+            XCTAssertEqual(usage.lifetime.totalTokens, 150, name)
+            XCTAssertEqual(usage.deltaReportedTotalTokens, 150, name)
+        }
+    }
+
+    func testA3EveryCodexQuotaWindowUsesEventObservedAtAndStaleEventIsNotRoutable() async {
+        let now = referenceNow()
+        let eventDate = now.addingTimeInterval(-2 * 3_600)
+        let url = writeFixture(
+            CodexFixtures.a3QuotaEvent(timestamp: isoString(eventDate)),
+            named: "a3-observed-at.jsonl"
+        )
+
+        let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.quotaWindows.count, 5)
+        XCTAssertTrue(usage.quotaWindows.allSatisfy { $0.observedAt == eventDate })
+        for window in usage.quotaWindows {
+            guard let percent = window.used ?? window.remaining.map({ 100 - $0 }) else { continue }
+            let utilization = Utilization(
+                providerID: .codex,
+                window: window.type,
+                usedPercent: percent,
+                confidence: window.confidence,
+                observedAt: window.observedAt
+            )
+            XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(utilization, now: now))
+        }
+    }
+
+    func testA3CodexFreshnessBoundaryUsesEventTime() async {
+        let now = referenceNow()
+        for age in [1_799.0, 1_801.0] {
+            let eventDate = now.addingTimeInterval(-age)
+            let url = writeFixture(
+                CodexFixtures.a3QuotaEvent(timestamp: isoString(eventDate)),
+                named: "a3-boundary-\(Int(age)).jsonl"
+            )
+            let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+            let session = try! XCTUnwrap(usage.quotaWindows.first { $0.type == .session })
+            let utilization = Utilization(
+                providerID: .codex,
+                window: session.type,
+                usedPercent: session.used ?? 0,
+                confidence: session.confidence,
+                observedAt: session.observedAt
+            )
+            XCTAssertEqual(RouteTargetPolicy.agent.isRoutable(utilization, now: now), age < 1_800)
+        }
+    }
+
+    func testF4UnchangedModelDetectionCachesBothModelAndNilFiles() async throws {
+        let older = writeFixture(
+            CodexFixtures.sessionWithModel(model: "gpt-5.5"),
+            named: "model-older.jsonl"
+        )
+        let newest = writeFixture(CodexFixtures.ignoredEvent, named: "model-newest.jsonl")
+        let parser = makeParser()
+        let sources = [makeSource(url: older), makeSource(url: newest)]
+
+        let firstModel = await parser.detectLatestModel(logSources: sources)
+        let firstReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(firstModel, "gpt-5.5")
+        XCTAssertEqual(firstReadCount, 2)
+        let cachedModel = await parser.detectLatestModel(logSources: sources)
+        let cachedReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(cachedModel, "gpt-5.5")
+        XCTAssertEqual(cachedReadCount, 2)
+
+        try appendLine(
+            """
+            {"timestamp":"2026-07-06T12:00:00.000Z","type":"turn_context","payload":{"model":"gpt-6-ultra"}}
+            """,
+            to: newest
+        )
+        let appendedModel = await parser.detectLatestModel(logSources: sources)
+        let appendedReadCount = await parser.modelDetectionFileReadCountForTesting()
+        XCTAssertEqual(appendedModel, "gpt-6-ultra")
+        XCTAssertEqual(appendedReadCount, 3)
+    }
+
     func testNullRateLimitFieldsDoNotCrash() async {
         let url = writeFixture(CodexFixtures.nullRateLimitFields(), named: "nulls.jsonl")
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])
@@ -340,6 +537,36 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(usage.warnings.count, 1)
         XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
         XCTAssertEqual(usage.warnings[0].level, .warning)
+    }
+
+    func testS02CodexExtremeDoubleFixtureIsRejectedAsMalformedInsteadOfTrapping() async {
+        let prefix = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"#
+        let fixture = prefix + #""input_tokens":1e100}}}}"#
+        let url = writeFixture(fixture, named: "s02-codex-extreme.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 0)
+        XCTAssertEqual(usage.warnings.count, 1)
+        XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
+    }
+
+    func testS02CodexCrossRecordOverflowSaturatesWithWarning() async {
+        let prefix = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"#
+        let suffix = #"}}}}"#
+        let fixture = [
+            prefix
+                + #""input_tokens":9223372036854775806,"total_tokens":9223372036854775806"#
+                + suffix,
+            prefix + #""input_tokens":2,"total_tokens":2"# + suffix
+        ].joined(separator: "\n")
+        let url = writeFixture(fixture, named: "s02-codex-cross-record-overflow.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, .max)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, .max)
+        XCTAssertTrue(usage.warnings.contains { $0.message.contains("integer range") })
     }
 
     func testUnchangedFileReusesCachedAggregate() async throws {
@@ -626,5 +853,37 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(incremental.deltaReportedTotalTokens, 105)
         XCTAssertEqual(incremental.finalReportedTotalTokens, 300)
         XCTAssertEqual(incremental.quotaWindows.first?.used, 40)
+    }
+
+    func testD9_calendarChangeRebuildsCachedDayBucketsFromOriginalTimestamps() async throws {
+        let timestamp = "2026-01-01T05:00:00.000Z"
+        let url = writeFixture(tokenCountLine(
+            timestamp: timestamp,
+            delta: 10,
+            cumulative: 10,
+            rateLimitUsedPercent: 20
+        ), named: "timezone.jsonl")
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var tokyo = Calendar(identifier: .gregorian)
+        tokyo.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let reference = ISO8601DateFormatter().date(from: "2026-01-02T00:00:00Z")!
+        let parser = CodexJSONLParser(calendar: losAngeles, now: { reference })
+        let source = makeSourceWithModificationDate(url: url)
+
+        let before = await parser.parse(logSources: [source])
+        await parser.updateCalendar(tokyo)
+        let after = await parser.parse(logSources: [source])
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions.insert(.withFractionalSeconds)
+        let recordDate = try XCTUnwrap(formatter.date(from: timestamp))
+        let laDay = losAngeles.startOfDay(for: recordDate)
+        let tokyoDay = tokyo.startOfDay(for: recordDate)
+        XCTAssertEqual(before.dailyTotals[laDay], 10)
+        XCTAssertNil(before.dailyTotals[tokyoDay])
+        XCTAssertEqual(after.dailyTotals[tokyoDay], 10)
+        XCTAssertNil(after.dailyTotals[laDay])
+        XCTAssertEqual(after.lifetime.totalTokens, before.lifetime.totalTokens)
     }
 }

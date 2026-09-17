@@ -59,12 +59,11 @@ public actor CursorProvider: UsageProvider {
         var monthUsage: TokenUsage?
         var lifetimeUsage: TokenUsage?
         var costUsage: CostUsage?
-        var dailyTotals: [Date: Int]? = state.acceptedLinesByDate.isEmpty
-            ? nil : state.acceptedLinesByDate
+        var dailyTotals: [Date: Int]?
         var hourlyTotals: [Date: Int]?
 
         if userDefaultsReader.bool(forKey: "cursorNetworkUsageEnabled") {
-            switch await fetchOnlineUsage() {
+            switch await fetchOnlineUsage(accessToken: state.accessToken) {
             case .success(let online):
                 // Real token usage supersedes the offline code-line stats.
                 todayUsage = online.today
@@ -72,7 +71,7 @@ public actor CursorProvider: UsageProvider {
                 monthUsage = online.month
                 lifetimeUsage = nil // the export may not span all history — don't claim lifetime.
                 costUsage = online.cost
-                if !online.dailyTotals.isEmpty { dailyTotals = online.dailyTotals }
+                dailyTotals = online.dailyTotals.isEmpty ? nil : online.dailyTotals
                 hourlyTotals = online.hourlyTotals
                 if let summary = online.summary, let percent = summary.usedPercent {
                     quotaWindows = [QuotaWindow(
@@ -84,7 +83,8 @@ public actor CursorProvider: UsageProvider {
                         resetAt: summary.resetAt,
                         confidence: .providerReported,
                         source: "cursor.com/api/usage-summary",
-                        label: state.planLabel ?? summary.membershipType
+                        label: state.planLabel ?? summary.membershipType,
+                        observedAt: online.summaryObservedAt
                     )]
                 }
             case .missingSession:
@@ -133,10 +133,11 @@ public actor CursorProvider: UsageProvider {
         let dailyTotals: [Date: Int]
         let hourlyTotals: [Date: Int]?
         let summary: CursorUsageSummary?
+        let summaryObservedAt: Date?
     }
 
-    private func fetchOnlineUsage() async -> OnlineFetch {
-        guard let token = await parser.readAccessToken(stateDatabaseURL: stateDatabaseURL),
+    private func fetchOnlineUsage(accessToken: String?) async -> OnlineFetch {
+        guard let token = accessToken,
               let cookie = CursorSession.cookie(jwt: token) else {
             return .missingSession
         }
@@ -146,12 +147,15 @@ public actor CursorProvider: UsageProvider {
             async let csvResult = usageClient.fetchUsageEventsCSV(cookie: cookie)
             async let summaryData = fetchSummarySafely(cookie: cookie)
 
-            let events = CursorUsageCSV.parseEvents(try await csvResult)
-            let summary = (await summaryData).flatMap(CursorUsageSummary.decode)
+            let csv = try await csvResult
+            let summaryResponse = await summaryData
+            let responseTime = now()
+            let events = CursorUsageCSV.parseEvents(csv)
+            let summary = summaryResponse.flatMap { CursorUsageSummary.decode($0.payload) }
 
             var windows = UsageWindows(
                 calendar: calendar,
-                referenceDate: now(),
+                referenceDate: responseTime,
                 emptyConfidence: .providerReported
             )
             var totalCost = 0.0
@@ -185,7 +189,8 @@ public actor CursorProvider: UsageProvider {
                 ) : nil,
                 dailyTotals: windowed.dailyTotals,
                 hourlyTotals: windowed.hourlyTotals,
-                summary: summary
+                summary: summary,
+                summaryObservedAt: summary == nil ? nil : summaryResponse?.observedAt
             ))
         } catch {
             return .failure(error.localizedDescription)
@@ -194,7 +199,8 @@ public actor CursorProvider: UsageProvider {
 
     /// The quota summary is enrichment, not the headline — a failure here must not
     /// discard the token usage we did fetch, so it never throws.
-    private func fetchSummarySafely(cookie: String) async -> Data? {
-        try? await usageClient.fetchUsageSummary(cookie: cookie)
+    private func fetchSummarySafely(cookie: String) async -> (payload: Data, observedAt: Date)? {
+        guard let payload = try? await usageClient.fetchUsageSummary(cookie: cookie) else { return nil }
+        return (payload, now())
     }
 }

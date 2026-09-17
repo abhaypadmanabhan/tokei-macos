@@ -12,7 +12,7 @@ import AIUsageDashboardCore
 ///   per-agent "pause", so the dot is an honest status indicator, not a fake
 ///   toggle.
 /// - **Live quota** only appears for the three providers that actually expose an
-///   online connector (`ProviderOverviewRow.connectableProviders`); its switch is
+///   online connector (`ProviderMetadata.liveQuotaProviders`); its switch is
 ///   the same `@AppStorage` flag the connector reads at fetch time, and the OFF /
 ///   CONNECTING / LIVE state is derived from whether a live window has landed.
 ///   Local-only agents read "LOCAL LOGS ONLY" instead of a dead toggle.
@@ -39,7 +39,7 @@ struct ConnectionRow: View {
         _hiddenFlag = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
         _liveEnabled = AppStorage(
             wrappedValue: false,
-            ProviderOverviewRow.liveEnabledKey(for: providerID) ?? "connections.noLive.\(providerID.rawValue)"
+            ProviderMetadata.liveQuotaEnabledKey(for: providerID) ?? "connections.noLive.\(providerID.rawValue)"
         )
     }
 
@@ -61,7 +61,7 @@ struct ConnectionRow: View {
     }
 
     private var connectable: Bool {
-        ProviderOverviewRow.connectableProviders.contains(providerID)
+        ProviderMetadata.liveQuotaProviders.contains(providerID)
     }
 
     private var hasLiveData: Bool {
@@ -169,9 +169,6 @@ struct ConnectionRow: View {
     /// Honest status, not a toggle: Tokei watches every detected agent's local logs.
     private var watchIndicator: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(snapshot == nil ? PadzyTheme.ink5 : PadzyTheme.good)
-                .frame(width: 6, height: 6)
             Text(snapshot == nil ? "Not found" : "Watching")
                 .font(.sans(size: 11))
                 .foregroundColor(PadzyTheme.ink3)
@@ -208,9 +205,6 @@ struct ConnectionRow: View {
     private var liveQuotaControl: some View {
         if connectable {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(liveDotColor)
-                    .frame(width: 6, height: 6)
                 Text("LIVE QUOTA · \(liveStateLabel)")
                     .font(.mono(size: 9.5))
                     .tracking(9.5 * 0.1)

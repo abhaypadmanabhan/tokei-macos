@@ -51,7 +51,11 @@ public actor AntigravityStateDBParser {
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try copyDatabase(from: stateDatabaseURL, to: databaseCopyURL)
+            try SQLiteSidecarCopy.copyDatabase(
+                from: stateDatabaseURL,
+                to: databaseCopyURL,
+                using: fileManager
+            )
             return try parseCopiedDatabase(at: databaseCopyURL)
         } catch {
             return ParsedState(warnings: [
@@ -66,12 +70,8 @@ public actor AntigravityStateDBParser {
     private func temporaryCopyDirectory() throws -> URL {
         let directory = fileManager.temporaryDirectory
             .appendingPathComponent("TokeiAntigravityStateDB-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try SQLiteSidecarCopy.createPrivateSnapshotDirectory(at: directory, using: fileManager)
         return directory
-    }
-
-    private func copyDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        try SQLiteSidecarCopy.copyDatabase(from: sourceURL, to: destinationURL, using: fileManager)
     }
 
     private func parseCopiedDatabase(at url: URL) throws -> ParsedState {

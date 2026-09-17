@@ -94,6 +94,23 @@ public enum UsageAnalytics {
         return (Double(current - previous) / Double(previous)) * 100
     }
 
+    /// D6: the seven-day window is a rolling period, not the calendar week.
+    public static let rollingSevenDayLabel = "Last 7 days"
+
+    /// Daily-history title follows the selected range. Never hardcodes 30d.
+    public static func dailyHistoryTitle(for range: UsageRange) -> String {
+        let rangeName: String
+        switch range {
+        case .today: rangeName = "today"
+        case .sevenDay, .week: rangeName = "last 7 days"
+        case .thirtyDay, .month: rangeName = "last 30 days"
+        case .ninetyDay: rangeName = "last 90 days"
+        case .lifetime: rangeName = "lifetime"
+        case .custom: rangeName = "custom range"
+        }
+        return "Daily history · \(rangeName)"
+    }
+
     public static func providerSplit(
         snapshots: [ProviderSnapshot],
         range: UsageRange,

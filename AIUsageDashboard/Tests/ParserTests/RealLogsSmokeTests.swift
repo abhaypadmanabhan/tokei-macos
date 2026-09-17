@@ -6,6 +6,8 @@ import XCTest
 /// against an independent baseline (dedupe by message.id ?? requestId ?? uuid).
 final class RealLogsSmokeTests: XCTestCase {
     func testRealLogsParse() async throws {
+        try requireRealLogsOptIn()
+
         let projects = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects", isDirectory: true)
         try XCTSkipUnless(

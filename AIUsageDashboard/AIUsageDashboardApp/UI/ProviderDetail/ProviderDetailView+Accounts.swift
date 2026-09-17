@@ -33,6 +33,7 @@ extension ProviderDetailView {
             .foregroundColor(PadzyTheme.ink3)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 640, alignment: .leading)
+            .rollingNumber(Double(accounts.count), reduceMotion: reduceMotion)
     }
 
     private var scopeSentence: String {
@@ -41,11 +42,9 @@ extension ProviderDetailView {
             return "\(sum) Per-account numbers are in Accounts below."
         }
         if let account = headlineAccount {
-            return "\(sum) The gauge and quota windows are one account — \(account.label), "
-                + "the one with the most headroom right now. Per-account numbers are in Accounts below."
+            return "\(sum) Quota windows are \(account.label), the account with the most headroom."
         }
-        return "\(sum) The gauge and quota windows are a single account's — whichever has the "
-            + "most headroom — not all \(accounts.count). Per-account numbers are in Accounts below."
+        return "\(sum) Quota windows are one account — whichever has the most headroom."
     }
 
     /// Which account the headline quota came from — **asked**, not re-derived. The provider
@@ -136,15 +135,7 @@ extension ProviderDetailView {
             return "One account, and one of its directories could not be read \u{2014} "
                 + "the totals above are missing whatever is in it."
         }
-        let shared = "Each line is one account's own tokens per day, on a shared scale."
-        guard let period = accountPeriodLabel else {
-            return "\(shared) Daily history below adds every account together."
-        }
-        // Naming the period twice — here and on the column — is deliberate. The stat tiles at
-        // the top of this page are TODAY and these totals are the window; two numbers on one
-        // card meaning different things is the whole reason this surface was built.
-        return "\(shared) The totals below cover the same \(period) \u{2014} the tiles at the "
-            + "top of this page are today. Daily history below adds every account together."
+        return "Each line is one account's own tokens per day, on a shared scale."
     }
 
     /// Column header for the account rows. The row's big number is that account's total over
@@ -193,10 +184,12 @@ extension ProviderDetailView {
                     .font(.mono(size: 15, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(row.rangeTokens == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                    .rollingNumber(row.rangeTokens.map(Double.init), reduceMotion: reduceMotion)
                 Text(row.shareLabel)
                     .font(.mono(size: 13.5))
                     .monospacedDigit()
                     .foregroundColor(PadzyTheme.ink5)
+                    .rollingNumber(row.share.map { $0 * 100 }, reduceMotion: reduceMotion)
                     .frame(width: 48, alignment: .trailing)
             }
 
@@ -222,6 +215,7 @@ extension ProviderDetailView {
                     .font(.mono(size: 15, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(row.peak == nil ? PadzyTheme.ink5 : PadzyTheme.ink2)
+                    .rollingNumber(row.peak, reduceMotion: reduceMotion)
                     .frame(width: 44, alignment: .trailing)
             }
 

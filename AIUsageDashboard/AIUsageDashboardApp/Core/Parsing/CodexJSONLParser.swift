@@ -1,26 +1,45 @@
 import Foundation
 
 public actor CodexJSONLParser {
+    struct FileUsage: Sendable {
+        let path: String
+        let firstEventAt: Date?
+        let lastEventAt: Date?
+        let lifetime: TokenUsage
+        let dailyUsage: [Date: TokenUsage]
+        let dailyTotals: [Date: Int]
+        let hourlyTotals: [Date: Int]
+    }
+
     public struct AggregateUsage: Sendable {
         public let today: TokenUsage
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
+        /// Raw token components keyed by the parser calendar's start of day.
+        /// Codex identity attribution consumes these dated totals instead of a
+        /// date-relative `today` snapshot so midnight cannot move old usage.
+        public let dailyUsage: [Date: TokenUsage]
         public let dailyTotals: [Date: Int]
+        public let todayStart: Date
         public let hourlyTotals: [Date: Int]?
         public let quotaWindows: [QuotaWindow]
         public let deltaReportedTotalTokens: Int
         public let finalReportedTotalTokens: Int
         public let warnings: [ProviderWarning]
+        let files: [FileUsage]
     }
 
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: () -> Date
 
     /// Caches per-file aggregates so unchanged logs are not re-parsed on every sync.
     /// Each entry retains additive usage plus the per-file latest-wins values needed
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
+    private var modelDetectionCache: [String: ModelDetectionCacheEntry] = [:]
+    private var modelDetectionFileReadCount = 0
+    private var fileReadCount = 0
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -31,15 +50,18 @@ public actor CodexJSONLParser {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
+        var dailyUsage: [Date: TokenUsage] = [:]
         var hourlyTotals: [Date: Int] = [:]
         var latestRateLimits: CodexRateLimitSnapshot?
         var deltaReportedTotalTokens = 0
         var finalTotalsBySession: [String: CodexSessionFinalTotal] = [:]
+        var arithmeticOverflowed = false
+        var files: [FileUsage] = []
 
         for source in logSources {
             let path = source.url.path
-            let currentModificationDate = source.lastModified
             let currentMetadata = fileMetadata(of: source.url)
+            let currentModificationDate = source.lastModified ?? currentMetadata.modificationDate
             let currentSize = currentMetadata.size
 
             if let cached = fileCache[path],
@@ -49,11 +71,14 @@ public actor CodexJSONLParser {
                 apply(
                     cached.aggregate,
                     to: &windows,
+                    dailyUsage: &dailyUsage,
                     hourlyTotals: &hourlyTotals,
                     latestRateLimits: &latestRateLimits,
                     deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                    finalTotalsBySession: &finalTotalsBySession
+                    finalTotalsBySession: &finalTotalsBySession,
+                    arithmeticOverflowed: &arithmeticOverflowed
                 )
+                files.append(fileUsage(path: path, aggregate: cached.aggregate))
                 if cached.malformedCount > 0 {
                     warnings.append(malformedWarning(count: cached.malformedCount, url: source.url))
                 }
@@ -63,7 +88,7 @@ public actor CodexJSONLParser {
             do {
                 var incrementalAggregate = FileAggregate.empty
                 let sessionKey = source.sessionID ?? path
-                let parseResult: (malformedCount: Int, finalOffset: UInt64)
+                let parseResult: JSONLParseResult
 
                 if let cached = fileCache[path],
                    let cachedModificationDate = cached.modificationDate,
@@ -71,12 +96,16 @@ public actor CodexJSONLParser {
                    currentModificationDate >= cachedModificationDate,
                    cached.byteOffset < currentSize,
                    cached.byteOffset > 0,
-                   cached.fileIdentifier == currentMetadata.identifier,
-                   try continuityTail(at: source.url, endingAt: cached.byteOffset)
+                    cached.fileIdentifier == currentMetadata.identifier,
+                    try continuityTail(at: source.url, endingAt: cached.byteOffset)
                     == cached.continuityTail {
+                    incrementalAggregate.lastCumulativeUsageBySession =
+                        cached.aggregate.lastCumulativeUsageBySession
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
-                        startingAtByte: cached.byteOffset
+                        startingAtByte: cached.byteOffset,
+                        startingInOversizedRecord: cached.discardingOversizedRecord
                     ) { [self] record in
                         self.accumulate(
                             into: &incrementalAggregate,
@@ -96,17 +125,21 @@ public actor CodexJSONLParser {
                             endingAt: parseResult.finalOffset
                         ),
                         aggregate: updatedAggregate,
-                        malformedCount: cached.malformedCount + parseResult.malformedCount
+                        malformedCount: cached.malformedCount + parseResult.malformedCount,
+                        discardingOversizedRecord: parseResult.discardingOversizedRecord
                     )
                     fileCache[path] = updatedEntry
                     apply(
                         updatedEntry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                        finalTotalsBySession: &finalTotalsBySession
+                        finalTotalsBySession: &finalTotalsBySession,
+                        arithmeticOverflowed: &arithmeticOverflowed
                     )
+                    files.append(fileUsage(path: path, aggregate: updatedEntry.aggregate))
                     if updatedEntry.malformedCount > 0 {
                         warnings.append(malformedWarning(
                             count: updatedEntry.malformedCount,
@@ -114,6 +147,7 @@ public actor CodexJSONLParser {
                         ))
                     }
                 } else {
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
                         startingAtByte: 0
@@ -134,17 +168,21 @@ public actor CodexJSONLParser {
                             endingAt: parseResult.finalOffset
                         ),
                         aggregate: incrementalAggregate,
-                        malformedCount: parseResult.malformedCount
+                        malformedCount: parseResult.malformedCount,
+                        discardingOversizedRecord: parseResult.discardingOversizedRecord
                     )
                     fileCache[path] = entry
                     apply(
                         entry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                        finalTotalsBySession: &finalTotalsBySession
+                        finalTotalsBySession: &finalTotalsBySession,
+                        arithmeticOverflowed: &arithmeticOverflowed
                     )
+                    files.append(fileUsage(path: path, aggregate: entry.aggregate))
                     if entry.malformedCount > 0 {
                         warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
                     }
@@ -161,30 +199,38 @@ public actor CodexJSONLParser {
         // unbounded — Codex creates a new per-session log file continually, and a
         // long-running menu-bar app would otherwise retain every one ever seen.
         //
-        // HAZARD, if Codex ever gains multiple accounts/config directories: filtering on
-        // *this call's* source list is only safe because `CodexProvider` makes exactly one
-        // `parse` call, so the list is the whole corpus. The moment a second caller shares
-        // this parser, each call's list becomes a slice and each one evicts the other's
-        // entries — the cache then never hits and every refresh re-reads everything. That
-        // is precisely what happened to `ClaudeJSONLParser`; see 50276d2, which changed the
-        // predicate to existence on disk. Copy that fix here rather than rediscovering it.
+        // CodexProvider parses one account slice at a time. Retain entries outside this
+        // slice while their files still exist, or alternating accounts evict and re-read
+        // each other's cache on every refresh. This mirrors Claude's multi-root fix.
         // The cross-file dedup ordering bug the Claude fix then exposed does not apply:
         // Codex aggregates per session file with no shared dedupe-key set.
         let activePaths = Set(logSources.map(\.url.path))
-        fileCache = fileCache.filter { activePaths.contains($0.key) }
+        fileCache = fileCache.filter { path, _ in
+            activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
+        }
 
+        let finalReportedTotalTokens = TokenArithmetic.sum(
+            finalTotalsBySession.values.map(\.totalTokens),
+            overflowed: &arithmeticOverflowed
+        )
+        if arithmeticOverflowed || windows.arithmeticOverflowed {
+            warnings.append(arithmeticOverflowWarning())
+        }
         let snapshot = windows.snapshot()
         return AggregateUsage(
             today: snapshot.today,
             week: snapshot.week,
             month: snapshot.month,
             lifetime: snapshot.lifetime,
+            dailyUsage: dailyUsage,
             dailyTotals: snapshot.dailyTotals,
+            todayStart: calendar.startOfDay(for: referenceDate),
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
-            finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
-            warnings: warnings
+            finalReportedTotalTokens: finalReportedTotalTokens,
+            warnings: warnings,
+            files: files
         )
     }
 
@@ -197,6 +243,7 @@ public actor CodexJSONLParser {
         var continuityTail: Data
         var aggregate: FileAggregate
         var malformedCount: Int
+        var discardingOversizedRecord: Bool
     }
 
     private func continuityTail(at url: URL, endingAt byteOffset: UInt64) throws -> Data {
@@ -217,6 +264,10 @@ public actor CodexJSONLParser {
         var deltaReportedTotalTokens: Int
         var finalTotalsBySession: [String: CodexSessionFinalTotal]
         var latestRateLimits: CodexRateLimitSnapshot?
+        var lastCumulativeUsageBySession: [String: CodexCumulativeUsageSignature]
+        var firstEventAt: Date?
+        var lastEventAt: Date?
+        var arithmeticOverflowed: Bool
 
         static var empty: FileAggregate {
             FileAggregate(
@@ -226,7 +277,11 @@ public actor CodexJSONLParser {
                 hourlyTotals: [:],
                 deltaReportedTotalTokens: 0,
                 finalTotalsBySession: [:],
-                latestRateLimits: nil
+                latestRateLimits: nil,
+                lastCumulativeUsageBySession: [:],
+                firstEventAt: nil,
+                lastEventAt: nil,
+                arithmeticOverflowed: false
             )
         }
     }
@@ -236,9 +291,61 @@ public actor CodexJSONLParser {
         record: CodexUsageRecord,
         sessionKey: String
     ) {
-        aggregate.lifetime = aggregate.lifetime.merging(record.deltaUsage)
-        aggregate.deltaReportedTotalTokens += record.deltaReportedTotalTokens
+        if let timestamp = record.timestamp {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
+        }
+        guard record.contributesUsage else { return }
 
+        let repeatsCumulativeUsage: Bool
+        if let signature = record.cumulativeUsageSignature {
+            repeatsCumulativeUsage = aggregate.lastCumulativeUsageBySession[sessionKey] == signature
+            aggregate.lastCumulativeUsageBySession[sessionKey] = signature
+        } else {
+            repeatsCumulativeUsage = false
+        }
+        let deltaUsage = repeatsCumulativeUsage
+            ? UsageWindows.emptyUsage(.localParsed)
+            : record.deltaUsage
+        let deltaReportedTotalTokens = repeatsCumulativeUsage ? 0 : record.deltaReportedTotalTokens
+
+        aggregate.lifetime = aggregate.lifetime.merging(
+            deltaUsage,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+        aggregate.deltaReportedTotalTokens = TokenArithmetic.adding(
+            aggregate.deltaReportedTotalTokens,
+            deltaReportedTotalTokens,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+
+        recordLatestSnapshots(into: &aggregate, from: record, sessionKey: sessionKey)
+
+        guard let timestamp = record.timestamp else { return }
+        let day = calendar.startOfDay(for: timestamp)
+        aggregate.dailyUsage[day] = (
+            aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
+        ).merging(deltaUsage, overflowed: &aggregate.arithmeticOverflowed)
+        aggregate.dailyReportedTotals[day] = TokenArithmetic.adding(
+            aggregate.dailyReportedTotals[day, default: 0],
+            deltaReportedTotalTokens,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+
+        guard deltaReportedTotalTokens > 0,
+              let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar) else { return }
+        aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
+            aggregate.hourlyTotals[hour, default: 0],
+            deltaReportedTotalTokens,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+    }
+
+    private func recordLatestSnapshots(
+        into aggregate: inout FileAggregate,
+        from record: CodexUsageRecord,
+        sessionKey: String
+    ) {
         if let cumulativeTotal = record.cumulativeReportedTotalTokens {
             let current = aggregate.finalTotalsBySession[sessionKey]
             if current == nil || record.isNewerThan(current!) {
@@ -248,36 +355,44 @@ public actor CodexJSONLParser {
                 )
             }
         }
-
         if let rateLimits = record.rateLimits,
            aggregate.latestRateLimits == nil
             || rateLimits.timestamp > aggregate.latestRateLimits!.timestamp {
             aggregate.latestRateLimits = rateLimits
         }
-
-        guard let timestamp = record.timestamp else { return }
-        let day = calendar.startOfDay(for: timestamp)
-        aggregate.dailyUsage[day] = (aggregate.dailyUsage[day] ?? emptyUsage())
-            .merging(record.deltaUsage)
-        aggregate.dailyReportedTotals[day, default: 0] += record.deltaReportedTotalTokens
-
-        guard record.deltaReportedTotalTokens > 0,
-              let hour = hourStart(for: timestamp) else { return }
-        aggregate.hourlyTotals[hour, default: 0] += record.deltaReportedTotalTokens
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
-        aggregate.lifetime = aggregate.lifetime.merging(incremental.lifetime)
+        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed
+            || incremental.arithmeticOverflowed
+        aggregate.lifetime = aggregate.lifetime.merging(
+            incremental.lifetime,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
         for (day, usage) in incremental.dailyUsage {
-            aggregate.dailyUsage[day] = (aggregate.dailyUsage[day] ?? emptyUsage()).merging(usage)
+            aggregate.dailyUsage[day] = (
+                aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
+            ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
         for (day, total) in incremental.dailyReportedTotals {
-            aggregate.dailyReportedTotals[day, default: 0] += total
+            aggregate.dailyReportedTotals[day] = TokenArithmetic.adding(
+                aggregate.dailyReportedTotals[day, default: 0],
+                total,
+                overflowed: &aggregate.arithmeticOverflowed
+            )
         }
         for (hour, total) in incremental.hourlyTotals {
-            aggregate.hourlyTotals[hour, default: 0] += total
+            aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
+                aggregate.hourlyTotals[hour, default: 0],
+                total,
+                overflowed: &aggregate.arithmeticOverflowed
+            )
         }
-        aggregate.deltaReportedTotalTokens += incremental.deltaReportedTotalTokens
+        aggregate.deltaReportedTotalTokens = TokenArithmetic.adding(
+            aggregate.deltaReportedTotalTokens,
+            incremental.deltaReportedTotalTokens,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
 
         for (sessionKey, candidate) in incremental.finalTotalsBySession {
             let current = aggregate.finalTotalsBySession[sessionKey]
@@ -290,18 +405,45 @@ public actor CodexJSONLParser {
             || candidate.timestamp > aggregate.latestRateLimits!.timestamp {
             aggregate.latestRateLimits = candidate
         }
+        for (sessionKey, signature) in incremental.lastCumulativeUsageBySession {
+            aggregate.lastCumulativeUsageBySession[sessionKey] = signature
+        }
+        if let firstEventAt = incremental.firstEventAt {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? firstEventAt, firstEventAt)
+        }
+        if let lastEventAt = incremental.lastEventAt {
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? lastEventAt, lastEventAt)
+        }
+    }
+
+    private func fileUsage(path: String, aggregate: FileAggregate) -> FileUsage {
+        FileUsage(
+            path: path,
+            firstEventAt: aggregate.firstEventAt,
+            lastEventAt: aggregate.lastEventAt,
+            lifetime: aggregate.lifetime,
+            dailyUsage: aggregate.dailyUsage,
+            dailyTotals: aggregate.dailyReportedTotals,
+            hourlyTotals: aggregate.hourlyTotals
+        )
     }
 
     private func apply(
         _ aggregate: FileAggregate,
         to windows: inout UsageWindows,
+        dailyUsage: inout [Date: TokenUsage],
         hourlyTotals: inout [Date: Int],
         latestRateLimits: inout CodexRateLimitSnapshot?,
         deltaReportedTotalTokens: inout Int,
-        finalTotalsBySession: inout [String: CodexSessionFinalTotal]
+        finalTotalsBySession: inout [String: CodexSessionFinalTotal],
+        arithmeticOverflowed: inout Bool
     ) {
+        arithmeticOverflowed = arithmeticOverflowed || aggregate.arithmeticOverflowed
         windows.accumulate(aggregate.lifetime, timestamp: nil, dailyTotal: 0)
         for (day, usage) in aggregate.dailyUsage {
+            dailyUsage[day] = (
+                dailyUsage[day] ?? UsageWindows.emptyUsage(usage.confidence)
+            ).merging(usage, overflowed: &arithmeticOverflowed)
             windows.accumulate(
                 usage,
                 timestamp: day,
@@ -311,9 +453,17 @@ public actor CodexJSONLParser {
         }
         for (hour, total) in aggregate.hourlyTotals {
             guard hour >= windows.hourlyStartDate else { continue }
-            hourlyTotals[hour, default: 0] += total
+            hourlyTotals[hour] = TokenArithmetic.adding(
+                hourlyTotals[hour, default: 0],
+                total,
+                overflowed: &arithmeticOverflowed
+            )
         }
-        deltaReportedTotalTokens += aggregate.deltaReportedTotalTokens
+        deltaReportedTotalTokens = TokenArithmetic.adding(
+            deltaReportedTotalTokens,
+            aggregate.deltaReportedTotalTokens,
+            overflowed: &arithmeticOverflowed
+        )
 
         for (sessionKey, candidate) in aggregate.finalTotalsBySession {
             let current = finalTotalsBySession[sessionKey]
@@ -330,15 +480,20 @@ public actor CodexJSONLParser {
     private struct FileMetadata {
         let size: UInt64
         let identifier: UInt64?
+        let modificationDate: Date?
     }
 
     private func fileMetadata(of url: URL) -> FileMetadata {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attributes[.size] as? NSNumber else {
-            return FileMetadata(size: 0, identifier: nil)
+            return FileMetadata(size: 0, identifier: nil, modificationDate: nil)
         }
         let identifier = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-        return FileMetadata(size: size.uint64Value, identifier: identifier)
+        return FileMetadata(
+            size: size.uint64Value,
+            identifier: identifier,
+            modificationDate: attributes[.modificationDate] as? Date
+        )
     }
 
     private func malformedWarning(count: Int, url: URL) -> ProviderWarning {
@@ -348,21 +503,28 @@ public actor CodexJSONLParser {
         )
     }
 
-    private func emptyUsage() -> TokenUsage {
-        TokenUsage(
-            inputTokens: 0,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheCreationTokens: 0,
-            reasoningTokens: 0,
-            confidence: .localParsed
+    private func arithmeticOverflowWarning() -> ProviderWarning {
+        ProviderWarning(
+            message: "Codex token totals exceeded the supported integer range and were clamped.",
+            level: .warning
         )
     }
 
-    private func hourStart(for timestamp: Date) -> Date? {
-        let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
-        return calendar.date(from: components)
+    /// Rebuild cached day/hour buckets after a timezone or calendar-rule change.
+    public func updateCalendar(_ calendar: Calendar) {
+        guard self.calendar.identifier != calendar.identifier
+            || self.calendar.timeZone.identifier != calendar.timeZone.identifier
+            || self.calendar.firstWeekday != calendar.firstWeekday
+            || self.calendar.minimumDaysInFirstWeek != calendar.minimumDaysInFirstWeek
+            || self.calendar.locale?.identifier != calendar.locale?.identifier else { return }
+        self.calendar = calendar
+        fileCache.removeAll(keepingCapacity: true)
     }
+
+    func fileReadCountForTesting() -> Int {
+        fileReadCount
+    }
+
 }
 
 enum CodexLineParseOutcome: Sendable {
@@ -373,9 +535,11 @@ enum CodexLineParseOutcome: Sendable {
 
 struct CodexUsageRecord: Sendable {
     let timestamp: Date?
+    let contributesUsage: Bool
     let deltaUsage: TokenUsage
     let deltaReportedTotalTokens: Int
     let cumulativeReportedTotalTokens: Int?
+    let cumulativeUsageSignature: CodexCumulativeUsageSignature?
     let rateLimits: CodexRateLimitSnapshot?
 
     func isNewerThan(_ finalTotal: CodexSessionFinalTotal) -> Bool {
@@ -390,6 +554,14 @@ struct CodexUsageRecord: Sendable {
             return true
         }
     }
+}
+
+struct CodexCumulativeUsageSignature: Sendable, Equatable {
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let cachedInputTokens: Int?
+    let reasoningOutputTokens: Int?
+    let totalTokens: Int?
 }
 
 struct CodexSessionFinalTotal: Sendable {
@@ -463,15 +635,41 @@ extension CodexJSONLParser {
     /// returns them) and stop at the first file with a `turn_context` event — avoiding a
     /// second full read of every session file just to find the most recent model.
     public func detectLatestModel(logSources: [LogSource]) async -> String? {
+        let activePaths = Set(logSources.map(\.url.path))
+        defer {
+            modelDetectionCache = modelDetectionCache.filter { activePaths.contains($0.key) }
+        }
         for source in logSources.reversed() {
-            if let model = await latestModel(inFileAt: source.url) {
+            let metadata = fileMetadata(of: source.url)
+            let stamp = ModelSourceStamp(
+                fileIdentifier: metadata.identifier,
+                modificationDate: metadata.modificationDate ?? source.lastModified,
+                size: metadata.size
+            )
+            let cached = modelDetectionCache[source.url.path]
+            let model: String?
+            if cached?.stamp == stamp {
+                model = cached?.model
+            } else {
+                model = await latestModel(inFileAt: source.url)
+                modelDetectionCache[source.url.path] = ModelDetectionCacheEntry(
+                    stamp: stamp,
+                    model: model
+                )
+            }
+            if let model {
                 return model
             }
         }
         return nil
     }
 
+    func modelDetectionFileReadCountForTesting() -> Int {
+        modelDetectionFileReadCount
+    }
+
     private func latestModel(inFileAt url: URL) async -> String? {
+        modelDetectionFileReadCount += 1
         var model: String?
         do {
             for try await line in url.lines {
@@ -488,15 +686,37 @@ extension CodexJSONLParser {
         return model
     }
 
+    private struct ModelSourceStamp: Equatable {
+        let fileIdentifier: UInt64?
+        let modificationDate: Date?
+        let size: UInt64
+    }
+
+    private struct ModelDetectionCacheEntry {
+        let stamp: ModelSourceStamp
+        let model: String?
+    }
+
     func parseLine(_ data: Data) -> CodexLineParseOutcome {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .malformed
         }
 
+        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
+
         guard json["type"] as? String == "event_msg",
               let payload = json["payload"] as? [String: Any],
               payload["type"] as? String == "token_count" else {
-            return .skipped
+            guard let timestamp else { return .skipped }
+            return .usage(CodexUsageRecord(
+                timestamp: timestamp,
+                contributesUsage: false,
+                deltaUsage: UsageWindows.emptyUsage(.localParsed),
+                deltaReportedTotalTokens: 0,
+                cumulativeReportedTotalTokens: nil,
+                cumulativeUsageSignature: nil,
+                rateLimits: nil
+            ))
         }
 
         guard let info = payload["info"] as? [String: Any],
@@ -504,30 +724,70 @@ extension CodexJSONLParser {
             return .malformed
         }
 
-        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
-        let deltaUsage = tokenUsage(from: lastUsage)
-        let deltaReportedTotal = intValue(lastUsage["total_tokens"]) ?? deltaUsage.totalTokens ?? 0
-        let cumulativeUsage = info["total_token_usage"] as? [String: Any]
-        let cumulativeReportedTotal = cumulativeUsage.flatMap { intValue($0["total_tokens"]) }
+        guard let deltaUsage = tokenUsage(from: lastUsage) else { return .malformed }
+        let deltaReportedValue = CheckedNumericConversion.optionalTokenCount(lastUsage["total_tokens"])
+        guard deltaReportedValue.isValid else { return .malformed }
+        let deltaReportedTotal = deltaReportedValue.value ?? deltaUsage.totalTokens ?? 0
+        let cumulative = cumulativeUsageSignature(from: info)
+        guard cumulative.isValid else { return .malformed }
+        let cumulativeSignature = cumulative.value
+        let cumulativeReportedTotal = cumulativeSignature?.totalTokens
 
         return .usage(CodexUsageRecord(
             timestamp: timestamp,
+            contributesUsage: true,
             deltaUsage: deltaUsage,
             deltaReportedTotalTokens: deltaReportedTotal,
             cumulativeReportedTotalTokens: cumulativeReportedTotal,
+            cumulativeUsageSignature: cumulativeSignature,
             rateLimits: rateLimits(from: payload["rate_limits"], timestamp: timestamp)
         ))
     }
 
-    private func tokenUsage(from json: [String: Any]) -> TokenUsage {
-        let rawInput = intValue(json["input_tokens"]) ?? 0
-        let rawOutput = intValue(json["output_tokens"]) ?? 0
-        let cacheRead = intValue(json["cached_input_tokens"]) ?? 0
-        let reasoning = intValue(json["reasoning_output_tokens"]) ?? 0
+    private func cumulativeUsageSignature(
+        from info: [String: Any]
+    ) -> (isValid: Bool, value: CodexCumulativeUsageSignature?) {
+        guard let usage = info["total_token_usage"] as? [String: Any] else {
+            return (true, nil)
+        }
+        let input = CheckedNumericConversion.optionalTokenCount(usage["input_tokens"])
+        let output = CheckedNumericConversion.optionalTokenCount(usage["output_tokens"])
+        let cached = CheckedNumericConversion.optionalTokenCount(usage["cached_input_tokens"])
+        let reasoning = CheckedNumericConversion.optionalTokenCount(usage["reasoning_output_tokens"])
+        let total = CheckedNumericConversion.optionalTokenCount(usage["total_tokens"])
+        guard input.isValid, output.isValid, cached.isValid, reasoning.isValid, total.isValid else {
+            return (false, nil)
+        }
+        let signature = CodexCumulativeUsageSignature(
+            inputTokens: input.value,
+            outputTokens: output.value,
+            cachedInputTokens: cached.value,
+            reasoningOutputTokens: reasoning.value,
+            totalTokens: total.value
+        )
+        let hasValue = signature.inputTokens != nil || signature.outputTokens != nil
+            || signature.cachedInputTokens != nil || signature.reasoningOutputTokens != nil
+            || signature.totalTokens != nil
+        return (true, hasValue ? signature : nil)
+    }
+
+    private func tokenUsage(from json: [String: Any]) -> TokenUsage? {
+        guard let rawInput = CheckedNumericConversion.tokenCount(json["input_tokens"]),
+              let rawOutput = CheckedNumericConversion.tokenCount(json["output_tokens"]),
+              let cacheRead = CheckedNumericConversion.tokenCount(json["cached_input_tokens"]),
+              let reasoning = CheckedNumericConversion.tokenCount(json["reasoning_output_tokens"]) else {
+            return nil
+        }
+
+        var overflowed = false
+        let input = max(0, TokenArithmetic.subtracting(rawInput, cacheRead, overflowed: &overflowed))
+        let output = max(0, TokenArithmetic.subtracting(rawOutput, reasoning, overflowed: &overflowed))
+        _ = TokenArithmetic.sum([input, output, cacheRead, reasoning], overflowed: &overflowed)
+        guard !overflowed else { return nil }
 
         return TokenUsage(
-            inputTokens: max(0, rawInput - cacheRead),
-            outputTokens: max(0, rawOutput - reasoning),
+            inputTokens: input,
+            outputTokens: output,
             cacheReadTokens: cacheRead,
             cacheCreationTokens: 0,
             reasoningTokens: reasoning,
@@ -643,7 +903,8 @@ extension CodexJSONLParser {
                 type: type,
                 rateLimit: primary,
                 planType: snapshot.planType,
-                confidence: confidence
+                confidence: confidence,
+                observedAt: snapshot.timestamp
             )
             switch type {
             case .session: sessionWindow = window
@@ -657,7 +918,8 @@ extension CodexJSONLParser {
                 type: type,
                 rateLimit: secondary,
                 planType: snapshot.planType,
-                confidence: confidence
+                confidence: confidence,
+                observedAt: snapshot.timestamp
             )
             switch type {
             case .session where sessionWindow == nil: sessionWindow = window
@@ -674,14 +936,16 @@ extension CodexJSONLParser {
             windows.append(individualLimitWindow(
                 from: individualLimit,
                 planType: snapshot.planType,
-                confidence: confidence
+                confidence: confidence,
+                observedAt: snapshot.timestamp
             ))
         }
         if let credits = snapshot.credits {
             if let window = purchasableCreditsWindow(
                 from: credits,
                 planType: snapshot.planType,
-                confidence: confidence
+                confidence: confidence,
+                observedAt: snapshot.timestamp
             ) {
                 windows.append(window)
             }
@@ -690,7 +954,8 @@ extension CodexJSONLParser {
             if let window = resetBankWindow(
                 from: resetBank,
                 planType: snapshot.planType,
-                confidence: confidence
+                confidence: confidence,
+                observedAt: snapshot.timestamp
             ) {
                 windows.append(window)
             }
@@ -702,7 +967,8 @@ extension CodexJSONLParser {
         type: QuotaWindowType,
         rateLimit: CodexRateLimit,
         planType: String?,
-        confidence: MetricConfidence
+        confidence: MetricConfidence,
+        observedAt: Date
     ) -> QuotaWindow {
         QuotaWindow(
             providerID: .codex,
@@ -712,14 +978,16 @@ extension CodexJSONLParser {
             remaining: rateLimit.usedPercent.map { 100 - $0 },
             resetAt: rateLimit.resetsAt,
             confidence: confidence,
-            source: "Codex CLI rate_limits (\(sourcePlan(planType)), \(sourceWindowLabel(for: rateLimit, type: type)))"
+            source: "Codex CLI rate_limits (\(sourcePlan(planType)), \(sourceWindowLabel(for: rateLimit, type: type)))",
+            observedAt: observedAt
         )
     }
 
     private func individualLimitWindow(
         from limit: CodexSpendControlLimit,
         planType: String?,
-        confidence: MetricConfidence
+        confidence: MetricConfidence,
+        observedAt: Date
     ) -> QuotaWindow {
         QuotaWindow(
             providerID: .codex,
@@ -731,14 +999,16 @@ extension CodexJSONLParser {
             confidence: confidence,
             source: "Codex CLI rate_limits (\(sourcePlan(planType)), monthly credit limit)",
             label: "Monthly credit limit",
-            bucketKey: "spend_control_individual_limit"
+            bucketKey: "spend_control_individual_limit",
+            observedAt: observedAt
         )
     }
 
     private func purchasableCreditsWindow(
         from credits: CodexCreditsSnapshot,
         planType: String?,
-        confidence: MetricConfidence
+        confidence: MetricConfidence,
+        observedAt: Date
     ) -> QuotaWindow? {
         guard credits.usedPercent != nil || credits.balance != nil || credits.limit != nil else {
             return nil
@@ -764,14 +1034,16 @@ extension CodexJSONLParser {
             confidence: confidence,
             source: "Codex CLI rate_limits (\(sourcePlan(planType)), purchasable credits)",
             label: "Purchasable credits",
-            bucketKey: "credits"
+            bucketKey: "credits",
+            observedAt: observedAt
         )
     }
 
     private func resetBankWindow(
         from resetBank: CodexResetBankSnapshot,
         planType: String?,
-        confidence: MetricConfidence
+        confidence: MetricConfidence,
+        observedAt: Date
     ) -> QuotaWindow? {
         guard let count = resetBank.available ?? resetBank.count else { return nil }
         let available = Double(count)
@@ -785,7 +1057,8 @@ extension CodexJSONLParser {
             confidence: confidence,
             source: "Codex CLI rate_limits (\(sourcePlan(planType)), reset bank)",
             label: "Reset bank",
-            bucketKey: "reset_bank"
+            bucketKey: "reset_bank",
+            observedAt: observedAt
         )
     }
 
@@ -830,19 +1103,7 @@ extension CodexJSONLParser {
     }
 
     private func intValue(_ value: Any?) -> Int? {
-        if let value = value as? Int {
-            return value
-        }
-        if let value = value as? Double {
-            return Int(value)
-        }
-        if let value = value as? NSNumber {
-            return value.intValue
-        }
-        if let value = value as? String {
-            return Int(value)
-        }
-        return nil
+        CheckedNumericConversion.integer(value)
     }
 
     private func doubleValue(_ value: Any?) -> Double? {

@@ -48,6 +48,7 @@ struct DashboardProviderPane: View {
                 trend: viewModel.trend(for: snapshot.providerID),
                 peakHour: viewModel.peakHour(for: snapshot.providerID),
                 lastSyncedAt: viewModel.lastSyncedAt,
+                historyRange: viewModel.range,
                 value: MaxxerValueEngine.scorecard(
                     snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
                     planCosts: MaxxerPlanCostStore(),

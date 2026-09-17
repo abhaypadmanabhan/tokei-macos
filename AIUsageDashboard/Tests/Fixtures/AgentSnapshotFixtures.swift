@@ -18,6 +18,159 @@ import Foundation
 /// `codexUsedPercent` to `AgentRecommendationEngine.policy.avoidThreshold`, and
 /// `aggregateUtilizationPercent` to the mean of the per-provider peaks.
 enum AgentSnapshotFixtures {
+  /// A5's additive-v1 acceptance oracle from t03. Ordering is intentionally irrelevant;
+  /// `AgentSnapshotAccountSchemaTests` compares the decoded JSON object field-by-field.
+  static let wp5SchemaAfter = #"""
+  {
+    "ageSeconds": 6,
+    "aggregateUtilizationPercent": 56,
+    "generatedAt": "2026-09-17T02:16:40Z",
+    "providers": [
+      {
+        "accounts": [
+          {
+            "id": "/Users/abhayp/.claude",
+            "label": "default",
+            "tokensToday": 0,
+            "windows": [],
+            "accountID": "claude_code:c99dd9a2310dcd8ac8bf64432cf3e2b91b51e9488e15ccffbdcc681be8792ec2",
+            "selector": {"env": {"CLAUDE_CONFIG_DIR": "/Users/abhayp/.claude"}},
+            "quota": {"status": "unknown", "reasonCode": "no_quota_reading"}
+          },
+          {
+            "id": "/Users/abhayp/.claude-account-1",
+            "label": "account-1",
+            "tokensToday": 553069448,
+            "windows": [
+              {
+                "confidence": "official",
+                "observedAt": "2026-09-17T02:14:00Z",
+                "resetsAt": "2026-09-17T03:40:00Z",
+                "source": "api.anthropic.com/api/oauth/usage",
+                "type": "session",
+                "usedPercent": 9
+              },
+              {
+                "confidence": "official",
+                "observedAt": "2026-09-17T02:14:00Z",
+                "resetsAt": "2026-09-21T01:59:59Z",
+                "source": "api.anthropic.com/api/oauth/usage",
+                "type": "weekly",
+                "usedPercent": 81
+              },
+              {
+                "confidence": "official",
+                "observedAt": "2026-09-17T02:14:00Z",
+                "resetsAt": "2026-09-21T01:59:59Z",
+                "source": "api.anthropic.com/api/oauth/usage",
+                "type": "perModel",
+                "usedPercent": 81
+              }
+            ],
+            "accountID": "claude_code:41b5e8112aea16297b2abf8229b1c429ead077faecea1ea4f904ea26ee76a2e4",
+            "selector": {"env": {"CLAUDE_CONFIG_DIR": "/Users/abhayp/.claude-account-1"}},
+            "quota": {
+              "status": "eligible",
+              "usedPercent": 81,
+              "headroomPercent": 19,
+              "bindingWindowIndex": 1,
+              "validUntil": "2026-09-17T02:26:40Z"
+            }
+          }
+        ],
+        "displayName": "Claude Code",
+        "id": "claude_code",
+        "lastUpdated": "2026-09-17T02:16:39Z",
+        "tokensToday": 553069448,
+        "windows": [
+          {
+            "confidence": "official",
+            "observedAt": "2026-09-17T02:14:00Z",
+            "resetsAt": "2026-09-17T03:40:00Z",
+            "source": "api.anthropic.com/api/oauth/usage",
+            "type": "session",
+            "usedPercent": 9
+          },
+          {
+            "confidence": "official",
+            "observedAt": "2026-09-17T02:14:00Z",
+            "resetsAt": "2026-09-21T01:59:59Z",
+            "source": "api.anthropic.com/api/oauth/usage",
+            "type": "weekly",
+            "usedPercent": 81
+          },
+          {
+            "confidence": "official",
+            "observedAt": "2026-09-17T02:14:00Z",
+            "resetsAt": "2026-09-21T01:59:59Z",
+            "source": "api.anthropic.com/api/oauth/usage",
+            "type": "perModel",
+            "usedPercent": 81
+          }
+        ],
+        "headlineAccountID": "claude_code:41b5e8112aea16297b2abf8229b1c429ead077faecea1ea4f904ea26ee76a2e4"
+      },
+      {
+        "displayName": "OpenAI Codex",
+        "id": "codex",
+        "lastUpdated": "2026-09-17T02:16:39Z",
+        "tokensToday": 121521151,
+        "windows": [
+          {
+            "confidence": "official",
+            "resetsAt": "2026-09-21T05:26:47Z",
+            "source": "Codex CLI rate_limits (pro plan, weekly window)",
+            "type": "weekly",
+            "usedPercent": 31,
+            "observedAt": "2026-09-17T02:14:00Z"
+          }
+        ],
+        "accounts": [
+          {
+            "id": "/Users/abhayp/.codex",
+            "accountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25",
+            "label": "default",
+            "windows": [
+              {
+                "confidence": "official",
+                "resetsAt": "2026-09-21T05:26:47Z",
+                "source": "Codex CLI rate_limits (pro plan, weekly window)",
+                "type": "weekly",
+                "usedPercent": 31,
+                "observedAt": "2026-09-17T02:14:00Z"
+              }
+            ],
+            "tokensToday": 121521151,
+            "selector": {"env": {"CODEX_HOME": "/Users/abhayp/.codex"}},
+            "quota": {
+              "status": "eligible",
+              "usedPercent": 31,
+              "headroomPercent": 69,
+              "bindingWindowIndex": 0,
+              "validUntil": "2026-09-17T02:26:40Z"
+            }
+          }
+        ],
+        "headlineAccountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25"
+      }
+    ],
+    "recommendation": {
+      "routeTo": "codex",
+      "avoid": [],
+      "reason": "route to OpenAI Codex (tightest window 31%)",
+      "target": {
+        "provider": "codex",
+        "accountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25",
+        "selector": {"env": {"CODEX_HOME": "/Users/abhayp/.codex"}}
+      },
+      "avoidAccounts": [],
+      "validUntil": "2026-09-17T02:26:40Z"
+    },
+    "schemaVersion": 1,
+    "stale": false
+  }
+  """#
+
   /// `generatedAt` of `full` / `minimal` / `newerSchemaVersion`, as a Date.
   static let generatedAt = Date(timeIntervalSince1970: 1_785_153_600) // 2026-07-27T12:00:00Z
 
@@ -102,6 +255,71 @@ enum AgentSnapshotFixtures {
   /// No providers, no recommendation — the "app just launched" shape.
   static let minimal = """
     {"schemaVersion": 1, "generatedAt": "2026-07-27T12:00:00Z", "providers": []}
+    """
+
+  /// D7: both accounts must remain visible in text status even when one has no quota
+  /// window. Zero tokens and no window is unknown capacity, not a 0% reading.
+  static let twoAccountsOneWithoutQuota = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [
+        {
+          "id": "claude_code",
+          "displayName": "Claude Code",
+          "tokensToday": 157000000,
+          "windows": [
+            {"type": "weekly", "usedPercent": 81, "confidence": "official",
+             "source": "oauth_usage_api"}
+          ],
+          "accounts": [
+            {"id": "/Users/test/.claude", "label": "default", "tokensToday": 0,
+             "windows": []},
+            {"id": "/Users/test/.claude-account-1", "label": "account-1",
+             "tokensToday": 157000000,
+             "windows": [
+               {"type": "weekly", "usedPercent": 81, "confidence": "official",
+                "source": "oauth_usage_api"}
+             ]}
+          ]
+        }
+      ]
+    }
+    """
+
+  static let routeToAbsent = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [],
+      "recommendation": {"avoid": ["codex"], "reason": "fixture"}
+    }
+    """
+
+  static let routeToNull = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [],
+      "recommendation": {"routeTo": null, "avoid": ["codex"], "reason": "fixture"}
+    }
+    """
+
+  static let oldOptionalFieldsAbsent = """
+    {
+      "schemaVersion": 1,
+      "generatedAt": "2026-07-27T12:00:00Z",
+      "providers": [
+        {
+          "id": "codex",
+          "displayName": "Codex",
+          "windows": [
+            {"type": "weekly", "usedPercent": 20, "confidence": "official",
+             "source": "fixture"}
+          ]
+        }
+      ]
+    }
     """
 
   /// Forward-compat contract: a reader must decode what it understands from a NEWER

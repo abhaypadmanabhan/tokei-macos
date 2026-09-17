@@ -32,7 +32,6 @@ public struct PadzyTheme {
     public static let muted = Color(hex: "6E6E78")      // == ink4 (back-compat)
 
     public static let accent = Color(hex: "FF3B70")
-    public static let accentHover = Color(hex: "FF5A86")
 
     // Semantic status hues (data/state signals — never chrome accent).
     public static let good = Color(hex: "6BBF8A")       // headroom / live / positive
@@ -86,7 +85,6 @@ public enum PadzyRadius {
     public static let cell: CGFloat = 4
     public static let chip: CGFloat = 4
     public static let control: CGFloat = 8
-    public static let pill: CGFloat = 999
 }
 
 /// 4pt-based spacing scale (WP-5). Adopt in rebuilt surfaces so call-site literals
@@ -101,33 +99,46 @@ public enum PadzySpace {
     public static let xxxl: CGFloat = 40
 }
 
-/// Motion tokens. The mockup settles metric/tab/drill changes over ~650ms ease-out.
-/// Every animated surface MUST fall back to a static path under Reduce Motion — gate
-/// with `@Environment(\.accessibilityReduceMotion)` and pass `nil` when it is set.
+/// Motion tokens. Live numbers roll in 200–250ms ease-out and never bounce.
+/// Nothing here exceeds 300ms. Every animated surface MUST fall back to a static
+/// path under Reduce Motion — gate with `accessibilityReduceMotion` and pass `nil`.
 public enum PadzyMotion {
-    public static let settle: Animation = .easeOut(duration: 0.65)
+    public static let numberRollDuration: Double = 0.22
+    public static let numberRoll: Animation = .easeOut(duration: numberRollDuration)
+    public static let settle: Animation = .easeOut(duration: 0.25)
     public static let quick: Animation = .easeOut(duration: 0.2)
     public static let toggle: Animation = .easeOut(duration: 0.15)
 }
 
-/// Categorical + sequential color for DATA ONLY (design spec §2). Per-METRIC hues
-/// (input/output/cache) for stacked token-type splits; never on buttons, nav, or
-/// active ticks. (Per-AGENT identity colour lives in `AgentTint`.)
-public enum PadzyChartPalette {
-    public static let input = Color(hex: "4C86FF")
-    public static let output = Color(hex: "3DBE8B")
-    public static let cacheRead = Color(hex: "A46BFF")
-    public static let cacheWrite = Color(hex: "E8912D")
+/// Shared gate for rolling figures. Reduce Motion returns nil so the value snaps.
+public enum LiveNumberMotion {
+    public static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : PadzyMotion.numberRoll
+    }
+}
 
+extension View {
+    /// Rolls a live figure. Reduce Motion snaps. Duration is `PadzyMotion.numberRollDuration`.
+    @ViewBuilder
+    func rollingNumber(_ value: Double?, reduceMotion: Bool) -> some View {
+        if reduceMotion || value == nil {
+            self
+        } else if #available(macOS 15.0, *) {
+            self
+                .contentTransition(.numericText(value: value ?? 0))
+                .animation(LiveNumberMotion.animation(reduceMotion: false), value: value)
+        } else {
+            self
+                .contentTransition(.numericText())
+                .animation(LiveNumberMotion.animation(reduceMotion: false), value: value)
+        }
+    }
+}
+
+/// Chart-only colors for deltas and the neutral area fill.
+public enum PadzyChartPalette {
     public static let deltaUp = Color(hex: "3DBE8B")
     public static let deltaDown = Color(hex: "FF4D4D")
-
-    /// Neutral heatmap cell colour for a 0…1 intensity (mockup formula:
-    /// `rgba(196,196,204, 0.05 + intensity*0.85)`).
-    public static func heatCell(_ intensity: Double) -> Color {
-        Color(.sRGB, red: 196.0 / 255, green: 196.0 / 255, blue: 204.0 / 255,
-              opacity: 0.05 + max(0, min(1, intensity)) * 0.85)
-    }
 
     /// The one sanctioned gradient: a neutral ink→transparent fill under line/area
     /// charts (WP-5 recoloured from pink to neutral; per-agent history tints its own).

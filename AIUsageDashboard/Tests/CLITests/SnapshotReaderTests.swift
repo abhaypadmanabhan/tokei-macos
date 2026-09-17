@@ -96,6 +96,19 @@ final class SnapshotReaderTests: XCTestCase {
     XCTAssertEqual(AgentSnapshot.currentSchemaVersion, 1, "frozen contract — external agents consume this")
   }
 
+  func testA10OldOptionalFieldsAbsentStillDecodes() throws {
+    let url = try CLITestSupport.writeSnapshot(AgentSnapshotFixtures.oldOptionalFieldsAbsent)
+    trackForCleanup(url)
+    let reader = SnapshotReader(fileURL: url, now: snapshotClock(plus: 60))
+
+    let snapshot = try reader.read()
+    let provider = try XCTUnwrap(snapshot.providers.first)
+    XCTAssertEqual(provider.id, "codex")
+    XCTAssertNil(provider.accounts)
+    XCTAssertNil(provider.lastUpdated)
+    XCTAssertNil(provider.windows.first?.observedAt)
+  }
+
   // MARK: - Staleness (the f725bac contract, reader side)
 
   func testFreshSnapshotIsNotStaleAndCarriesAge() throws {
@@ -148,6 +161,33 @@ final class SnapshotReaderTests: XCTestCase {
     XCTAssertEqual(snapshot.stale, false)
   }
 
+  func testA4ExpiredRecommendationDropsExecutableFieldsAndExplainsExpiry() throws {
+    let fixture = try CLITestSupport.accountAwareFixture(validFor: 120)
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let reader = SnapshotReader(fileURL: fixture.snapshotURL, now: snapshotClock(plus: 121))
+
+    let snapshot = try reader.read()
+
+    XCTAssertEqual(snapshot.stale, false, "the file itself is only 121 seconds old")
+    XCTAssertNil(snapshot.recommendation?.routeTo)
+    XCTAssertNil(snapshot.recommendation?.target)
+    XCTAssertEqual(snapshot.recommendation?.validUntil, fixture.validUntil)
+    XCTAssertTrue(snapshot.recommendation?.reason.contains("recommendation expired") == true)
+  }
+
+  func testA4FreshRecommendationIsUnchangedAtValidUntilBoundary() throws {
+    let fixture = try CLITestSupport.accountAwareFixture(validFor: 120)
+    defer { try? FileManager.default.removeItem(at: fixture.directory) }
+    let reader = SnapshotReader(fileURL: fixture.snapshotURL, now: snapshotClock(plus: 120))
+
+    let recommendation = try XCTUnwrap(reader.read().recommendation)
+
+    XCTAssertEqual(recommendation.routeTo, "codex")
+    XCTAssertEqual(recommendation.target?.accountID, "codex:fixture-account")
+    XCTAssertEqual(recommendation.target?.selector?.env["CODEX_HOME"], fixture.selectorDirectory.path)
+    XCTAssertEqual(recommendation.reason, "fresh fixture")
+  }
+
   // MARK: - Decoding fidelity
 
   func testDecodesTheFullWireContract() throws {
@@ -191,5 +231,17 @@ final class SnapshotReaderTests: XCTestCase {
     XCTAssertTrue(snapshot.providers.isEmpty)
     XCTAssertNil(snapshot.recommendation)
     XCTAssertNil(snapshot.aggregateUtilizationPercent)
+  }
+
+  func testA10AbsentAndNullRouteToBothDecodeAsNoTarget() throws {
+    for json in [AgentSnapshotFixtures.routeToAbsent, AgentSnapshotFixtures.routeToNull] {
+      let url = try CLITestSupport.writeSnapshot(json)
+      trackForCleanup(url)
+      let reader = SnapshotReader(fileURL: url, now: snapshotClock(plus: 60))
+
+      let recommendation = try XCTUnwrap(reader.read().recommendation)
+      XCTAssertNil(recommendation.routeTo)
+      XCTAssertEqual(recommendation.avoid, ["codex"])
+    }
   }
 }

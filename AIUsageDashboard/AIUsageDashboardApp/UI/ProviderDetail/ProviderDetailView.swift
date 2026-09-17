@@ -21,6 +21,8 @@ struct ProviderDetailView: View {
     /// §4 `peakHour(for:)`.
     var peakHour: (hour: Int, tokens: Int)? = nil
     var lastSyncedAt: Date? = nil
+    /// Selected dashboard range — daily history names this, not a hardcoded 30d (D6).
+    var historyRange: UsageRange = .thirtyDay
 
     /// This provider's value-scorecard entry (api-equivalent $, plan $, multiple,
     /// confidence). `nil` when the provider isn't priceable — drives the "—".
@@ -35,6 +37,8 @@ struct ProviderDetailView: View {
     var onEnableOnline: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    /// Warning messages stay collapsed; the count above is the only always-visible line.
+    @State private var warningsExpanded = false
 
     /// Full content width (incl. horizontal padding) — drives the ≥720pt two-column
     /// split. Compared against `720 + horizontal padding` so the breakpoint tracks
@@ -44,8 +48,6 @@ struct ProviderDetailView: View {
     private static let hPad: CGFloat = 28
 
     // MARK: - Derived state
-
-    private var tier: ProviderCapabilityTier { ProviderCapabilityTier.classify(snapshot) }
 
     private var activeWindows: [QuotaWindow] {
         snapshot.quotaWindows.filter { $0.confidence != .unavailable }
@@ -88,18 +90,13 @@ struct ProviderDetailView: View {
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
     private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
 
-    private static let syncFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
-
     // MARK: - Body
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xxl) {
                 header
+                warningDisclosure
                 metaGrid
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
@@ -181,10 +178,6 @@ struct ProviderDetailView: View {
             metaBlock(kicker: "Watched file",
                       value: ProviderMetadata.localPaths(for: snapshot.providerID).first ?? "\u{2014}",
                       color: PadzyTheme.ink3)
-            metaBlock(kicker: "Last sync",
-                      value: lastSyncedAt.map { Self.syncFormatter.string(from: $0) } ?? "NEVER",
-                      color: PadzyTheme.ink3)
-            metaBlock(kicker: "Capability", value: tier.label, color: PadzyTheme.ink2)
         }
     }
 
@@ -254,12 +247,13 @@ struct ProviderDetailView: View {
     private func insightBox(_ sentence: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 11) {
             Text("\u{25C6}")
-                .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.accent)
+                .font(.mono(size: 13.5))
+                .foregroundColor(PadzyTheme.ink3)
             Text(sentence)
-                .font(.sans(size: 13))
+                .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
+                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init) ?? snapshot.weekUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
@@ -280,9 +274,6 @@ struct ProviderDetailView: View {
         VStack(spacing: 0) {
             HairlineDivider()
             HStack(alignment: .center, spacing: PadzySpace.xxxl) {
-                if let tightest = tightestWindow, let pct = usedPercent(tightest) {
-                    gaugeColumn(tightest, pct: pct)
-                }
                 statsFlow
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -291,44 +282,103 @@ struct ProviderDetailView: View {
         }
     }
 
-    private func gaugeColumn(_ window: QuotaWindow, pct: Double) -> some View {
-        VStack(spacing: 10) {
-            CircularGauge(percent: pct, label: insightWindowName(window), size: 120)
-            if let verdict = paceVerdict(window) {
-                Text(verdict.word)
-                    .font(.sans(size: 11))
-                    .foregroundColor(verdict.color)
+    private var nonInfoWarnings: [ProviderWarning] {
+        snapshot.warnings.filter { $0.level != .info }
+    }
+
+    /// Count stays the full total. At most 8 messages are shown, each capped at
+    /// 200 characters, with a trailing "N more" line when the list is cut.
+    @ViewBuilder
+    private var warningDisclosure: some View {
+        let warnings = nonInfoWarnings
+        if !warnings.isEmpty {
+            let shown = warnings.prefix(Self.maxShownWarnings)
+            let more = warnings.count - shown.count
+            VStack(alignment: .leading, spacing: 6) {
+                Text(warnings.count == 1 ? "1 warning" : "\(warnings.count) warnings")
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink4)
+                    .rollingNumber(Double(warnings.count), reduceMotion: reduceMotion)
+                DisclosureGroup(isExpanded: $warningsExpanded) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(shown.enumerated()), id: \.offset) { _, warning in
+                            Text(Self.boundedWarningMessage(warning.message))
+                                .font(.mono(size: 13.5))
+                                .foregroundColor(PadzyTheme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if more > 0 {
+                            Text("\(more) more")
+                                .font(.mono(size: 13.5))
+                                .foregroundColor(PadzyTheme.ink)
+                        }
+                    }
+                    .padding(.top, 2)
+                } label: {
+                    Text(warningsExpanded ? "Hide" : "Show")
+                        .font(.mono(size: 13.5))
+                        .foregroundColor(PadzyTheme.ink)
+                }
+                .tint(PadzyTheme.ink)
             }
         }
-        .fixedSize()
+    }
+
+    private static let maxShownWarnings = 8
+    private static let maxWarningMessageCharacters = 200
+
+    /// Caps a warning at 200 characters. A truncated message ends with `…`.
+    private static func boundedWarningMessage(_ message: String) -> String {
+        guard message.count > maxWarningMessageCharacters else { return message }
+        let end = message.index(message.startIndex, offsetBy: maxWarningMessageCharacters - 1)
+        return String(message[..<end]) + "…"
     }
 
     private var statsFlow: some View {
         FlowLayout(hSpacing: 40, vSpacing: 30) {
             statBlock(kicker: "Tokens · today",
                       value: TokenFormatter.format(todayTotal),
-                      sub: todayDeltaSub,
-                      known: todayTotal != nil)
-            statBlock(kicker: "This week",
+                      sub: todayTokenSub,
+                      known: todayTotal != nil,
+                      numeric: todayTotal.map(Double.init),
+                      subNumeric: todayDeltaNumeric)
+            statBlock(kicker: UsageAnalytics.rollingSevenDayLabel,
                       value: TokenFormatter.format(weekTokens),
                       sub: weekDeltaSub,
-                      known: weekTokens != nil)
+                      known: weekTokens != nil,
+                      numeric: weekTokens.map(Double.init),
+                      subNumeric: weekDeltaNumeric)
             statBlock(kicker: "Peak hour",
                       value: peakHour.map { AnalyticsFormat.hourLabel($0.hour) } ?? "\u{2014}",
                       sub: peakHour == nil ? "" : "most active",
-                      known: peakHour != nil)
+                      known: peakHour != nil,
+                      numeric: peakHour.map { Double($0.hour) })
             statBlock(kicker: "Plan value",
                       value: MaxxerMath.formatMultiple(value?.valueMultiple),
                       sub: planValueSub,
-                      known: value?.valueMultiple != nil)
+                      known: value?.valueMultiple != nil,
+                      numeric: value?.valueMultiple,
+                      subNumeric: value?.planMonthlyUSD == nil ? nil : value?.apiEquivalentUSD)
         }
     }
 
-    private func statBlock(kicker: String, value: String, sub: String, known: Bool) -> some View {
+    private var todayTokenSub: String {
+        let cache = todayDeltaSub
+        if cache.isEmpty { return "incl. cache" }
+        return "incl. cache · \(cache)"
+    }
+
+    private func statBlock(
+        kicker: String,
+        value: String,
+        sub: String,
+        known: Bool,
+        numeric: Double? = nil,
+        subNumeric: Double? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(kicker.uppercased())
-                .font(.mono(size: 9.5))
-                .tracking(1.0)
+                .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
             Text(value)
                 .font(.mono(size: 26, weight: .semibold))
@@ -336,20 +386,31 @@ struct ProviderDetailView: View {
                 .foregroundColor(known ? PadzyTheme.ink : PadzyTheme.ink5)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .rollingNumber(numeric, reduceMotion: reduceMotion)
             if !sub.isEmpty {
                 Text(sub)
-                    .font(.sans(size: 11))
+                    .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink5)
                     .lineLimit(1)
+                    .rollingNumber(subNumeric, reduceMotion: reduceMotion)
             }
         }
         .fixedSize()
     }
 
     /// ▲/▼ vs the provider's own trailing-7-day average, when derivable.
+    private var todayDeltaRatio: Double? {
+        guard let today = todayTotal, let avg = ownWeekAvg, avg > 0 else { return nil }
+        return Double(today) / Double(avg)
+    }
+
+    private var todayDeltaNumeric: Double? {
+        guard let ratio = todayDeltaRatio else { return nil }
+        return ratio >= 1.8 ? ratio : abs(ratio - 1) * 100
+    }
+
     private var todayDeltaSub: String {
-        guard let today = todayTotal, let avg = ownWeekAvg, avg > 0 else { return "" }
-        let ratio = Double(today) / Double(avg)
+        guard let ratio = todayDeltaRatio else { return "" }
         let arrow = ratio >= 1 ? "\u{25B2}" : "\u{25BC}"
         let magnitude = ratio >= 1.8
             ? String(format: "%.1f\u{00D7} its avg", ratio)
@@ -358,12 +419,16 @@ struct ProviderDetailView: View {
     }
 
     /// Week-over-week delta, when there's ≥14 days of trend to compare.
-    private var weekDeltaSub: String {
-        guard trend.count >= 14 else { return "" }
+    private var weekDeltaNumeric: Double? {
+        guard trend.count >= 14 else { return nil }
         let last7 = trend.suffix(7).reduce(0) { $0 + $1.tokens }
         let prev7 = trend.dropLast(7).suffix(7).reduce(0) { $0 + $1.tokens }
-        guard prev7 > 0 else { return "" }
-        let pct = Double(last7 - prev7) / Double(prev7) * 100
+        guard prev7 > 0 else { return nil }
+        return Double(last7 - prev7) / Double(prev7) * 100
+    }
+
+    private var weekDeltaSub: String {
+        guard let pct = weekDeltaNumeric else { return "" }
         let arrow = pct >= 0 ? "\u{25B2}" : "\u{25BC}"
         return "\(arrow) \(Int(abs(pct).rounded()))% vs prev week"
     }

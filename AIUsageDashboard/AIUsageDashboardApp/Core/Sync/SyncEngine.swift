@@ -32,6 +32,16 @@ public actor SyncEngine {
         self.updatesContinuation = continuation
     }
 
+    /// D9: forward a timezone change to every provider that caches calendar-bucketed
+    /// data, so the next refresh rebuilds day buckets from original timestamps.
+    public func updateCalendar(_ calendar: Calendar) async {
+        for provider in registry.providers {
+            if let aware = provider as? CalendarAwareProvider {
+                await aware.updateCalendar(calendar)
+            }
+        }
+    }
+
     public func refreshAll() async -> [ProviderSnapshot] {
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)

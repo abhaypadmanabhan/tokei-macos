@@ -15,13 +15,13 @@ extension OverviewView {
     /// Whether the provider's live-quota flag is on (same UserDefaults key the
     /// Connections/Agents toggle writes). `false` for local-only providers.
     func liveQuotaEnabled(_ id: ProviderID) -> Bool {
-        guard let key = ProviderOverviewRow.liveEnabledKey(for: id) else { return false }
+        guard let key = ProviderMetadata.liveQuotaEnabledKey(for: id) else { return false }
         return UserDefaults.standard.bool(forKey: key)
     }
 
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderOverviewRow.connectableProviders.contains(id) {
+        if ProviderMetadata.liveQuotaProviders.contains(id) {
             return liveQuotaEnabled(id) ? .fetching : .connect
         }
         return .localOnly
@@ -61,7 +61,8 @@ extension OverviewView {
 
         return AgentCellModel(
             providerID: id, name: displayName(id),
-            stat: stat, statColor: color,
+            stat: stat, statValue: today?.totalTokens.map(Double.init) ?? tightest?.usedPercent,
+            statColor: color,
             isEstimated: estimated, hasHeadroom: id == headroom
         )
     }
@@ -69,14 +70,21 @@ extension OverviewView {
     func quotaCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
         let stat: String
         let statColor: Color
-        let substat: String
+        let substat: String?
         let substatColor: Color
         switch quotaState(for: id) {
         case .live(let util):
+            // D25: the quota lens already has the bars. Don't repeat % + "% left" here.
             let used = Int(round(max(0, min(100, util.usedPercent))))
             stat = "\(used)%"
-            statColor = ProviderOverviewRow.thresholdColor(util.usedPercent)
-            substat = "\(100 - used)% left"
+            if util.usedPercent >= 90 {
+                statColor = PadzyTheme.accent
+            } else if util.usedPercent >= 70 {
+                statColor = PadzyTheme.accent.opacity(0.6)
+            } else {
+                statColor = PadzyTheme.ink
+            }
+            substat = nil
             substatColor = PadzyTheme.ink5
         case .fetching:
             stat = "—"; statColor = PadzyTheme.ink3
@@ -88,9 +96,11 @@ extension OverviewView {
             stat = "—"; statColor = PadzyTheme.ink4
             substat = "LOCAL LOGS"; substatColor = PadzyTheme.ink5
         }
+        let value: Double?
+        if case .live(let util) = quotaState(for: id) { value = util.usedPercent } else { value = nil }
         return AgentCellModel(
             providerID: id, name: displayName(id),
-            stat: stat, statColor: statColor,
+            stat: stat, statValue: value, statColor: statColor,
             substat: substat, substatColor: substatColor,
             isEstimated: false, hasHeadroom: id == headroom && quotaState(for: id).isLive
         )
@@ -106,26 +116,6 @@ extension OverviewView {
                 if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
                 return lhs.usedPercent > rhs.usedPercent
             }
-    }
-
-    /// Average tokens per weekday (Mon→Sun), bucketing the ranged trend by
-    /// `Calendar.component(.weekday)`.
-    var weekdayBars: [(label: String, value: Int)] {
-        let order = [2, 3, 4, 5, 6, 7, 1] // Calendar weekday (1=Sun); Monday-first display.
-        let labels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
-        var sums: [Int: Int] = [:]
-        var counts: [Int: Int] = [:]
-        let calendar = Calendar.current
-        for point in viewModel.overviewTrend {
-            let weekday = calendar.component(.weekday, from: point.date)
-            sums[weekday, default: 0] += point.tokens
-            counts[weekday, default: 0] += 1
-        }
-        return zip(order, labels).map { weekday, label in
-            let count = counts[weekday] ?? 0
-            let avg = count > 0 ? (sums[weekday] ?? 0) / count : 0
-            return (label, avg)
-        }
     }
 
     /// Per-day top agent for the trend hover callout — the provider that contributed
@@ -146,45 +136,6 @@ extension OverviewView {
         }
     }
 
-    /// Per-cell activity for the agent-coloured punch-card: for each weekday×hour
-    /// cell, the visible providers' §4 heatmaps are combined into a total plus the
-    /// single agent that contributed most that hour (its `AgentTint` colours the
-    /// cell) and a hover tooltip. An hour with no activity from any provider is
-    /// `.empty`. The same identity colours the donut and agent grid use.
-    var heatCells: [[HeatCell]] {
-        let entries: [(id: ProviderID, matrix: [[Int?]])] = visibleProviders
-            .compactMap { id in viewModel.heatmap(for: id).map { (id, $0) } }
-            .filter { $0.matrix.count == 7 }
-        guard !entries.isEmpty else { return [] }
-
-        return (0..<7).map { row in
-            (0..<24).map { column -> HeatCell in
-                var contributions: [(id: ProviderID, tokens: Int)] = []
-                for entry in entries {
-                    guard entry.matrix[row].indices.contains(column),
-                          let value = entry.matrix[row][column], value > 0 else { continue }
-                    contributions.append((entry.id, value))
-                }
-                guard !contributions.isEmpty else { return .empty }
-
-                contributions.sort { $0.tokens > $1.tokens }
-                let total = contributions.reduce(0) { $0 + $1.tokens }
-                let leader = contributions[0]
-                let name = viewModel.snapshot(for: leader.id)?.displayName
-                    ?? leader.id.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
-                let slotLabel = "\(Self.weekdayNames[row]) · \(AnalyticsFormat.hourLabel(column))"
-                return HeatCell(
-                    total: total,
-                    tint: AgentTint.color(leader.id),
-                    slotLabel: slotLabel,
-                    agentName: name
-                )
-            }
-        }
-    }
-
-    static let weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
     // MARK: Hero copy
 
     /// The hero's headline figure for the active lens. "—" when the lens has nothing
@@ -192,7 +143,16 @@ extension OverviewView {
     var heroNumber: String {
         switch metric {
         case .usage: return mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—"
-        case .quota: return tightestWindow.map { "\(Int(round($0.usedPercent)))%" } ?? "—"
+        case .quota:
+            guard let gauge = viewModel.overviewHeadlineGauge else { return "—" }
+            return "\(Int(round(gauge.usedPercent)))%"
+        }
+    }
+
+    var heroNumericValue: Double? {
+        switch metric {
+        case .usage: return mergedToday.totalTokens.map(Double.init)
+        case .quota: return viewModel.overviewHeadlineGauge?.usedPercent
         }
     }
 
@@ -200,10 +160,13 @@ extension OverviewView {
         switch metric {
         case .usage:
             let count = activeAgentCount
-            return "tokens today across \(count) active agent\(count == 1 ? "" : "s")"
+            return "tokens today across \(count) active agent\(count == 1 ? "" : "s") · incl. cache"
         case .quota:
-            guard let tightest = tightestWindow else { return "No live quota connected yet." }
-            return "\(displayName(tightest.providerID)) is your tightest window right now."
+            guard let gauge = viewModel.overviewHeadlineGauge else { return "No live quota connected yet." }
+            if gauge.accountID != nil {
+                return "\(gauge.accountLabel) — the account with the most headroom."
+            }
+            return "\(gauge.accountLabel) live quota."
         }
     }
 
@@ -212,16 +175,6 @@ extension OverviewView {
     /// Every non-hidden provider — one agent cell each, in `ProviderID` order.
     var visibleProviders: [ProviderID] {
         ProviderID.allCases.filter { !ProviderVisibility.isHidden($0) }
-    }
-
-    /// The first **visible** provider reporting more than one signed-in account — what the
-    /// one-time discovery notice is about. Hidden providers are excluded deliberately: a
-    /// provider the user removed from their canvas should not reintroduce itself through a
-    /// notice. Only one is ever surfaced; a stack of them is the naggy failure mode.
-    var multiAccountProvider: ProviderSnapshot? {
-        visibleProviders
-            .compactMap { viewModel.snapshot(for: $0) }
-            .first { ($0.accounts?.count ?? 0) > 1 }
     }
 
     func fallbackName(_ id: ProviderID) -> String {
@@ -253,10 +206,12 @@ extension OverviewView {
             .count
     }
 
-    /// The single tightest live window across providers (the constraint that
-    /// actually bites) — the Quota hero and the ambient banner share this.
+    /// Published windows of visible providers only (D13). The quota hero does not use this
+    /// as a "tightest" claim — see `overviewHeadlineGauge`.
     var tightestWindow: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization)
+        MaxxerMath.tightestWindow(in: viewModel.utilization.filter {
+            visibleProviders.contains($0.providerID)
+        })
     }
 
     /// Each provider reduced to its tightest (highest-used) live window.

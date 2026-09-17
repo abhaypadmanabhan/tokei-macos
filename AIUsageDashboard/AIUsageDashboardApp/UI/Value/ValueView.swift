@@ -21,6 +21,7 @@ import AIUsageDashboardCore
 /// no animation on this surface, so Reduce Motion has nothing to suppress.
 struct ValueView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Routes to the Settings drawer, where the plan-cost fields live.
     var onOpenPlanCosts: () -> Void = {}
@@ -154,11 +155,6 @@ struct ValueView: View {
                 summarySentence
                     .padding(.top, 18)
 
-                if let insight = insightText {
-                    insightBox(insight)
-                        .padding(.top, 16)
-                }
-
                 valueRows
                     .padding(.top, 28)
 
@@ -183,6 +179,7 @@ struct ValueView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.4)
                 .fixedSize(horizontal: false, vertical: true)
+                .rollingNumber(scorecard.totalValueMultiple, reduceMotion: reduceMotion)
                 .accessibilityLabel("Plan value \(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))")
 
             if let tier = scorecard.tier {
@@ -212,27 +209,7 @@ struct ValueView: View {
         .font(.sans(size: 15))
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 560, alignment: .leading)
-    }
-
-    /// One plain-language read on the numbers, in a hairline-bounded box with the
-    /// single accent spent on the ◆ marker.
-    private func insightBox(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("◆")
-                .font(.mono(size: 13))
-                .foregroundColor(PadzyTheme.accent)
-            Text(text)
-                .font(.sans(size: 13))
-                .foregroundColor(PadzyTheme.ink2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 560, alignment: .leading)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(PadzyTheme.hairline, lineWidth: 1)
-        )
+        .rollingNumber(scorecard.totalAPIEquivalentUSD, reduceMotion: reduceMotion)
     }
 
     // MARK: Rows
@@ -250,7 +227,6 @@ struct ValueView: View {
                 )
                 HairlineDivider()
             }
-            ValueTotalRow(scorecard: scorecard)
         }
     }
 
@@ -264,10 +240,11 @@ struct ValueView: View {
         let text = footnoteText
         if !text.isEmpty {
             Text(text)
-                .font(.mono(size: 10))
+                .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 620, alignment: .leading)
+                .rollingNumber(lifetime.map { Double($0.tokens) }, reduceMotion: reduceMotion)
         }
     }
 
@@ -327,26 +304,6 @@ struct ValueView: View {
         scorecard.providers.filter { $0.planMonthlyUSD != nil }.count
     }
 
-    /// The single insight line: names the one plan that is underwater, or — if all
-    /// earn out — the thinnest one, so the reader always leaves with one takeaway.
-    private var insightText: String? {
-        let priced = rows.filter { $0.value.valueMultiple != nil }
-        guard !priced.isEmpty else { return nil }
-
-        let under = priced
-            .filter { ($0.value.valueMultiple ?? 0) < 1 }
-            .sorted { ($0.value.valueMultiple ?? 0) < ($1.value.valueMultiple ?? 0) }
-        if let worst = under.first {
-            return "\(worst.displayName) is only returning \(MaxxerMath.formatMultiple(worst.value.valueMultiple)) — you're paying more than you're getting back. Worth a downgrade look."
-        }
-
-        let thinnest = priced.min { ($0.value.valueMultiple ?? .infinity) < ($1.value.valueMultiple ?? .infinity) }
-        if let thinnest {
-            return "Every plan is earning out. Your thinnest is \(thinnest.displayName) at \(MaxxerMath.formatMultiple(thinnest.value.valueMultiple)) — still well worth it."
-        }
-        return nil
-    }
-
     private func joinNames(_ names: [String]) -> String {
         switch names.count {
         case 0: return ""
@@ -373,6 +330,7 @@ struct ValueView: View {
                             .foregroundColor(PadzyTheme.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.4)
+                            .rollingNumber(Double(lifetime.tokens), reduceMotion: reduceMotion)
                         Text("TOKENS ALL-TIME")
                             .font(.mono(size: 11))
                             .tracking(11 * 0.08)
@@ -385,6 +343,7 @@ struct ValueView: View {
                         .font(.mono(size: 10))
                         .foregroundColor(PadzyTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                        .rollingNumber(Double(lifetime.contributingProviders), reduceMotion: reduceMotion)
                 }
             } else {
                 SurfaceStateView(
@@ -484,7 +443,8 @@ private func valueMultipleCell(_ multiple: Double?) -> some View {
         .monospacedDigit()
         .foregroundColor(multiple == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
         .lineLimit(1)
-        .frame(width: ValueColumn.multiple, alignment: .trailing)
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(minWidth: ValueColumn.multiple, alignment: .trailing)
 }
 
 /// One agent's value row — a button that drills into the provider, or (when the
@@ -497,14 +457,13 @@ private struct ValueRow: View {
     let providerID: ProviderID?
     let onDrill: () -> Void
     let onSetPlanCost: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Usage is priced but the user never entered a plan cost — the one row whose
     /// primary action is "fix the missing price", not "drill in".
     private var isUnpriced: Bool {
         value.apiEquivalentUSD != nil && value.planMonthlyUSD == nil
     }
-
-    private var isEstimated: Bool { value.confidence == .estimated }
 
     var body: some View {
         Button(action: isUnpriced ? onSetPlanCost : onDrill) {
@@ -564,41 +523,20 @@ private struct ValueRow: View {
         if isUnpriced {
             Text("Set plan cost →")
                 .font(.sans(size: 12, weight: .semibold))
-                .foregroundColor(PadzyTheme.accent)
+                .foregroundColor(PadzyTheme.ink)
         } else {
             HStack(spacing: 6) {
-                Text("\(MaxxerMath.formatUSD(value.planMonthlyUSD)) →")
-                    .font(.mono(size: 12))
+                Text(MaxxerMath.formatUSD(value.planMonthlyUSD))
+                    .font(.mono(size: 13.5))
                     .monospacedDigit()
                     .foregroundColor(PadzyTheme.muted)
-                apiFigure
             }
-        }
-    }
-
-    @ViewBuilder
-    private var apiFigure: some View {
-        let text = MaxxerMath.formatUSD(value.apiEquivalentUSD)
-        if isEstimated {
-            VStack(spacing: 2) {
-                Text(text)
-                    .font(.mono(size: 12))
-                    .monospacedDigit()
-                    .foregroundColor(PadzyTheme.muted)
-                DottedUnderline()
-            }
-            .fixedSize()
-            .help("Estimated — not directly reported")
-        } else {
-            Text(text)
-                .font(.mono(size: 12))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.muted)
         }
     }
 
     private var multipleCell: some View {
         valueMultipleCell(value.valueMultiple)
+            .rollingNumber(value.valueMultiple, reduceMotion: reduceMotion)
     }
 
     private var accessibilityText: String {
@@ -606,66 +544,6 @@ private struct ValueRow: View {
         let api = value.apiEquivalentUSD == nil ? "API equivalent unavailable" : "API equivalent \(MaxxerMath.formatUSD(value.apiEquivalentUSD))"
         let multiple = value.valueMultiple == nil ? "value multiple unavailable" : "\(MaxxerMath.formatMultiple(value.valueMultiple)) plan value"
         return "\(displayName): \(plan), \(api), \(multiple). Confidence \(value.confidence.displayName)."
-    }
-}
-
-/// The total row — same grid, but a non-tappable summary. The multiple keeps ink
-/// weight; the dollar totals stay ink (data, not state).
-private struct ValueTotalRow: View {
-    let scorecard: MaxxerScorecard
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            wide
-            narrow
-        }
-        .padding(.vertical, 11)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Total: plan \(MaxxerMath.formatUSD(scorecard.totalPlanUSD)), "
-            + "API equivalent \(MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD)), "
-            + "\(MaxxerMath.formatMultiple(scorecard.totalValueMultiple)) plan value."
-        )
-    }
-
-    private var wide: some View {
-        HStack(spacing: ValueColumn.spacing) {
-            totalLabel
-            totals
-            multipleCell
-        }
-    }
-
-    private var narrow: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: ValueColumn.spacing) {
-                totalLabel
-                multipleCell
-            }
-            totals
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var totalLabel: some View {
-        Text("TOTAL")
-            .font(.mono(size: 10))
-            .tracking(10 * 0.12)
-            .foregroundColor(PadzyTheme.ink5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var totals: some View {
-        Text("\(MaxxerMath.formatUSD(scorecard.totalPlanUSD)) → \(MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD))")
-            .font(.mono(size: 12))
-            .monospacedDigit()
-            .foregroundColor(PadzyTheme.ink3)
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-    }
-
-    private var multipleCell: some View {
-        valueMultipleCell(scorecard.totalValueMultiple)
     }
 }
 

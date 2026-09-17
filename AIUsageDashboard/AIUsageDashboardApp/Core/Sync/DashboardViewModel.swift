@@ -18,9 +18,10 @@ public final class DashboardViewModel: ObservableObject {
     @Published public var range: UsageRange = .sevenDay
 
     private let syncEngine: SyncEngine
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: @Sendable () -> Date
     private var updatesTask: Task<Void, Never>?
+    private var timeZoneObserver: NSObjectProtocol?
 
     public init(
         syncEngine: SyncEngine = .shared,
@@ -47,6 +48,7 @@ public final class DashboardViewModel: ObservableObject {
     /// Starts the file watcher and subscribes to sync results so auto-refreshes
     /// (and refreshes triggered elsewhere) update this view model. Idempotent.
     public func beginAutoSync() {
+        installTimezoneHook()
         guard updatesTask == nil else { return }
         updatesTask = Task { [syncEngine, weak self] in
             let stream = syncEngine.updates
@@ -110,8 +112,28 @@ public final class DashboardViewModel: ObservableObject {
         }
     }
 
+    /// Today's token total for human-facing menu surfaces. Hidden providers are
+    /// excluded the same way Overview excludes them (D13).
     public var menuBarTodayTotal: Int {
-        snapshots.compactMap { isAvailable($0.providerID) ? $0.todayUsage.totalTokens : nil }.reduce(0, +)
+        visibleSnapshots.compactMap { snapshot in
+            guard isAvailable(snapshot.providerID) else { return nil }
+            return snapshot.todayUsage.totalTokens
+        }.reduce(0, +)
+    }
+
+    private var visibleSnapshots: [ProviderSnapshot] {
+        snapshots.filter { !hiddenProviders.contains($0.providerID) }
+    }
+
+    /// D9: adopt the effective calendar when the timezone changes. Parser-cache
+    /// rebuild stays with the parsers (WP-1); this hook is what the view model owns.
+    private(set) var calendarGeneration = 0
+
+    var analyticsTimeZone: TimeZone { calendar.timeZone }
+
+    func noteEffectiveTimezoneChange(_ calendar: Calendar) {
+        self.calendar = calendar
+        calendarGeneration += 1
     }
 
     // MARK: - Utilization spine (additive, read-only — derived from `snapshots`)
@@ -159,9 +181,19 @@ public final class DashboardViewModel: ObservableObject {
         )
     }
 
+    /// Tokens in the selected range. D12: `overviewDelta` belongs beside this, never beside today.
+    public var overviewRangedTotal: Int {
+        UsageAnalytics.total(
+            dailyTotals: overviewDailyTotals,
+            range: range,
+            calendar: calendar,
+            now: now()
+        )
+    }
+
     public var overviewDelta: Double? {
         let dailyTotals = overviewDailyTotals
-        let current = UsageAnalytics.total(dailyTotals: dailyTotals, range: range, calendar: calendar, now: now())
+        let current = overviewRangedTotal
         let previous = UsageAnalytics.previousTotal(
             dailyTotals: dailyTotals,
             range: range,
@@ -169,6 +201,28 @@ public final class DashboardViewModel: ObservableObject {
             now: now()
         )
         return UsageAnalytics.delta(current: current, previous: previous)
+    }
+
+    /// Published headline gauge, labelled as the named best account when the provider picked one (D8).
+    public var overviewHeadlineGauge: HeadlineGauge? {
+        let gauges = visibleSnapshots.compactMap { headlineGauge(for: $0) }
+        if let named = gauges.first(where: { $0.accountID != nil }) {
+            return named
+        }
+        return gauges.max { $0.usedPercent < $1.usedPercent }
+    }
+
+    /// Highest computable account window among visible providers. Surfaces called "tightest" use this (D8/D13).
+    public var tightestAccountPressure: AccountPressureReading? {
+        var best: AccountPressureReading?
+        for snapshot in visibleSnapshots {
+            for reading in accountPressures(in: snapshot) {
+                if best == nil || reading.usedPercent > best!.usedPercent {
+                    best = reading
+                }
+            }
+        }
+        return best
     }
 
     public var streak: (current: Int, longest: Int) {
@@ -258,4 +312,87 @@ public final class DashboardViewModel: ObservableObject {
             UserDefaults.standard.bool(forKey: "provider_hidden_\(providerID.rawValue)")
         })
     }
+
+    private func installTimezoneHook() {
+        guard timeZoneObserver == nil else { return }
+        timeZoneObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name.NSSystemTimeZoneDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.noteEffectiveTimezoneChange(.current)
+                Task {
+                    await self.syncEngine.updateCalendar(.current)
+                    await self.refresh()
+                }
+            }
+        }
+    }
+
+    private func headlineGauge(for snapshot: ProviderSnapshot) -> HeadlineGauge? {
+        let windows = snapshot.quotaWindows.filter { $0.type != .credits }
+        guard let peak = windows.compactMap(usedPercent(of:)).max() else { return nil }
+        if let id = snapshot.headlineAccountID,
+           let account = snapshot.accounts?.first(where: { $0.id == id }) {
+            return HeadlineGauge(
+                providerID: snapshot.providerID,
+                accountID: id,
+                accountLabel: account.label,
+                usedPercent: peak
+            )
+        }
+        return HeadlineGauge(
+            providerID: snapshot.providerID,
+            accountID: nil,
+            accountLabel: snapshot.displayName,
+            usedPercent: peak
+        )
+    }
+
+    private func accountPressures(in snapshot: ProviderSnapshot) -> [AccountPressureReading] {
+        if let accounts = snapshot.accounts, !accounts.isEmpty {
+            return accounts.compactMap { account in
+                let windows = account.quotaWindows.filter { $0.type != .credits }
+                guard let peak = windows.compactMap(usedPercent(of:)).max() else { return nil }
+                return AccountPressureReading(
+                    providerID: snapshot.providerID,
+                    accountID: account.id,
+                    accountLabel: account.label,
+                    usedPercent: peak
+                )
+            }
+        }
+        let windows = snapshot.quotaWindows.filter { $0.type != .credits }
+        guard let peak = windows.compactMap(usedPercent(of:)).max() else { return [] }
+        return [
+            AccountPressureReading(
+                providerID: snapshot.providerID,
+                accountID: snapshot.providerID.rawValue,
+                accountLabel: snapshot.displayName,
+                usedPercent: peak
+            ),
+        ]
+    }
+
+    private func usedPercent(of window: QuotaWindow) -> Double? {
+        UtilizationEngine.usedPercent(from: window)
+    }
+}
+
+/// Named best-account reading the Overview quota hero displays. Not a "tightest" claim.
+public struct HeadlineGauge: Equatable, Sendable {
+    public let providerID: ProviderID
+    public let accountID: String?
+    public let accountLabel: String
+    public let usedPercent: Double
+}
+
+/// Max account window. Surfaces labelled tightest must use this, not the published headline.
+public struct AccountPressureReading: Equatable, Sendable {
+    public let providerID: ProviderID
+    public let accountID: String
+    public let accountLabel: String
+    public let usedPercent: Double
 }

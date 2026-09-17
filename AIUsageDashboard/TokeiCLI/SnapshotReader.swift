@@ -81,6 +81,9 @@ struct SnapshotReader {
         } catch {
             throw SnapshotReadError.malformed(fileURL, underlying: error)
         }
-        return snapshot.withStaleness(asOf: now())
+        let currentTime = now()
+        return snapshot
+            .withStaleness(asOf: currentTime)
+            .withRecommendationValidity(asOf: currentTime)
     }
 }

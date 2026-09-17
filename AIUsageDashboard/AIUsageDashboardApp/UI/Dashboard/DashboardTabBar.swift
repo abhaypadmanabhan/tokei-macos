@@ -103,7 +103,7 @@ struct TimeRangeSelector: View {
                     range = option.range
                 } label: {
                     Text(option.label)
-                        .font(.mono(size: 11.5, weight: .medium))
+                        .font(.mono(size: 13.5, weight: .medium))
                         .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.ink5)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 5)

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 // The `tokei` target compiles Core/Agent/AgentSnapshot.swift directly and does NOT link
 // the Core framework (it must stay standalone). The AIUsageDashboardCoreTests bundle
@@ -24,6 +25,13 @@ import AIUsageDashboardCore
 struct MCPServer {
     static let protocolVersion = "2024-11-05"
     static let serverName = "tokei"
+    static let oversizedFrameMessage = "Invalid Request: frame exceeds 1048576 bytes."
+    private static let maximumDiagnosticNameBytes = 128
+
+    private enum ToolName: String {
+        case usage = "get_usage"
+        case routeRecommendation = "get_route_recommendation"
+    }
 
     let reader: SnapshotReader
     let version: String
@@ -43,9 +51,14 @@ struct MCPServer {
         self.output = output
     }
 
-    /// - Parameter nextLine: the transport. Defaults to stdin; injected in tests so the
-    ///   read loop itself (blank-line skipping, one frame per message) is covered.
-    func run(nextLine: () -> String? = { readLine(strippingNewline: true) }) {
+    /// Runs the bounded production transport over stdin.
+    func run() {
+        var frameReader = MCPFrameReader(fileHandle: .standardInput)
+        run(frameReader: &frameReader)
+    }
+
+    /// Injected line transport retained for focused protocol-loop tests.
+    func run(nextLine: () -> String?) {
         while let line = nextLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
@@ -53,38 +66,130 @@ struct MCPServer {
         }
     }
 
+    func run(frameReader: inout MCPFrameReader) {
+        while let frame = frameReader.nextFrame() {
+            switch frame {
+            case let .data(data):
+                guard let line = String(data: data, encoding: .utf8) else {
+                    send(errorResponse(id: nil, code: -32700, message: "Parse error"))
+                    continue
+                }
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { handle(line: trimmed) }
+            case .oversized:
+                send(errorResponse(id: nil, code: -32600, message: Self.oversizedFrameMessage))
+            }
+        }
+    }
+
     // MARK: - Dispatch
 
     func handle(line: String) {
-        guard
-            let data = line.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            send(errorResponse(id: nil, code: -32700, message: "Parse error"))
-            return
+        switch parseRequest(line) {
+        case let .valid(request):
+            dispatch(request)
+        case let .invalid(id, code, message):
+            send(errorResponse(id: id, code: code, message: message))
+        }
+    }
+
+    private struct Request {
+        let object: [String: Any]
+        let id: Any?
+        let method: String
+        let isNotification: Bool
+    }
+
+    private enum RequestParsing {
+        case valid(Request)
+        case invalid(id: Any?, code: Int, message: String)
+    }
+
+    private func parseRequest(_ line: String) -> RequestParsing {
+        guard let data = line.data(using: .utf8) else {
+            return .invalid(id: nil, code: -32700, message: "Parse error")
         }
 
-        let method = object["method"] as? String
-        // A message without an `id` is a notification: never reply (per JSON-RPC).
-        let id = object["id"]
-        let isNotification = id == nil
+        let value: Any
+        do {
+            value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } catch {
+            return .invalid(id: nil, code: -32700, message: "Parse error")
+        }
 
-        switch method {
+        // Syntax and envelope validity are separate JSON-RPC layers. A scalar, array,
+        // or malformed request object is valid JSON, so it is -32600 rather than -32700.
+        guard let object = value as? [String: Any] else {
+            return .invalid(id: nil, code: -32600, message: "Invalid Request")
+        }
+
+        let hasID = object.keys.contains("id")
+        let candidateID = object["id"]
+        let validID = !hasID || Self.isValidID(candidateID)
+        let responseID = hasID && validID ? candidateID : nil
+
+        guard object["jsonrpc"] as? String == "2.0",
+              validID,
+              let method = object["method"] as? String
+        else {
+            return .invalid(id: responseID, code: -32600, message: "Invalid Request")
+        }
+
+        // A valid message without an `id` is a notification: process it but never reply.
+        return .valid(Request(
+            object: object,
+            id: responseID,
+            method: method,
+            isNotification: !hasID
+        ))
+    }
+
+    private func dispatch(_ request: Request) {
+        switch request.method {
         case "initialize":
-            respond(id: id, result: initializeResult())
+            respond(id: request.id, result: initializeResult())
         case "notifications/initialized", "notifications/cancelled":
-            break // notifications — no response
+            respond(id: request.id, result: [:])
         case "ping":
-            respond(id: id, result: [:])
+            respond(id: request.id, result: [:])
         case "tools/list":
-            respond(id: id, result: ["tools": toolDefinitions()])
+            respond(id: request.id, result: ["tools": toolDefinitions()])
         case "tools/call":
-            respond(id: id, result: toolCallResult(params: object["params"] as? [String: Any]))
+            switch validateToolCall(params: request.object["params"]) {
+            case let .valid(name):
+                respond(id: request.id, result: toolCallResult(name: name))
+            case let .invalid(message):
+                if !request.isNotification {
+                    send(errorResponse(id: request.id, code: -32602, message: message))
+                }
+            }
         default:
-            if !isNotification {
-                send(errorResponse(id: id, code: -32601, message: "Method not found: \(method ?? "nil")"))
+            if !request.isNotification {
+                send(errorResponse(
+                    id: request.id,
+                    code: -32601,
+                    message: "Method not found: \(Self.boundedDiagnosticName(request.method))"
+                ))
             }
         }
+    }
+
+    private static func boundedDiagnosticName(_ name: String) -> String {
+        var bytes = Array(name.utf8.prefix(maximumDiagnosticNameBytes))
+        while !bytes.isEmpty {
+            if let bounded = String(bytes: bytes, encoding: .utf8) {
+                return bounded
+            }
+            bytes.removeLast()
+        }
+        return ""
+    }
+
+    private static func isValidID(_ value: Any?) -> Bool {
+        guard let value else { return false }
+        if value is NSNull || value is String { return true }
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) != CFBooleanGetTypeID()
     }
 
     // MARK: - initialize
@@ -106,47 +211,6 @@ struct MCPServer {
         ]
     }
 
-    /// Server-level instructions. MCP clients surface this to the model once, at
-    /// connect time, so it persists for the whole session rather than being re-read
-    /// per call. Tool descriptions alone don't get an agent to call *unprompted* —
-    /// they answer "what does this do", not "when must I reach for it". This states
-    /// the trigger, so an orchestrating agent checks quota before it spends it.
-    static let instructions = """
-        Tokei reports how much quota is left across the AI coding tools on this Mac \
-        (Claude Code, Codex, Cursor, Cline, Gemini, Antigravity, Copilot, opencode).
-
-        When to call, without being asked:
-        • BEFORE spawning, delegating to, or orchestrating another coding agent or \
-        subagent — check where there is room, then pick the target.
-        • BEFORE starting a long, parallel, or fan-out job that will consume a \
-        provider's quota.
-        • When the user asks what they have left, what a plan is worth, or which \
-        tool to use for a task.
-
-        Routing work to a provider that is about to hit its limit wastes the run and \
-        the user's money. Check first, then choose.
-
-        Reading the result:
-        • Treat any provider at or above 85% utilization as unavailable; prefer the \
-        least-utilized one that reported real quota.
-        • `confidence: official` is provider-reported. Never treat `local_estimate` \
-        or `unavailable` as a hard limit — they are floors, not ceilings.
-        • A low number you do not trust is NOT free capacity. A stale or estimated 0% \
-        means "no reading", not "wide open" — absence of data is not headroom.
-        • `observedAt` on a window is when that reading was taken. The top-level \
-        `stale` flag is a different thing: it only says how long ago Tokei wrote the \
-        file, so `stale: false` can still contain hour-old numbers. Judge freshness \
-        per window.
-        • `accounts` (Claude Code) lists each signed-in account separately. The \
-        provider's own `windows` show the account with the most headroom and \
-        `tokensToday` is the sum across accounts; use `accounts[].id` as \
-        `CLAUDE_CONFIG_DIR` to target a specific one.
-        • If a response is prefixed with a stale warning, Tokei may not be running. \
-        Say so instead of presenting the numbers as current.
-
-        Read-only. No network, no credentials, no other application's data.
-        """
-
     // MARK: - tools/list
 
     private func toolDefinitions() -> [[String: Any]] {
@@ -157,7 +221,7 @@ struct MCPServer {
         ]
         return [
             [
-                "name": "get_usage",
+                "name": ToolName.usage.rawValue,
                 // Trigger first, payload second: an agent decides whether to call from the
                 // opening clause, so "when" has to lead. Same reason `instructions` exists.
                 "description": "Call when you need the full quota picture across the user's AI "
@@ -166,37 +230,66 @@ struct MCPServer {
                     + "specific providers. Returns per-provider quota windows (used %, reset "
                     + "time, confidence, source), aggregate utilization, token counts, and "
                     + "timestamps. Includes a `stale` flag when the data is old or Tokei isn't "
-                    + "running. Read-only; no network or credentials.",
+                    + "running. " + Self.accountContract + " Read-only; no network or credentials.",
                 "inputSchema": emptyInput
             ],
             [
-                "name": "get_route_recommendation",
+                "name": ToolName.routeRecommendation.rawValue,
                 "description": "Call this BEFORE you spawn, delegate to, or orchestrate another "
                     + "coding agent or subagent, and before any long, parallel, or fan-out run "
                     + "that will consume a provider's quota — routing work to a provider about "
                     + "to hit its limit wastes the run. Returns which provider to route new work "
                     + "to (least-utilized), which to avoid (at or over 85% of a limit), and the "
-                    + "reason. Cheap and read-only: prefer calling it over guessing.",
+                    + "reason, with generatedAt, ageSeconds, validUntil, and stale metadata. "
+                    + Self.accountContract + " Cheap and read-only: prefer calling it over guessing.",
                 "inputSchema": emptyInput
             ]
         ]
     }
 
+    private static let accountContract = "Accounts use `accountID`, an opaque provider-scoped "
+        + "identity that is stable across machines for known identities; `accounts[].id` is a "
+        + "legacy locator; feature-detect `accountID` and `target`. An older helper in front of "
+        + "a newer app is a lossy proxy. Pass `recommendation.target.selector.env` as the "
+        + "environment map to the process API; never concatenate it into a shell string. "
+        + "`quota.status` is `eligible`, `expiredCredentials`, `cooldown`, `disabled`, "
+        + "`requestFailed`, `noQuotaSource`, or `unknown`; only `eligible` is positive headroom."
+
     // MARK: - tools/call
 
-    private func toolCallResult(params: [String: Any]?) -> [String: Any] {
-        guard let name = params?["name"] as? String else {
-            return textContent("Missing tool name.", isError: true)
+    private enum ToolCallValidation {
+        case valid(ToolName)
+        case invalid(String)
+    }
+
+    private func validateToolCall(params: Any?) -> ToolCallValidation {
+        guard let params = params as? [String: Any] else {
+            return .invalid("Invalid tools/call params: expected an object.")
         }
+        guard let name = params["name"] as? String else {
+            return .invalid("Missing tool name.")
+        }
+        guard let tool = ToolName(rawValue: name) else {
+            return .invalid("Unknown tool: \(Self.boundedDiagnosticName(name))")
+        }
+        if let value = params["arguments"] {
+            guard let arguments = value as? [String: Any], arguments.isEmpty else {
+                return .invalid(
+                    "Invalid arguments for \(Self.boundedDiagnosticName(name)): expected an empty object."
+                )
+            }
+        }
+        return .valid(tool)
+    }
+
+    private func toolCallResult(name: ToolName) -> [String: Any] {
         do {
             let snapshot = try reader.read()
             switch name {
-            case "get_usage":
-                return textContent(prefixWarning(snapshot) + (try encode(snapshot)))
-            case "get_route_recommendation":
-                return textContent(prefixWarning(snapshot) + (try recommendationText(snapshot)))
-            default:
-                return textContent("Unknown tool: \(name)", isError: true)
+            case .usage:
+                return textContent(try encode(snapshot), warning: staleWarning(snapshot))
+            case .routeRecommendation:
+                return textContent(try recommendationText(snapshot), warning: staleWarning(snapshot))
             }
         } catch let error as SnapshotReadError {
             return textContent(error.message, isError: true)
@@ -205,21 +298,48 @@ struct MCPServer {
         }
     }
 
-    /// Never serve stale data silently — prefix a warning the agent will see (issue §4).
-    private func prefixWarning(_ snapshot: AgentSnapshot) -> String {
-        guard snapshot.stale == true else { return "" }
+}
+
+// MARK: - Tool output
+
+private extension MCPServer {
+    struct RoutePayload: Encodable {
+        let generatedAt: Date
+        let ageSeconds: Int?
+        let stale: Bool
+        let routeTo: String?
+        let avoid: [String]
+        let reason: String
+        let target: AgentRecommendationTarget?
+        let avoidAccounts: [AgentAccountReference]?
+        let validUntil: Date?
+    }
+
+    /// Keep content[0] machine-parseable JSON; the optional second block is for models.
+    func staleWarning(_ snapshot: AgentSnapshot) -> String? {
+        guard snapshot.stale == true else { return nil }
         let age = snapshot.ageSeconds.map(StatusFormatting.humanAge(seconds:)) ?? "unknown age"
-        return "⚠︎ Tokei data is stale (\(age) old); the app may not be running. Values below may be outdated.\n\n"
+        return "⚠︎ Tokei data is stale (\(age) old); the app may not be running. Values may be outdated."
     }
 
-    private func recommendationText(_ snapshot: AgentSnapshot) throws -> String {
-        guard let recommendation = snapshot.recommendation else {
-            return "No routing recommendation available (not enough providers reported live quota)."
-        }
-        return try encode(recommendation)
+    func recommendationText(_ snapshot: AgentSnapshot) throws -> String {
+        let recommendation = snapshot.recommendation
+        let decisionExpired = recommendation?.validUntil.map { reader.now() > $0 } ?? false
+        return try encode(RoutePayload(
+            generatedAt: snapshot.generatedAt,
+            ageSeconds: snapshot.ageSeconds,
+            stale: snapshot.stale == true || decisionExpired,
+            routeTo: recommendation?.routeTo,
+            avoid: recommendation?.avoid ?? [],
+            reason: recommendation?.reason
+                ?? "No routing recommendation available (not enough providers reported live quota).",
+            target: recommendation?.target,
+            avoidAccounts: recommendation?.avoidAccounts,
+            validUntil: recommendation?.validUntil
+        ))
     }
 
-    private func encode<T: Encodable>(_ value: T) throws -> String {
+    func encode<T: Encodable>(_ value: T) throws -> String {
         let data = try AgentSnapshot.makeEncoder().encode(value)
         guard let text = String(bytes: data, encoding: .utf8) else {
             throw EncodingError.invalidValue(
@@ -230,25 +350,35 @@ struct MCPServer {
         return text
     }
 
-    private func textContent(_ text: String, isError: Bool = false) -> [String: Any] {
-        [
-            "content": [["type": "text", "text": text]],
+    func textContent(
+        _ text: String,
+        isError: Bool = false,
+        warning: String? = nil
+    ) -> [String: Any] {
+        var content: [[String: Any]] = [["type": "text", "text": text]]
+        if let warning {
+            content.append(["type": "text", "text": warning])
+        }
+        return [
+            "content": content,
             "isError": isError
         ]
     }
+}
 
-    // MARK: - JSON-RPC framing
+// MARK: - JSON-RPC framing
 
-    private func respond(id: Any?, result: [String: Any]) {
+private extension MCPServer {
+    func respond(id: Any?, result: [String: Any]) {
         guard let id else { return } // notification — no reply
         send(["jsonrpc": "2.0", "id": id, "result": result])
     }
 
-    private func errorResponse(id: Any?, code: Int, message: String) -> [String: Any] {
+    func errorResponse(id: Any?, code: Int, message: String) -> [String: Any] {
         ["jsonrpc": "2.0", "id": id ?? NSNull(), "error": ["code": code, "message": message]]
     }
 
-    private func send(_ message: [String: Any]) {
+    func send(_ message: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
         var line = data
         line.append(0x0A) // newline-delimited transport

@@ -36,7 +36,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
         XCTAssertTrue(parsed.warnings.isEmpty)
     }
 
-    func testParserReadsFromTempCopyWithoutMutatingOriginalDatabase() async throws {
+    func testR0602ExclusiveLockFailsClosedWithoutMutatingOriginalDatabase() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())
         let originalModifiedAt = try stateDB.resourceValues(forKeys: [.contentModificationDateKey])
@@ -52,8 +52,12 @@ final class AntigravityStateDBParserTests: XCTestCase {
 
         let parsed = await AntigravityStateDBParser().parse(stateDatabaseURL: stateDB)
 
-        XCTAssertEqual(parsed.planName, "Pro")
-        XCTAssertEqual(parsed.availableCredits, 1000)
+        // R06-02: a locked rollback-journal main file is not a coherent snapshot,
+        // even when this fixture has not changed any pages inside the transaction.
+        XCTAssertNil(parsed.planName)
+        XCTAssertNil(parsed.availableCredits)
+        XCTAssertEqual(parsed.warnings.count, 1)
+        XCTAssertTrue(parsed.warnings[0].message.contains("coherent snapshot"))
         let modifiedAtAfterRead = try stateDB.resourceValues(forKeys: [.contentModificationDateKey])
             .contentModificationDate
         XCTAssertEqual(modifiedAtAfterRead, originalModifiedAt)

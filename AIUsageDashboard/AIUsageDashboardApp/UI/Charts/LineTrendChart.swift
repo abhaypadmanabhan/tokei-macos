@@ -26,6 +26,7 @@ struct LineTrendChart: View {
 
     /// The series index under the pointer (nil when not hovering).
     @State private var hoveredID: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Line stroke: the agent tint when tinted, else the neutral `ink2` default.
     private var lineStyle: Color { tint ?? PadzyTheme.ink2 }
@@ -97,9 +98,10 @@ struct LineTrendChart: View {
                     .foregroundStyle(PadzyTheme.accent)
                     .annotation(position: .topTrailing, spacing: 4) {
                         Text(TokenFormatter.format(point.tokens))
-                            .font(.mono(size: 10))
+                            .font(.mono(size: 13.5))
                             .monospacedDigit()
                             .foregroundColor(PadzyTheme.ink)
+                            .rollingNumber(Double(point.tokens), reduceMotion: reduceMotion)
                     }
                 }
             }
@@ -148,8 +150,9 @@ struct LineTrendChart: View {
                 AxisValueLabel {
                     if let tokens = value.as(Int.self) {
                         Text(TokenFormatter.format(tokens))
-                            .font(.mono(size: 10))
+                            .font(.mono(size: 13.5))
                             .foregroundStyle(PadzyTheme.ink5)
+                            .rollingNumber(Double(tokens), reduceMotion: reduceMotion)
                     }
                 }
             }
@@ -198,9 +201,10 @@ struct LineTrendChart: View {
                 .tracking(0.3)
                 .foregroundColor(PadzyTheme.ink5)
             Text(TokenFormatter.format(point.tokens))
-                .font(.mono(size: 12, weight: .semibold))
+                .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(Double(point.tokens), reduceMotion: reduceMotion)
             if let agent = detail?.topAgent {
                 HStack(spacing: 5) {
                     Circle()

@@ -45,70 +45,6 @@ struct SectionCard<Content: View, Trailing: View>: View {
     }
 }
 
-/// KPI tile: caps-mono kicker, large mono value, optional signed delta and
-/// optional per-metric sparkline. Sits inside or alongside `SectionCard`s;
-/// `boxed: false` renders bare for use inside an existing card.
-struct StatCard: View {
-    let kicker: String
-    let value: String
-    var delta: Double? = nil
-    var deltaCaption: String? = nil
-    var sparklineValues: [Int]? = nil
-    var sparklineTint: Color = PadzyTheme.ink.opacity(0.55)
-    var boxed: Bool = true
-
-    var body: some View {
-        let stack = VStack(alignment: .leading, spacing: 6) {
-            Text(kicker.uppercased())
-                .font(.mono(size: 10))
-                .tracking(10 * 0.08)
-                .foregroundColor(PadzyTheme.muted)
-                .lineLimit(1)
-
-            Text(value)
-                .font(.mono(size: 24))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-
-            if let delta {
-                DeltaLabel(delta: delta, caption: deltaCaption)
-            } else if let deltaCaption {
-                // A caption with no delta is a qualifier on the value itself
-                // ("MON 14 JUL", "AT LEAST") — it still has to render, otherwise
-                // the tile silently drops the context it was given.
-                Text(deltaCaption.uppercased())
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.muted)
-                    .lineLimit(1)
-            }
-
-            if let sparklineValues {
-                MetricSparkline(values: sparklineValues, tint: sparklineTint)
-                    .frame(height: 22)
-                    .accessibilityHidden(true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-        if boxed {
-            stack
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                        .fill(PadzyTheme.ground.opacity(0.55))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
-                        .stroke(PadzyTheme.muted.opacity(0.18), lineWidth: 1)
-                )
-        } else {
-            stack
-        }
-    }
-}
-
 /// Signed percent delta ("▲ +18.2% vs yesterday"). Direction carried by BOTH
 /// the glyph/sign and the hue (never color alone). One of the few sanctioned
 /// homes for `PadzyChartPalette` outside a chart body.
@@ -143,29 +79,11 @@ struct DeltaLabel: View {
 
 // MARK: - Previews
 
-#Preview("SectionCard + StatCards") {
-    VStack(spacing: 16) {
-        SectionCard("Today", trailing: {
-            Text("LIVE")
-                .font(.mono(size: 10))
-                .foregroundColor(PadzyTheme.muted)
-        }) {
-            HStack(spacing: 10) {
-                StatCard(kicker: "Input", value: "12.4M", delta: 18.2, deltaCaption: "vs yesterday",
-                         sparklineValues: [3, 5, 4, 8, 6, 9, 12], sparklineTint: PadzyChartPalette.input)
-                StatCard(kicker: "Output", value: "1.9M", delta: -6.4,
-                         sparklineValues: [9, 7, 8, 5, 6, 4, 3], sparklineTint: PadzyChartPalette.output)
-                StatCard(kicker: "Cache read", value: "48.1M",
-                         sparklineValues: [2, 6, 5, 9, 7, 11, 10], sparklineTint: PadzyChartPalette.cacheRead)
-            }
-        }
-
-        SectionCard("Bare tiles") {
-            HStack(spacing: 24) {
-                StatCard(kicker: "Streak", value: "14 DAYS", boxed: false)
-                StatCard(kicker: "Daily avg", value: "9.1M", boxed: false)
-            }
-        }
+#Preview("SectionCard") {
+    SectionCard("Today") {
+        Text("Local usage")
+            .font(.sans(size: 15))
+            .foregroundColor(PadzyTheme.ink)
     }
     .padding(24)
     .frame(width: 640)

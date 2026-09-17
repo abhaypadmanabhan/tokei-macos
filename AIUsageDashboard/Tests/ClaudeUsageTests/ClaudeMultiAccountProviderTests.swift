@@ -68,7 +68,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
             remaining: 100 - used,
             resetAt: Date().addingTimeInterval(86_400),
             confidence: confidence,
-            source: "test"
+            source: "test",
+            observedAt: Date()
         )
     }
 
@@ -107,6 +108,122 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
 
         // 100 + 200 output tokens, plus 1 input token each.
         XCTAssertEqual(snapshot.todayUsage.totalTokens, 302)
+    }
+
+    /// D14: copied history across two identities is provider history once, with one owner.
+    func testD14_sameMessageInTwoIdentitiesCountedOnce() async throws {
+        let base = try makeAccountDirectory(".claude", outputTokens: 100)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 200)
+        let shared = ClaudeFixtures.usageLine(
+            id: "msg_shared_identity",
+            output: 50,
+            timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+        for account in [base, one] {
+            let sharedURL = account.projectsDirectories[0]
+                .appendingPathComponent("proj/shared.jsonl")
+            try Data(shared.utf8).write(to: sharedURL)
+        }
+
+        func provider(_ accounts: [ClaudeAccount]) -> ClaudeCodeProvider {
+            ClaudeCodeProvider(
+                accounts: accounts,
+                usageClientFactory: { _ in MockClaudeUsageClient(behavior: .failure) },
+                userDefaults: userDefaults
+            )
+        }
+
+        let firstProvider = provider([base, one])
+        let snapshot = try await firstProvider.fetchSnapshot()
+        let accounts = try XCTUnwrap(snapshot.accounts)
+        let accountTotal = accounts.compactMap(\.todayUsage.totalTokens).reduce(0, +)
+        let byLabel = Dictionary(uniqueKeysWithValues: accounts.map { ($0.label, $0) })
+
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 352, "shared 50 is counted once")
+        XCTAssertEqual(accountTotal, snapshot.todayUsage.totalTokens, "account allocations are disjoint")
+        XCTAssertEqual(byLabel["default"]?.todayUsage.totalTokens, 151)
+        XCTAssertEqual(byLabel["account-1"]?.todayUsage.totalTokens, 201)
+        let ambiguityWarning = try XCTUnwrap(snapshot.warnings.first {
+            $0.message.localizedCaseInsensitiveContains("multiple accounts")
+        })
+        XCTAssertEqual(
+            ambiguityWarning.message,
+            "Claude history appeared in multiple accounts; 1 shared message was counted once "
+                + "under .claude because its account path sorts first."
+        )
+        XCTAssertLessThanOrEqual(ambiguityWarning.message.count, 180)
+
+        let warm = try await firstProvider.fetchSnapshot()
+        XCTAssertEqual(warm.todayUsage.totalTokens, 352)
+
+        let appendURL = one.projectsDirectories[0].appendingPathComponent("proj/session.jsonl")
+        let handle = try FileHandle(forWritingTo: appendURL)
+        handle.seekToEndOfFile()
+        let appended = ClaudeFixtures.usageLine(
+            id: "msg_appended_identity",
+            output: 5,
+            timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+        handle.write(Data("\n\(appended)".utf8))
+        handle.closeFile()
+        let grown = try await firstProvider.fetchSnapshot()
+        XCTAssertEqual(grown.todayUsage.totalTokens, 357)
+        XCTAssertEqual(
+            grown.accounts?.compactMap(\.todayUsage.totalTokens).reduce(0, +),
+            grown.todayUsage.totalTokens
+        )
+
+        let reordered = try await provider([one, base]).fetchSnapshot()
+        XCTAssertEqual(reordered.todayUsage.totalTokens, 357)
+        let grownByLabel = Dictionary(uniqueKeysWithValues: try XCTUnwrap(grown.accounts).map {
+            ($0.label, $0.todayUsage.totalTokens)
+        })
+        let reorderedByLabel = Dictionary(uniqueKeysWithValues: try XCTUnwrap(reordered.accounts).map {
+            ($0.label, $0.todayUsage.totalTokens)
+        })
+        XCTAssertEqual(grownByLabel, reorderedByLabel, "ownership is stable when account order changes")
+    }
+
+    /// D7-core: account-local quota failure state survives beside a routable sibling.
+    func testD7_expiredAccountKeepsStructuredStatusWithoutCredentialMaterial() async throws {
+        let defaultAccount = try makeAccountDirectory(".claude", outputTokens: 0)
+        let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
+        let secretMarker = "credential-secret-must-not-serialize"
+        let oldDefaultRecord = ClaudeFixtures.usageLine(
+            id: "msg_.claude",
+            output: 0,
+            timestamp: "2020-01-01T00:00:00.000Z"
+        )
+        try Data(oldDefaultRecord.utf8).write(
+            to: defaultAccount.projectsDirectories[0].appendingPathComponent("proj/session.jsonl")
+        )
+
+        let provider = ClaudeCodeProvider(
+            accounts: [defaultAccount, one],
+            usageClientFactory: { account in
+                if account.isDefault {
+                    return ExpiredClaudeUsageClient(secretMarker: secretMarker)
+                }
+                return MockClaudeUsageClient(behavior: .success([self.weeklyWindow(used: 42)]))
+            },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+        let encoded = try JSONEncoder().encode(snapshot)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let byLabel: [String: ProviderAccountUsage] = Dictionary(
+            uniqueKeysWithValues: try XCTUnwrap(snapshot.accounts).map { ($0.label, $0) }
+        )
+
+        XCTAssertEqual(byLabel["default"]?.todayUsage.totalTokens, 0)
+        XCTAssertEqual(byLabel["default"]?.quotaStatus, .expiredCredentials)
+        XCTAssertTrue(byLabel["default"]?.quotaWindows.allSatisfy {
+            UtilizationEngine.usedPercent(from: $0) == nil
+        } == true)
+        XCTAssertTrue(json.contains(#""quotaStatus":"expiredCredentials""#))
+        XCTAssertFalse(json.contains(secretMarker))
+        XCTAssertEqual(byLabel["account-1"]?.quotaWindows.first?.used, 42)
     }
 
     /// The headline quota must describe the capacity actually available. With one account
@@ -220,9 +337,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.confidence, .providerReported)
     }
 
-    /// With nothing confirmed anywhere, the rule falls back to headroom rather than
-    /// reporting no quota at all — an estimate is still better than a blank gauge.
-    func testHeadlineAccountFallsBackToHeadroomWhenNothingIsConfirmed() async throws {
+    /// A2: estimates are display-only; they cannot become an executable headline account.
+    func testHeadlineAccountIsNilWhenNothingIsConfirmed() async throws {
         let base = try makeAccountDirectory(".claude", outputTokens: 10)
         let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)
 
@@ -240,7 +356,8 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
 
         let snapshot = try await provider.fetchSnapshot()
 
-        XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 20)
+        XCTAssertNil(snapshot.headlineAccountID)
+        XCTAssertTrue(snapshot.quotaWindows.allSatisfy { $0.confidence == .unavailable })
     }
 
     /// No usable reading anywhere means there is no headline account to name — the field
@@ -425,6 +542,10 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertEqual(snapshot.accounts?.first?.quotaWindows.first?.used, 42)
+        XCTAssertEqual(
+            snapshot.accounts?.first?.selector?.env["CLAUDE_CONFIG_DIR"],
+            home.appendingPathComponent(".claude-account-2").path
+        )
         let canonicalCalls = await canonical.callCount()
         let siblingCalls = await sibling.callCount()
         XCTAssertEqual(canonicalCalls, 1, "the canonical is still tried first")
@@ -559,5 +680,14 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 42)
+    }
+}
+
+private struct ExpiredClaudeUsageClient: ClaudeUsageClient {
+    let secretMarker: String
+
+    func fetchQuotaWindows() async throws -> [QuotaWindow] {
+        _ = secretMarker
+        throw ClaudeUsageError.expiredCredentials
     }
 }

@@ -58,6 +58,7 @@ extension ProviderDetailView {
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
                 .frame(width: 44, alignment: .trailing)
+                .rollingNumber(known, reduceMotion: reduceMotion)
 
             Text(verdict?.word ?? "\u{2014}")
                 .font(.sans(size: 10.5, weight: .semibold))
@@ -84,6 +85,7 @@ extension ProviderDetailView {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(PadzyTheme.quotaColor(pct))
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
+                    .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 if let elapsedFraction {
                     let notchX = geo.size.width * CGFloat(elapsedFraction)
                     Rectangle()
@@ -102,10 +104,10 @@ extension ProviderDetailView {
     private func resetCountdown(_ resetAt: Date?) -> some View {
         if let resetAt {
             if reduceMotion {
-                countdownLabel(ProviderOverviewRow.format(until: resetAt, now: Date()))
+                countdownLabel(resetCountdownText(until: resetAt, now: Date()))
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    countdownLabel(ProviderOverviewRow.format(until: resetAt, now: context.date))
+                    countdownLabel(resetCountdownText(until: resetAt, now: context.date))
                 }
             }
         } else {
@@ -121,11 +123,25 @@ extension ProviderDetailView {
             .lineLimit(1)
     }
 
+    private func resetCountdownText(until date: Date, now: Date) -> String {
+        let interval = date.timeIntervalSince(now)
+        guard interval > 0 else { return "NOW" }
+        let totalSeconds = Int(interval)
+        let totalHours = totalSeconds / 3_600
+        if totalHours >= 24 { return "\(totalHours / 24)d \(totalHours % 24)h" }
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        if totalHours > 0 {
+            return String(format: "%02d:%02d:%02d", totalHours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
     // MARK: 7 · Daily history
 
     var dailyHistorySection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Daily history · 30d")
+            SectionLabel(UsageAnalytics.dailyHistoryTitle(for: historyRange))
             if trend.count >= 2 {
                 LineTrendChart(points: trend, tint: AgentTint.color(snapshot.providerID))
                     .frame(height: 150)
@@ -172,6 +188,10 @@ extension ProviderDetailView {
                             Rectangle()
                                 .fill(segment.shade)
                                 .frame(width: geo.size.width * CGFloat(Double(segment.value) / Double(total)))
+                                .animation(
+                                    LiveNumberMotion.animation(reduceMotion: reduceMotion),
+                                    value: Double(segment.value) / Double(total)
+                                )
                         }
                     }
                 }
@@ -206,13 +226,15 @@ extension ProviderDetailView {
                 .font(.sans(size: 12.5))
                 .foregroundColor(PadzyTheme.ink3)
             Text(TokenFormatter.format(segment.value))
-                .font(.mono(size: 12.5))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(Double(segment.value), reduceMotion: reduceMotion)
             Text(String(format: "%.1f%%", Double(segment.value) / Double(total) * 100))
-                .font(.mono(size: 11))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink5)
+                .rollingNumber(Double(segment.value) / Double(total) * 100, reduceMotion: reduceMotion)
         }
         .fixedSize()
     }

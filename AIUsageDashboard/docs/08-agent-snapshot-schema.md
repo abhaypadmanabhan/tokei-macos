@@ -1,175 +1,344 @@
 # 08 · Agent snapshot schema + `tokei` helper (#57)
 
-Tokei exposes the quota data it already computes to orchestrating agents (Claude
-Code, Codex CLI, …) so they can route work away from a near-exhausted provider.
-Read-only in v1: the app writes a snapshot file; a bundled `tokei` helper reads it.
+Tokei exposes the quota data it already computes to orchestrating agents so they
+can route work to an exact provider account without guessing from a label or path.
+The v1 surface is read-only: the app atomically writes a snapshot and the bundled
+`tokei` helper reads it.
 
-## 1. The snapshot file
+## 1. Snapshot file
 
 - **Path:** `~/Library/Application Support/AIUsageDashboard/agent-snapshot.json`
-- **Writer:** `AgentSnapshotWriter` (Core), invoked from `SyncEngine.refreshAll()`
-  after every refresh cycle. Written **atomically** (`Data.write(options: .atomic)`),
-  so a reader never sees a torn file and a crash mid-write keeps the prior snapshot.
-- **Producer of the shape:** `AgentSnapshotWriter.buildSnapshot(from:generatedAt:)` —
-  pure, so the mapping is unit-tested without disk.
+- **Writer:** `AgentSnapshotWriter`, after each `SyncEngine.refreshAll()` cycle.
+- **Write contract:** atomic replacement; a reader sees the old complete file or the
+  new complete file, never a torn intermediate file.
+- **Schema version:** `1`. The account additions are optional additive fields, not a
+  breaking shape change.
 
 ### Security invariant
 
-**Only percentages, token counts, and timestamps.** No tokens, cookies, bearers,
-CSRF, or credentials of any kind. The schema types (`AgentSnapshot` &co.) carry
-nothing else, and a unit test (`testEncodedSnapshotContainsNoSecretShapedFields`)
-guards against a secret-shaped field creeping in.
+The file may contain percentages, token counts, timestamps, bounded status codes,
+opaque account IDs, human labels, local profile paths, and allowlisted process
+environment selectors. It must never contain a credential, token, cookie, bearer,
+email address, raw provider identity, arbitrary diagnostic, or provider response.
 
-### Schema (v1)
+`accountID` is a SHA-256-derived opaque provider-scoped key. A selector is addressing
+data such as `{"env":{"CODEX_HOME":"/Users/me/.codex"}}`, not a shell program.
+
+## 2. Two-account example
+
+This is the account-aware subset of the two-Claude-account contract fixture from
+the WP-6 research (`artifacts/t03/schema-after.json`); shown values are exact and
+unrelated unchanged fields are omitted. IDs and values are deterministic synthetic
+fixture data, not a claim about the current machine.
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-24T09:12:00Z",   // UTC, ISO8601, when the app wrote it
+  "generatedAt": "2026-09-17T02:16:40Z",
+  "aggregateUtilizationPercent": 56,
   "providers": [
     {
-      "id": "claude_code",                 // ProviderID.rawValue (stable machine id)
+      "id": "claude_code",
       "displayName": "Claude Code",
+      "lastUpdated": "2026-09-17T02:16:39Z",
+      "tokensToday": 553069448,
       "windows": [
         {
-          "type": "fiveHour",              // QuotaWindowType.rawValue: session | daily |
-                                           //   weekly | fiveHour | monthly | credits |
-                                           //   perModel | lifetime
-          "usedPercent": 42.0,             // 0…100, clamped
-          "resetsAt": "2026-07-24T12:00:00Z", // omitted if the provider doesn't report it
-          "confidence": "official",        // official | local_estimate | unavailable
-          "source": "oauth_usage_api"      // diagnostic label
+          "type": "session",
+          "usedPercent": 9,
+          "confidence": "official",
+          "source": "api.anthropic.com/api/oauth/usage",
+          "observedAt": "2026-09-17T02:14:00Z",
+          "resetsAt": "2026-09-17T03:40:00Z"
+        },
+        {
+          "type": "weekly",
+          "usedPercent": 81,
+          "confidence": "official",
+          "source": "api.anthropic.com/api/oauth/usage",
+          "observedAt": "2026-09-17T02:14:00Z",
+          "resetsAt": "2026-09-21T01:59:59Z"
+        },
+        {
+          "type": "perModel",
+          "usedPercent": 81,
+          "confidence": "official",
+          "source": "api.anthropic.com/api/oauth/usage",
+          "observedAt": "2026-09-17T02:14:00Z",
+          "resetsAt": "2026-09-21T01:59:59Z"
         }
       ],
-      "tokensToday": 1834000,              // omitted if not derivable
-      "lastUpdated": "2026-07-24T09:11:40Z"
+      "accounts": [
+        {
+          "id": "/Users/abhayp/.claude",
+          "accountID": "claude_code:c99dd9a2310dcd8ac8bf64432cf3e2b91b51e9488e15ccffbdcc681be8792ec2",
+          "label": "default",
+          "selector": {
+            "env": { "CLAUDE_CONFIG_DIR": "/Users/abhayp/.claude" }
+          },
+          "windows": [],
+          "tokensToday": 0,
+          "quota": {
+            "status": "unknown",
+            "reasonCode": "no_quota_reading"
+          }
+        },
+        {
+          "id": "/Users/abhayp/.claude-account-1",
+          "accountID": "claude_code:41b5e8112aea16297b2abf8229b1c429ead077faecea1ea4f904ea26ee76a2e4",
+          "label": "account-1",
+          "selector": {
+            "env": { "CLAUDE_CONFIG_DIR": "/Users/abhayp/.claude-account-1" }
+          },
+          "windows": [
+            {
+              "type": "session",
+              "usedPercent": 9,
+              "confidence": "official",
+              "source": "api.anthropic.com/api/oauth/usage",
+              "observedAt": "2026-09-17T02:14:00Z",
+              "resetsAt": "2026-09-17T03:40:00Z"
+            },
+            {
+              "type": "weekly",
+              "usedPercent": 81,
+              "confidence": "official",
+              "source": "api.anthropic.com/api/oauth/usage",
+              "observedAt": "2026-09-17T02:14:00Z",
+              "resetsAt": "2026-09-21T01:59:59Z"
+            },
+            {
+              "type": "perModel",
+              "usedPercent": 81,
+              "confidence": "official",
+              "source": "api.anthropic.com/api/oauth/usage",
+              "observedAt": "2026-09-17T02:14:00Z",
+              "resetsAt": "2026-09-21T01:59:59Z"
+            }
+          ],
+          "tokensToday": 553069448,
+          "quota": {
+            "status": "eligible",
+            "usedPercent": 81,
+            "headroomPercent": 19,
+            "bindingWindowIndex": 1,
+            "validUntil": "2026-09-17T02:26:40Z"
+          }
+        }
+      ],
+      "headlineAccountID": "claude_code:41b5e8112aea16297b2abf8229b1c429ead077faecea1ea4f904ea26ee76a2e4"
+    },
+    {
+      "id": "codex",
+      "displayName": "OpenAI Codex",
+      "windows": [
+        {
+          "type": "weekly",
+          "usedPercent": 31,
+          "confidence": "official",
+          "source": "Codex CLI rate_limits (pro plan, weekly window)",
+          "observedAt": "2026-09-17T02:14:00Z",
+          "resetsAt": "2026-09-21T05:26:47Z"
+        }
+      ],
+      "accounts": [
+        {
+          "id": "/Users/abhayp/.codex",
+          "accountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25",
+          "label": "default",
+          "selector": { "env": { "CODEX_HOME": "/Users/abhayp/.codex" } },
+          "windows": [
+            {
+              "type": "weekly",
+              "usedPercent": 31,
+              "confidence": "official",
+              "source": "Codex CLI rate_limits (pro plan, weekly window)",
+              "observedAt": "2026-09-17T02:14:00Z",
+              "resetsAt": "2026-09-21T05:26:47Z"
+            }
+          ],
+          "tokensToday": 121521151,
+          "quota": {
+            "status": "eligible",
+            "usedPercent": 31,
+            "headroomPercent": 69,
+            "bindingWindowIndex": 0,
+            "validUntil": "2026-09-17T02:26:40Z"
+          }
+        }
+      ],
+      "headlineAccountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25"
     }
   ],
-  "aggregateUtilizationPercent": 61.5,     // peak-per-provider, averaged; omitted if none
-  "recommendation": {                      // omitted when there isn't enough signal
-    "routeTo": "codex",                    // least-utilized provider, or null
-    "avoid": ["antigravity"],              // providers at/over 85% utilization
-    "reason": "antigravity weekly 92% used, resets in 3h; route to OpenAI Codex (tightest window 31%)"
+  "recommendation": {
+    "routeTo": "codex",
+    "avoid": [],
+    "reason": "route to OpenAI Codex (tightest window 31%)",
+    "target": {
+      "provider": "codex",
+      "accountID": "codex:a0aba5417af6496ff20d401d87bfb39c579039a08de804bbfe225a18e8c41e25",
+      "selector": { "env": { "CODEX_HOME": "/Users/abhayp/.codex" } }
+    },
+    "avoidAccounts": [],
+    "validUntil": "2026-09-17T02:26:40Z"
   }
 }
 ```
 
-Fields are **omitted when absent** (not `null`), except `recommendation.routeTo`
-which is explicitly nullable.
+## 3. Field reference
 
-#### Reader-computed staleness (never written to disk)
+### Snapshot and provider
 
-The helper stamps two extra top-level fields when it emits a response, so a stale
-snapshot is never served silently:
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | Wire shape version. Remains `1` for these optional additions. |
+| `generatedAt` | When the app wrote the file, UTC ISO8601. |
+| `providers[]` | Provider rows. |
+| `aggregateUtilizationPercent` | Mean of applicable provider peaks; absent if none are computable. |
+| `recommendation` | Shared routing decision; absent if no decision was publishable. |
+| `providers[].id` | Stable provider ID such as `claude_code` or `codex`. |
+| `displayName` | Human provider name. |
+| `windows` | The provider headline account's public windows, or the provider windows when no account breakdown exists. |
+| `tokensToday` | Provider total; for multi-account providers this is the sum. |
+| `lastUpdated` | When that provider last synchronized. |
+| `accounts` | Optional per-account rows. Providers without an account adapter omit it rather than emit an invented account. |
+| `headlineAccountID` | Stable `accountID` whose trusted quota produced the provider headline. |
 
-| field        | meaning                                                          |
-|--------------|------------------------------------------------------------------|
-| `stale`      | `true` when `age > 600s` (10 min). Covers "app not running" too. |
-| `ageSeconds` | whole seconds between `generatedAt` and now (clamped ≥ 0).        |
+### Account
 
-### Confidence mapping (internal → public)
+| Field | Meaning |
+|---|---|
+| `accounts[].id` | Legacy local locator, currently a profile path. It is retained for compatibility and is not a portable identity. |
+| `accountID` | Opaque provider-scoped identity. Stable across machines when the adapter knows the provider identity; a `:local:` fallback is machine/path scoped. |
+| `label` | Human label such as `default` or `account-1`; never use it as identity. |
+| `windows` | This account's public quota windows. Empty means no computable window, not 0% use. |
+| `tokensToday` | Tokens attributed to this account today, when derivable. |
+| `selector.env` | Allowlisted literal process environment map: one `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. It may be absent. |
+| `quota.status` | Bounded account state described below. |
+| `quota.usedPercent` | Peak applicable window, even when an untrusted reading makes the decision unknown. |
+| `quota.headroomPercent` | `100 - usedPercent`; emitted only for trusted, fresh, complete `eligible` decisions. |
+| `quota.bindingWindowIndex` | Index into this account's emitted `windows` array that supplied `usedPercent`. |
+| `quota.validUntil` | Latest instant at which this account decision may be used. Present only for eligible decisions. |
+| `quota.reasonCode` | Bounded explanation for `unknown`: currently `no_quota_reading` or `untrusted_reading`. |
 
-| internal `MetricConfidence`      | public `confidence` |
-|----------------------------------|---------------------|
-| `exact`, `providerReported`      | `official`          |
-| `localParsed`, `estimated`       | `local_estimate`    |
-| `unavailable`                    | `unavailable`       |
+`quota.status` meanings:
 
-Agents must **not** treat `local_estimate` / `unavailable` values as hard limits.
+| Code | Consumer meaning |
+|---|---|
+| `eligible` | Trusted, fresh, complete quota is usable until `validUntil`. |
+| `expiredCredentials` | Credentials are known expired; reauthenticate with the provider CLI. |
+| `cooldown` | Provider account is in a bounded cooldown state. |
+| `disabled` | The account's quota path is disabled. |
+| `requestFailed` | The most recent provider quota request failed. |
+| `noQuotaSource` | This adapter has no supported account quota source. |
+| `unknown` | No complete trusted decision is available; absence is not headroom. |
 
-### Versioning
+### Window
 
-`schemaVersion` bumps only on a non-additive change. Readers should tolerate an
-unknown newer version by reading the fields they understand. Adding an optional
-field is additive and does **not** bump the version.
+| Field | Meaning |
+|---|---|
+| `type` | `session`, `daily`, `weekly`, `fiveHour`, `monthly`, `credits`, `perModel`, or `lifetime`. |
+| `usedPercent` | Used fraction, clamped to 0–100. |
+| `resetsAt` | When the budget refills, if known. |
+| `confidence` | `official`, `local_estimate`, or `unavailable`. |
+| `source` | Bounded diagnostic source label. |
+| `observedAt` | When the reading was taken; use this for reading freshness. |
+| `label` | Optional provider display label for a bucket. |
+| `bucketKey` | Optional stable identity separating multiple same-type buckets. |
 
-## 2. `tokei` helper
+### Recommendation
 
-Bundled at `Tokei.app/Contents/Helpers/tokei`. Standalone executable — it does **not**
-link the app framework; it compiles in the shared public schema file directly and
-reads the snapshot only (no network, no Keychain, no other apps' files).
+| Field | Meaning |
+|---|---|
+| `routeTo` | Legacy provider projection of the target; absent or `null` means no target. |
+| `avoid` | Provider IDs whose provider-level decision is over the avoid threshold. |
+| `reason` | Human explanation, not an input for policy parsing. |
+| `target.provider` | Provider ID for the exact account target. |
+| `target.accountID` | Stable account identity to join against `providers[].accounts[]`. |
+| `target.selector` | Verified literal process selector, when Tokei can publish one. |
+| `avoidAccounts[]` | Exhausted sibling account references as `{provider, accountID}`. |
+| `validUntil` | Expiry for `routeTo` and `target`. Consumers must reject the decision after it. |
+
+To execute a target, pass `target.selector.env` as the environment dictionary to a
+process-spawn API. Never concatenate a selector value into a shell command. A target
+with no selector is advisory identity only; do not guess a path from its label.
+
+## 4. Freshness and expiry
+
+There are three different clocks:
+
+1. `generatedAt` / reader-computed `ageSeconds`: file age.
+2. `windows[].observedAt`: provider reading age.
+3. `quota.validUntil` and `recommendation.validUntil`: decision expiry.
+
+`SnapshotReader` always computes top-level `ageSeconds` and `stale` from its own
+clock. File age over 600 seconds is stale; exactly 600 seconds is still fresh;
+future clock skew clamps age to zero. It then applies the shared Foundation-only
+recommendation validity helper. After `recommendation.validUntil`, the helper drops
+`routeTo` and `target`, preserves historical windows/avoid data, and appends
+`recommendation expired` to the reason. It never re-ranks.
+
+The `get_route_recommendation` projection is always JSON and adds `generatedAt`,
+`ageSeconds`, `validUntil`, and `stale`. Its `stale` is true if either the whole file
+is stale or the recommendation has expired. `content[0].text` remains parseable JSON;
+when the file itself is stale, `content[1]` may carry a human warning.
+
+## 5. Compatibility and upgrades
+
+- Optional fields are omitted when absent. Missing `accountID`, `selector`, `quota`,
+  `headlineAccountID`, `target`, `avoidAccounts`, `validUntil`, `label`, or
+  `bucketKey` means unknown/unsupported, never a default value.
+- Consumers must feature-detect `accountID` and `target`; `schemaVersion == 1` alone
+  does not prove the producer is account-aware.
+- `accounts[].id` keeps its legacy path meaning. Do not silently reinterpret it as an
+  opaque identity.
+- New readers accept legacy 0.8.0 snapshots with none of the additions and accept
+  unknown fields from newer additive writers.
+- Old Swift helpers decode new keys but discard them when they re-encode. An older
+  helper in front of a newer app is therefore a **lossy proxy**.
+- Ship the helper and app together. Updating only the app can make the raw file
+  account-aware while MCP output from the old helper is not.
+
+## 6. `tokei` helper and MCP
+
+The standalone helper is bundled at `Tokei.app/Contents/Helpers/tokei`. It compiles
+the shared Foundation-only schema/expiry source directly and does not link the app
+framework.
 
 ```sh
-tokei status          # human-readable table
-tokei status --json   # the raw snapshot (with stale/ageSeconds), for scripting
-tokei mcp             # stdio MCP server
-tokei help
+tokei status
+tokei status --json
+tokei mcp
 tokei version
 ```
 
-- **Missing file** (app never launched) → clear error + launch instructions, exit 3.
-- **Stale** → still succeeds (exit 0); the table shows a `⚠︎ STALE` banner and JSON
-  carries `"stale": true`.
-- `TOKEI_SNAPSHOT_PATH=<file>` overrides the snapshot location (tests / power users).
+Missing, unreadable, and malformed snapshots exit 3, 4, and 5 respectively for
+`status`; stale reads still exit 0 and identify themselves. `TOKEI_SNAPSHOT_PATH`
+may point the helper at a fixture.
 
-### MCP server (`tokei mcp`)
+The newline-delimited JSON-RPC server exposes exactly two read-only tools:
 
-Newline-delimited JSON-RPC 2.0 over stdio — the transport every major client
-supports without caveats. Dependency-free (read-only, no network; the MCP Swift SDK
-would buy nothing). Exactly two tools, to keep an agent's context cost low:
+| Tool | Result in `content[0].text` |
+|---|---|
+| `get_usage` | Full snapshot with reader-side `stale` and `ageSeconds`. |
+| `get_route_recommendation` | Flat recommendation plus `generatedAt`, `ageSeconds`, `validUntil`, and `stale`. |
 
-| tool                       | returns                                             |
-|----------------------------|-----------------------------------------------------|
-| `get_usage`                | the full snapshot (with staleness)                  |
-| `get_route_recommendation` | the `recommendation` object only                    |
+Both tool descriptions document the account contract and quota status codes. The
+server performs no network or credential access.
 
-When the snapshot is stale, tool text is prefixed with a `⚠︎` warning line. When the
-file is missing, the tool call returns `isError: true` with launch instructions.
+## 7. Registration
 
-#### Making an agent call it unprompted
-
-A tool an agent never reaches for is dead weight, so the "when" is encoded in two
-places rather than left to chance:
-
-1. **`instructions` in the `initialize` result** (`MCPServer.instructions`) — the MCP
-   server-level directive. Clients surface it to the model **once at connect time**, so
-   it persists for the whole session instead of being re-read per call. It names the
-   triggers (before spawning/delegating/orchestrating another agent, before a long or
-   fan-out run), the 85% threshold, and the rule that `local_estimate` /
-   `unavailable` are floors, not ceilings.
-2. **Trigger-first tool descriptions** — each `description` opens with *when to call*,
-   not what it returns. An agent decides whether to invoke from the opening clause; a
-   description that leads with "Returns …" answers a question it wasn't asking.
-
-Belt and braces, since neither is guaranteed: the §3 steering line in
-`CLAUDE.md` / `AGENTS.md` covers clients that ignore `instructions`.
-
-## 3. Registration (agent side)
-
-**Claude Code:**
 ```sh
 claude mcp add tokei -- /Applications/Tokei.app/Contents/Helpers/tokei mcp
 ```
 
-**Codex CLI** (`~/.codex/config.toml`):
 ```toml
 [mcp_servers.tokei]
 command = "/Applications/Tokei.app/Contents/Helpers/tokei"
 args = ["mcp"]
 ```
 
-**Non-MCP steering** (CLAUDE.md / AGENTS.md):
-> Before spawning or delegating to another coding agent, run
-> `/Applications/Tokei.app/Contents/Helpers/tokei status --json` and avoid providers
-> above 85% utilization.
+## Out of scope
 
-## 4. Recommendation semantics
-
-`AgentRecommendationEngine` (Core, pure) mirrors the least-filled-provider logic
-behind the human-facing "Route work here" chip (`MaxxerMath.routeTarget`, #37). It
-takes each provider's **peak** window utilization, then:
-
-- `avoid` = every provider at/over **85%** (issue-specified), tightest first.
-- `routeTo` = the least-utilized provider, only when ≥ 2 providers reported quota
-  **and** the least one is below 85% (so it never routes you into a wall).
-- returns `nil` when there's nothing worth saying (< 2 readings and nothing to avoid).
-
-> FOLLOW-UP: `MaxxerMath` lives under `UI/` and isn't compiled into Core, so the two
-> engines are separate today. When `MaxxerMath` moves into Core, collapse them into
-> one so the chip and the snapshot are guaranteed identical.
-
-## Out of scope (v1)
-
-Settings "Agent Access" UI section (copy-paste install cards) — owned by a dedicated
-UI package. Write-back / per-agent run logging (#42), wake-the-app fresh fetch, HTTP
-transport, `.mcpb` bundle.
+Write-back, per-agent run logging, a wake-the-app refresh, HTTP transport, and an
+`.mcpb` bundle remain outside v1.
