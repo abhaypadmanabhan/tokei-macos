@@ -81,6 +81,37 @@ final class ClaudeLogDiscoveryTests: XCTestCase {
         XCTAssertEqual(sources.map(\.sessionID), ["session-a"])
     }
 
+    /// D1: subagent logs can be nested below a session directory and are real usage.
+    func testD1_discoversNestedSubagentLogsRecursively() async throws {
+        let account = try makeAccount(".claude", sessions: ["top-level"])
+        let nestedDirectory = account.projectsDirectories[0]
+            .appendingPathComponent("proj/top-level/subagents", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedDirectory, withIntermediateDirectories: true)
+        let shared = ClaudeFixtures.usageLine(id: "msg_shared", output: 100)
+        let nested = ClaudeFixtures.usageLine(id: "msg_nested", output: 50)
+        try Data(shared.utf8).write(
+            to: account.projectsDirectories[0].appendingPathComponent("proj/top-level.jsonl")
+        )
+        try Data([shared, nested].joined(separator: "\n").utf8).write(
+            to: nestedDirectory.appendingPathComponent("nested.jsonl")
+        )
+
+        let sources = try await provider([account]).discoverLogSources()
+        let usage = await ClaudeJSONLParser().parse(logSources: sources)
+
+        XCTAssertEqual(Set(sources.compactMap(\.sessionID)), ["top-level", "nested"])
+        XCTAssertEqual(usage.lifetime.totalTokens, 150, "the copied top-level record counts once")
+    }
+
+    /// F3: discovery already has file metadata; the parser must not stat size again on warm reads.
+    func testF3_discoveryCarriesFileSizeMetadata() async throws {
+        let account = try makeAccount(".claude", sessions: ["sized"])
+
+        let sources = try await provider([account]).discoverLogSources()
+        let source = try XCTUnwrap(sources.first)
+        XCTAssertEqual(source.fileSize, 3)
+    }
+
     // MARK: - Fixtures
 
     private func account(_ name: String) -> ClaudeAccount {

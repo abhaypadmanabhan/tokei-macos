@@ -7,6 +7,7 @@ extension AuthStatus: Codable {}
 extension MetricConfidence: Codable {}
 extension QuotaWindowType: Codable {}
 extension ProviderWarning.Level: Codable {}
+extension AccountQuotaStatus: Codable {}
 
 // MARK: - Value types with custom Codable implementations
 //
@@ -81,6 +82,8 @@ extension ProviderAccountUsage: Codable {
         case dailyTotals
         case configDirectories
         case unreadableDirectories
+        case quotaStatus
+        case quotaStatusDetail
     }
 
     public init(from decoder: Decoder) throws {
@@ -95,6 +98,8 @@ extension ProviderAccountUsage: Codable {
         dailyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .dailyTotals)
         configDirectories = try container.decodeIfPresent([String].self, forKey: .configDirectories) ?? []
         unreadableDirectories = try container.decodeIfPresent([String].self, forKey: .unreadableDirectories) ?? []
+        quotaStatus = try container.decodeIfPresent(AccountQuotaStatus.self, forKey: .quotaStatus) ?? .unknown
+        quotaStatusDetail = try container.decodeIfPresent(String.self, forKey: .quotaStatusDetail)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -110,6 +115,8 @@ extension ProviderAccountUsage: Codable {
         if !unreadableDirectories.isEmpty {
             try container.encode(unreadableDirectories, forKey: .unreadableDirectories)
         }
+        try container.encode(quotaStatus, forKey: .quotaStatus)
+        try container.encodeIfPresent(quotaStatusDetail, forKey: .quotaStatusDetail)
     }
 }
 

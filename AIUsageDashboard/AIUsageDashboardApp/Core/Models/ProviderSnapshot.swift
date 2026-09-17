@@ -65,6 +65,16 @@ public struct ProviderSnapshot: Sendable, Identifiable {
     }
 }
 
+public enum AccountQuotaStatus: String, Sendable {
+    case eligible
+    case expiredCredentials
+    case cooldown
+    case disabled
+    case requestFailed
+    case noQuotaSource
+    case unknown
+}
+
 /// One account's own usage within a provider that supports several signed-in accounts
 /// (currently only Claude Code, via `CLAUDE_CONFIG_DIR`).
 ///
@@ -92,6 +102,12 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
     /// from `todayUsage` and `dailyTotals`, so a surface can mark the row incomplete instead
     /// of presenting a confident number with a hole in it. Empty is the normal case.
     public let unreadableDirectories: [String]
+    /// Structured quota availability for this account. This is deliberately separate from
+    /// `quotaWindows`: an empty window set cannot distinguish expired auth from disabled
+    /// network usage or a provider response with no quota source.
+    public let quotaStatus: AccountQuotaStatus
+    /// Short, provider-authored diagnostic only. Never stores raw responses or credentials.
+    public let quotaStatusDetail: String?
 
     public init(
         id: String,
@@ -100,7 +116,9 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
         todayUsage: TokenUsage,
         dailyTotals: [Date: Int]? = nil,
         configDirectories: [String] = [],
-        unreadableDirectories: [String] = []
+        unreadableDirectories: [String] = [],
+        quotaStatus: AccountQuotaStatus = .unknown,
+        quotaStatusDetail: String? = nil
     ) {
         self.id = id
         self.label = label
@@ -109,5 +127,7 @@ public struct ProviderAccountUsage: Sendable, Identifiable {
         self.dailyTotals = dailyTotals
         self.configDirectories = configDirectories
         self.unreadableDirectories = unreadableDirectories
+        self.quotaStatus = quotaStatus
+        self.quotaStatusDetail = quotaStatusDetail
     }
 }

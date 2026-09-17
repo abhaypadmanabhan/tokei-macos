@@ -71,6 +71,17 @@ final class ClaudeJSONLParserTests: XCTestCase {
                   comps.hour!, comps.minute!, comps.second!)
   }
 
+  private func usageLine(
+    id: String,
+    input: Int,
+    output: Int,
+    cacheRead: Int,
+    cacheCreation: Int,
+    timestamp: String = "2026-07-06T10:00:00.000Z"
+  ) -> String {
+    #"{"message":{"id":"\#(id)","usage":{"input_tokens":\#(input),"output_tokens":\#(output),"cache_read_input_tokens":\#(cacheRead),"cache_creation_input_tokens":\#(cacheCreation)}},"type":"assistant","timestamp":"\#(timestamp)"}"#
+  }
+
   private func makeParser(now: Date? = nil) -> ClaudeJSONLParser {
     let fixed = now ?? referenceNow()
     return ClaudeJSONLParser(calendar: utcCalendar, now: { fixed })
@@ -234,6 +245,163 @@ final class ClaudeJSONLParserTests: XCTestCase {
     let updatedSource = makeSourceWithModificationDate(url: url, sessionID: "s1")
     let second = await parser.parse(logSources: [updatedSource])
     XCTAssertEqual(second.lifetime.totalTokens, 45)
+  }
+
+  /// D2: repeated Claude usage rows are updates to one message, not independent usage.
+  func testD2_updatedUsageRecordReplacesEarlierContribution() async {
+    let initial = usageLine(
+      id: "msg_updated",
+      input: 10,
+      output: 1,
+      cacheRead: 100,
+      cacheCreation: 0
+    )
+    let final = usageLine(
+      id: "msg_updated",
+      input: 10,
+      output: 25,
+      cacheRead: 100,
+      cacheCreation: 0
+    )
+    let url = writeFixture(initial, named: "d2-updated.jsonl")
+    let parser = makeParser()
+
+    let preliminary = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(preliminary.lifetime.totalTokens, 111)
+
+    let handle = try? FileHandle(forWritingTo: url)
+    handle?.seekToEndOfFile()
+    handle?.write(Data("\n\(final)".utf8))
+    handle?.closeFile()
+
+    let updated = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(updated.lifetime.totalTokens, 135, "an appended update replaces its earlier value")
+
+    let copied = writeFixture(final, named: "d2-copy.jsonl")
+    let usage = await parser.parse(logSources: [
+      makeSourceWithModificationDate(url: url),
+      makeSourceWithModificationDate(url: copied)
+    ])
+
+    XCTAssertEqual(usage.lifetime.totalTokens, 135, "updates reconcile across files; copies still dedupe")
+  }
+
+  /// D3: an unfinished final JSON object must remain unread until its suffix arrives.
+  func testD3_splitRecordAppendMatchesColdParseWithoutMalformedWarning() async throws {
+    let parser = makeParser()
+    let line = usageLine(
+      id: "msg_split",
+      input: 10,
+      output: 25,
+      cacheRead: 100,
+      cacheCreation: 0
+    )
+    let split = line.index(line.startIndex, offsetBy: line.count / 2)
+    let prefix = String(line[..<split])
+    let suffix = String(line[split...])
+    let url = writeFixture(prefix, named: "d3-split.jsonl")
+
+    let incomplete = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(incomplete.lifetime.totalTokens, 0)
+
+    let handle = try FileHandle(forWritingTo: url)
+    handle.seekToEndOfFile()
+    handle.write(Data(suffix.utf8))
+    handle.closeFile()
+
+    let warm = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    let cold = await makeParser().parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(warm.lifetime.totalTokens, 135)
+    XCTAssertEqual(warm.lifetime.totalTokens, cold.lifetime.totalTokens)
+    XCTAssertTrue(warm.warnings.isEmpty, "an unfinished tail is not permanently malformed")
+  }
+
+  /// D4: equal-length content replacement is not an append at EOF.
+  func testD4_sameSizeRewriteReparsesInsteadOfServingOldAggregate() async throws {
+    let parser = makeParser()
+    let firstLine = ClaudeFixtures.usageLine(id: "msg_rewrite", output: 100)
+    let secondLine = ClaudeFixtures.usageLine(id: "msg_rewrite", output: 900)
+    XCTAssertEqual(firstLine.utf8.count, secondLine.utf8.count)
+    let url = writeFixture(firstLine, named: "d4-rewrite.jsonl")
+
+    let firstSource = makeSourceWithModificationDate(url: url)
+    let first = await parser.parse(logSources: [firstSource])
+    XCTAssertEqual(first.lifetime.totalTokens, 100)
+
+    try secondLine.write(to: url, atomically: true, encoding: .utf8)
+    let newer = (firstSource.lastModified ?? Date()).addingTimeInterval(2)
+    try FileManager.default.setAttributes([.modificationDate: newer], ofItemAtPath: url.path)
+
+    let rewritten = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(rewritten.lifetime.totalTokens, 900)
+  }
+
+  /// D6-core: the month fallback is the same trailing 30 calendar dates as the 30D chart.
+  func testD6_monthUsageUsesThirtyCalendarDays() async {
+    let now = date("2026-09-16", hour: 12)
+    let outsideThirtyDays = ClaudeFixtures.usageLine(
+      id: "msg_aug17",
+      output: 77,
+      timestamp: "2026-08-17T12:00:00.000Z"
+    )
+    let firstIncludedDay = ClaudeFixtures.usageLine(
+      id: "msg_aug18",
+      output: 23,
+      timestamp: "2026-08-18T12:00:00.000Z"
+    )
+    let url = writeFixture(
+      [outsideThirtyDays, firstIncludedDay].joined(separator: "\n"),
+      named: "d6-month.jsonl"
+    )
+
+    let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.month.totalTokens, 23)
+  }
+
+  /// D10: records from the next local day remain lifetime history, not today's usage.
+  func testD10_tomorrowsRecordIsExcludedFromCurrentWindows() async {
+    let now = date("2026-07-06", hour: 12)
+    let tomorrow = ClaudeFixtures.usageLine(
+      id: "msg_future",
+      output: 50,
+      timestamp: "2026-07-07T00:00:00.000Z"
+    )
+    let url = writeFixture(tomorrow, named: "d10-future.jsonl")
+
+    let usage = await makeParser(now: now).parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.today.totalTokens, 0)
+    XCTAssertEqual(usage.week.totalTokens, 0)
+    XCTAssertEqual(usage.month.totalTokens, 0)
+    XCTAssertEqual(usage.lifetime.totalTokens, 50)
+    XCTAssertTrue(usage.dailyTotals.isEmpty)
+  }
+
+  /// D9: cached bucket keys must be rebuilt from original timestamps after a timezone change.
+  func testD9_effectiveCalendarChangeRebuildsCachedDayBuckets() async throws {
+    let originalTimeZone = NSTimeZone.default
+    defer { NSTimeZone.default = originalTimeZone }
+    NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+
+    let now = try XCTUnwrap(JSONLDateParsing.iso8601("2026-01-15T20:00:00Z"))
+    let parser = ClaudeJSONLParser(calendar: .autoupdatingCurrent, now: { now })
+    let line = ClaudeFixtures.usageLine(
+      id: "msg_timezone",
+      output: 111,
+      timestamp: "2026-01-15T07:30:00.000Z"
+    )
+    let url = writeFixture(line, named: "d9-timezone.jsonl")
+    let source = makeSourceWithModificationDate(url: url)
+
+    let losAngeles = await parser.parse(logSources: [source])
+    let losAngelesDay = try XCTUnwrap(JSONLDateParsing.iso8601("2026-01-14T08:00:00Z"))
+    XCTAssertEqual(losAngeles.dailyTotals[losAngelesDay], 111)
+
+    NSTimeZone.default = try XCTUnwrap(TimeZone(identifier: "Asia/Tokyo"))
+    let tokyo = await parser.parse(logSources: [source])
+    let tokyoDay = try XCTUnwrap(JSONLDateParsing.iso8601("2026-01-14T15:00:00Z"))
+    XCTAssertEqual(tokyo.dailyTotals, [tokyoDay: 111])
   }
 
   /// One parser instance is shared by every Claude account, and `ClaudeCodeProvider`
@@ -415,9 +583,11 @@ final class ClaudeJSONLParserTests: XCTestCase {
     }
 
     let grown = await parser.parse(logSources: sources())
+    // D4: the prefix changed before the append, so continuity verification must reject the
+    // append fast path and rebuild from disk rather than deliberately serving cached 700.
     XCTAssertEqual(
-      grown.lifetime.totalTokens, 835,
-      "expected shared(100) + a(700, from cache) + b(30) + the appended c(5)"
+      grown.lifetime.totalTokens, 1134,
+      "expected shared(100) + rewritten a(999) + b(30) + appended c(5)"
     )
   }
 

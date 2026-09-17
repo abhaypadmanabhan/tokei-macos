@@ -83,16 +83,33 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         // setup shouldn't grow noise it never had.
         let multiAccount = accounts.count > 1
 
-        var results: [AccountFetch] = []
+        var discoveries: [(account: ClaudeAccount, discovery: AccountDiscovery)] = []
         for account in accounts {
-            results.append(
-                await fetchAccount(account, networkEnabled: networkEnabled, multiAccount: multiAccount)
+            discoveries.append((account, await discoverLogs(for: account, multiAccount: multiAccount)))
+        }
+
+        let parsedAccounts = await parser.parse(accountLogSources: discoveries.map {
+            ClaudeJSONLParser.AccountLogSources(
+                accountID: $0.account.id,
+                logSources: $0.discovery.logs
             )
+        })
+
+        var results: [AccountFetch] = []
+        for item in discoveries {
+            guard let parsed = parsedAccounts.byAccountID[item.account.id] else { continue }
+            results.append(await fetchAccount(
+                item.account,
+                discovery: item.discovery,
+                parsed: parsed,
+                networkEnabled: networkEnabled,
+                multiAccount: multiAccount
+            ))
         }
 
         let accountUsages = results.map(\.usage)
         let perAccountUsage = results.map(\.parsed)
-        var warnings = results.flatMap(\.warnings)
+        var warnings = parsedAccounts.warnings + results.flatMap(\.warnings)
         // One account authenticating is enough to say Claude is connected.
         let liveQuotaAuthenticated = results.contains { $0.authenticated }
 
@@ -132,6 +149,12 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let authenticated: Bool
     }
 
+    private struct AccountDiscovery {
+        let logs: [LogSource]
+        let unreadableDirectories: [String]
+        let warnings: [ProviderWarning]
+    }
+
     /// This account's log files, plus what went wrong finding them.
     ///
     /// One account can own several config directories (the same Anthropic identity signed in
@@ -141,7 +164,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     private func discoverLogs(
         for account: ClaudeAccount,
         multiAccount: Bool
-    ) async -> (logs: [LogSource], unreadableDirectories: [String], warnings: [ProviderWarning]) {
+    ) async -> AccountDiscovery {
         var logs: [LogSource] = []
         // Directories this account owns that exist but refused to be read. They are the
         // difference between "this identity used 300 tokens" and "this identity used 300
@@ -151,7 +174,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
 
         for projectsDirectory in account.projectsDirectories {
             do {
-                logs += try await Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
+                logs += try Self.logSources(in: projectsDirectory, id: id, fileManager: fileManager)
             } catch {
                 // Name the directory when the account owns more than one, so two failures
                 // under the same label stay distinguishable. A single-directory account
@@ -181,39 +204,50 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             }
         }
 
-        return (logs, unreadableDirectories, warnings)
+        return AccountDiscovery(
+            logs: logs,
+            unreadableDirectories: unreadableDirectories,
+            warnings: warnings
+        )
     }
 
     private func fetchAccount(
         _ account: ClaudeAccount,
+        discovery: AccountDiscovery,
+        parsed: ClaudeJSONLParser.AggregateUsage,
         networkEnabled: Bool,
         multiAccount: Bool
     ) async -> AccountFetch {
-        let discovery = await discoverLogs(for: account, multiAccount: multiAccount)
         var warnings = discovery.warnings
-        let logs = discovery.logs
         let unreadableDirectories = discovery.unreadableDirectories
-
-        let parsed = await parser.parse(logSources: logs)
         warnings.append(contentsOf: parsed.warnings)
 
         var accountWindows = Self.unavailableQuotaWindows(providerID: id)
         var authenticated = false
+        var quotaStatus: AccountQuotaStatus = networkEnabled ? .unknown : .disabled
+        var quotaStatusDetail: String?
         if networkEnabled {
             do {
                 let liveWindows = try await liveQuotaWindows(for: account)
                 if !liveWindows.isEmpty {
                     accountWindows = liveWindows
+                    quotaStatus = .eligible
                     // A successful non-empty live-quota fetch means the OAuth usage endpoint
                     // accepted our credentials — report auth honestly instead of the blanket
                     // `.unknown`, which read as "not signed in" in the UI even while live
                     // quota was flowing.
                     authenticated = true
+                } else {
+                    quotaStatus = .noQuotaSource
+                    quotaStatusDetail = "Claude returned no quota windows."
                 }
             } catch {
+                let status = Self.quotaStatus(for: error)
+                quotaStatus = status.status
+                quotaStatusDetail = status.detail
                 warnings.append(ProviderWarning(
                     message: Self.prefixed(
-                        "Claude online usage request failed: \(error.localizedDescription). Falling back to local logs only.",
+                        "Claude online usage request failed: \(status.detail). Falling back to local logs only.",
                         account: account, multiAccount: multiAccount
                     ),
                     level: .warning
@@ -232,12 +266,38 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                 // instead of only right now.
                 dailyTotals: parsed.dailyTotals,
                 configDirectories: account.configDirectories.map(\.path),
-                unreadableDirectories: unreadableDirectories
+                unreadableDirectories: unreadableDirectories,
+                quotaStatus: quotaStatus,
+                quotaStatusDetail: quotaStatusDetail
             ),
             parsed: parsed,
             warnings: warnings,
             authenticated: authenticated
         )
+    }
+
+    private static func quotaStatus(for error: Error) -> (status: AccountQuotaStatus, detail: String) {
+        guard let error = error as? ClaudeUsageError else {
+            return (.requestFailed, "Claude quota request failed.")
+        }
+        switch error {
+        case .missingCredentials:
+            return (.noQuotaSource, "Claude usage credentials were not found.")
+        case .expiredCredentials:
+            return (.expiredCredentials, "Claude usage credentials are expired.")
+        case .cooldownActive, .rateLimited:
+            return (.cooldown, "Claude quota requests are cooling down.")
+        case .unauthorized:
+            return (.requestFailed, "Claude usage credentials were rejected.")
+        case .unexpectedResponse, .unrecognizedResponse, .httpStatus:
+            return (.requestFailed, "Claude quota request failed.")
+        }
+    }
+
+    /// Keeps cached timestamp buckets aligned with the effective calendar after a timezone
+    /// change. The next refresh reparses unchanged files from their original timestamps.
+    public func updateCalendar(_ calendar: Calendar) async {
+        await parser.updateCalendar(calendar)
     }
 
     /// This identity's live quota, from the first of its config directories that answers.
@@ -378,7 +438,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             guard fileManager.fileExists(atPath: projectsDirectory.path) else { continue }
             existingDirectories += 1
             do {
-                sources.append(contentsOf: try await Self.logSources(
+                sources.append(contentsOf: try Self.logSources(
                     in: projectsDirectory, id: id, fileManager: fileManager
                 ))
             } catch {
@@ -395,28 +455,46 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         in projectsDir: URL,
         id: ProviderID,
         fileManager: FileManager
-    ) async throws -> [LogSource] {
-        var sources: [LogSource] = []
-
-        let projectDirs = try fileManager.contentsOfDirectory(at: projectsDir, includingPropertiesForKeys: [.isDirectoryKey])
-
-        for projectDir in projectDirs {
-            // Skip stray files like .DS_Store — only project directories hold session logs.
-            guard (try? projectDir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-            let files = try fileManager.contentsOfDirectory(at: projectDir, includingPropertiesForKeys: [.contentModificationDateKey])
-            for file in files where file.pathExtension == "jsonl" {
-                let sessionID = file.deletingPathExtension().lastPathComponent
-                let modificationDate = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-                sources.append(LogSource(
-                    providerID: id,
-                    url: file,
-                    sessionID: sessionID,
-                    lastModified: modificationDate
-                ))
+    ) throws -> [LogSource] {
+        let keys: Set<URLResourceKey> = [
+            .isRegularFileKey,
+            .contentModificationDateKey,
+            .fileSizeKey
+        ]
+        // Validate the root first. `enumerator(at:)` returns nil for both an absent path and
+        // a non-directory, but discovery must preserve the contract's absent-vs-broken error.
+        _ = try fileManager.contentsOfDirectory(
+            at: projectsDir,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )
+        var enumerationError: Error?
+        guard let enumerator = fileManager.enumerator(
+            at: projectsDir,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, error in
+                enumerationError = error
+                return false
             }
+        ) else {
+            return []
         }
 
-        return sources
+        var sources: [LogSource] = []
+        for case let file as URL in enumerator where file.pathExtension == "jsonl" {
+            let values = try file.resourceValues(forKeys: keys)
+            guard values.isRegularFile == true else { continue }
+            sources.append(LogSource(
+                providerID: id,
+                url: file,
+                sessionID: file.deletingPathExtension().lastPathComponent,
+                lastModified: values.contentModificationDate,
+                fileSize: values.fileSize.map(UInt64.init)
+            ))
+        }
+        if let enumerationError { throw enumerationError }
+
+        return sources.sorted { $0.url.path < $1.url.path }
     }
 
     private static func unavailableQuotaWindows(providerID: ProviderID) -> [QuotaWindow] {
