@@ -34,14 +34,59 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         let auth = identity.map { #"{"tokens":{"account_id":"\#($0)"},"email":"never-export@example.com"}"# }
             ?? "{}"
         try Data(auth.utf8).write(to: root.appendingPathComponent("auth.json"))
-        let line = "{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{" +
-            "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{" +
-            "\"input_tokens\":\(tokens),\"total_tokens\":\(tokens)},\"last_token_usage\":{" +
-            "\"input_tokens\":\(tokens),\"total_tokens\":\(tokens)}},\"rate_limits\":{" +
-            "\"plan_type\":\"pro\",\"primary\":{\"used_percent\":\(usedPercent)," +
-            "\"limit_window_seconds\":604800,\"resets_at\":1789698141}}}}"
+        let line = codexEventLine(
+            totalTokens: tokens,
+            lastTokens: tokens,
+            usedPercent: usedPercent,
+            timestamp: timestamp
+        )
         try Data(line.utf8).write(to: sessions.appendingPathComponent("session-\(tokens).jsonl"))
         return root
+    }
+
+    private func codexEventLine(
+        totalTokens: Int,
+        lastTokens: Int,
+        usedPercent: Int,
+        timestamp: String
+    ) -> String {
+        "{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{" +
+            "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{" +
+            "\"input_tokens\":\(totalTokens),\"total_tokens\":\(totalTokens)},\"last_token_usage\":{" +
+            "\"input_tokens\":\(lastTokens),\"total_tokens\":\(lastTokens)}},\"rate_limits\":{" +
+            "\"plan_type\":\"pro\",\"primary\":{\"used_percent\":\(usedPercent)," +
+            "\"limit_window_seconds\":604800,\"resets_at\":1789698141}}}}"
+    }
+
+    private func setIdentity(_ identity: String, for root: URL) throws {
+        try Data(#"{"tokens":{"account_id":"\#(identity)"}}"#.utf8).write(
+            to: root.appendingPathComponent("auth.json"),
+            options: .atomic
+        )
+    }
+
+    private func appendEvent(
+        to root: URL,
+        session: String,
+        totalTokens: Int,
+        lastTokens: Int,
+        usedPercent: Int,
+        timestamp: String
+    ) throws {
+        let file = root.appendingPathComponent("sessions/2026/09/17/\(session).jsonl")
+        var data = try Data(contentsOf: file)
+        data.append(0x0A)
+        data.append(Data(codexEventLine(
+            totalTokens: totalTokens,
+            lastTokens: lastTokens,
+            usedPercent: usedPercent,
+            timestamp: timestamp
+        ).utf8))
+        try data.write(to: file, options: .atomic)
+    }
+
+    private func accountTokenSum(_ snapshot: ProviderSnapshot) -> Int {
+        (snapshot.accounts ?? []).reduce(0) { $0 + ($1.todayUsage.totalTokens ?? 0) }
     }
 
     private func provider(registered: [URL]) -> CodexProvider {
@@ -142,10 +187,7 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         let first = try await provider.fetchSnapshot()
         let oldAccountID = try XCTUnwrap(first.accounts?.first?.accountID)
 
-        try Data(#"{"tokens":{"account_id":"acct-new-a"}}"#.utf8).write(
-            to: root.appendingPathComponent("auth.json"),
-            options: .atomic
-        )
+        try setIdentity("acct-new-a", for: root)
         let switched = try await provider.fetchSnapshot()
         let newAccount = try XCTUnwrap(switched.accounts?.first { $0.accountID != oldAccountID })
         let oldAccount = try XCTUnwrap(switched.accounts?.first { $0.accountID == oldAccountID })
@@ -165,8 +207,9 @@ final class CodexAccountDiscoveryTests: XCTestCase {
             identity: "acct-new-a",
             tokens: 20,
             usedPercent: 35,
-            timestamp: "2026-09-17T02:15:00Z"
+            timestamp: "2026-09-17T02:17:00Z"
         )
+        now = ISO8601DateFormatter().date(from: "2026-09-17T02:17:00Z")!
         let refreshed = try await provider.fetchSnapshot()
         let refreshedNewAccount = try XCTUnwrap(
             refreshed.accounts?.first { $0.accountID == newAccount.accountID }
@@ -180,6 +223,125 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         XCTAssertEqual(refreshedNewAccount.quotaStatus, .eligible)
         XCTAssertTrue(refreshedDecision.isEligible)
         XCTAssertEqual(refreshedNewAccount.quotaWindows.first?.used, 35)
+    }
+
+    func testR09_07_transitionObservationRejectsOldIdentityEventBeforeReauth() async throws {
+        now = ISO8601DateFormatter().date(from: "2026-09-17T02:14:00Z")!
+        let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
+        let provider = provider(registered: [])
+        let first = try await provider.fetchSnapshot()
+        let oldAccountID = try XCTUnwrap(first.accounts?.first?.accountID)
+
+        try appendEvent(
+            to: root,
+            session: "session-10",
+            totalTokens: 20,
+            lastTokens: 10,
+            usedPercent: 5,
+            timestamp: "2026-09-17T02:15:00Z"
+        )
+        try setIdentity("acct-b", for: root)
+        now = ISO8601DateFormatter().date(from: "2026-09-17T02:16:40Z")!
+
+        let switched = try await provider.fetchSnapshot()
+        let accountB = try XCTUnwrap(switched.accounts?.first { $0.accountID != oldAccountID })
+        let quarantined = AccountQuotaDecision.evaluate(accountB, providerID: .codex, now: now)
+        XCTAssertEqual(accountB.quotaStatus, .unknown)
+        XCTAssertNil(quarantined.headroomPercent)
+
+        try appendEvent(
+            to: root,
+            session: "session-10",
+            totalTokens: 30,
+            lastTokens: 10,
+            usedPercent: 35,
+            timestamp: "2026-09-17T02:17:00Z"
+        )
+        now = ISO8601DateFormatter().date(from: "2026-09-17T02:17:00Z")!
+
+        let refreshed = try await provider.fetchSnapshot()
+        let refreshedB = try XCTUnwrap(
+            refreshed.accounts?.first { $0.accountID == accountB.accountID }
+        )
+        let eligible = AccountQuotaDecision.evaluate(refreshedB, providerID: .codex, now: now)
+        XCTAssertEqual(refreshedB.quotaStatus, .eligible)
+        XCTAssertTrue(eligible.isEligible)
+        XCTAssertEqual(eligible.headroomPercent, 65)
+    }
+
+    func testR09B_01_identityEpochsConserveTokensAcrossAtoBtoCWithoutNewUsage() async throws {
+        let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
+        let provider = provider(registered: [])
+
+        let first = try await provider.fetchSnapshot()
+        try setIdentity("acct-b", for: root)
+        let second = try await provider.fetchSnapshot()
+        try setIdentity("acct-c", for: root)
+        let third = try await provider.fetchSnapshot()
+
+        for snapshot in [first, second, third] {
+            XCTAssertEqual(snapshot.todayUsage.totalTokens, 10)
+            XCTAssertEqual(accountTokenSum(snapshot), 10)
+        }
+    }
+
+    func testR09B_01_identityEpochsConserveTokensWhenSharedRootSplits() async throws {
+        let firstRoot = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
+        let secondRoot = try makeRoot("codex-work", identity: "acct-a", tokens: 30, usedPercent: 70)
+        let provider = provider(registered: [secondRoot])
+
+        let shared = try await provider.fetchSnapshot()
+        let accountA = try XCTUnwrap(shared.accounts?.first?.accountID)
+        try setIdentity("acct-b", for: firstRoot)
+        let split = try await provider.fetchSnapshot()
+        let accountB = try XCTUnwrap(split.accounts?.first { $0.accountID != accountA }?.accountID)
+
+        XCTAssertEqual(shared.todayUsage.totalTokens, 40)
+        XCTAssertEqual(accountTokenSum(shared), 40)
+        XCTAssertEqual(split.todayUsage.totalTokens, 40)
+        XCTAssertEqual(accountTokenSum(split), 40)
+        XCTAssertEqual(split.accounts?.first { $0.accountID == accountA }?.todayUsage.totalTokens, 40)
+        XCTAssertEqual(split.accounts?.first { $0.accountID == accountB }?.todayUsage.totalTokens, 0)
+
+        try appendEvent(
+            to: firstRoot,
+            session: "session-10",
+            totalTokens: 20,
+            lastTokens: 10,
+            usedPercent: 35,
+            timestamp: "2026-09-17T02:17:00Z"
+        )
+        let grown = try await provider.fetchSnapshot()
+        XCTAssertEqual(grown.todayUsage.totalTokens, 50)
+        XCTAssertEqual(accountTokenSum(grown), 50)
+        XCTAssertEqual(grown.accounts?.first { $0.accountID == accountA }?.todayUsage.totalTokens, 40)
+        XCTAssertEqual(grown.accounts?.first { $0.accountID == accountB }?.todayUsage.totalTokens, 10)
+    }
+
+    func testR09B_01_identityEpochsDeriveTodayFromDatedRawTotalsAfterRollover() async throws {
+        let root = try makeRoot(".codex", identity: "acct-a", tokens: 10, usedPercent: 20)
+        let provider = provider(registered: [])
+        let first = try await provider.fetchSnapshot()
+        let accountA = try XCTUnwrap(first.accounts?.first?.accountID)
+
+        try setIdentity("acct-b", for: root)
+        let switched = try await provider.fetchSnapshot()
+        let accountB = try XCTUnwrap(switched.accounts?.first { $0.accountID != accountA }?.accountID)
+        now = ISO8601DateFormatter().date(from: "2026-09-18T02:16:40Z")!
+        try appendEvent(
+            to: root,
+            session: "session-10",
+            totalTokens: 15,
+            lastTokens: 5,
+            usedPercent: 35,
+            timestamp: "2026-09-18T02:15:00Z"
+        )
+
+        let nextDay = try await provider.fetchSnapshot()
+        XCTAssertEqual(nextDay.todayUsage.totalTokens, 5)
+        XCTAssertEqual(accountTokenSum(nextDay), 5)
+        XCTAssertEqual(nextDay.accounts?.first { $0.accountID == accountA }?.todayUsage.totalTokens, 0)
+        XCTAssertEqual(nextDay.accounts?.first { $0.accountID == accountB }?.todayUsage.totalTokens, 5)
     }
 
     func testA6_codexParserCacheRetainsOtherRootsBetweenAccountSlices() async throws {

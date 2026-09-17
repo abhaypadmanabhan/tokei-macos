@@ -254,6 +254,45 @@ final class AccountQuotaDecisionTests: XCTestCase {
         XCTAssertEqual(headline?.account.accountID, "claude_code:b")
     }
 
+    func testR09_04_unavailableApplicableWindowMakesAccountUnknownAndSelectsFreshSibling() {
+        let unavailableSession = QuotaWindow(
+            providerID: .claudeCode,
+            type: .session,
+            confidence: .unavailable,
+            source: "fixture"
+        )
+        let incompleteA = account(
+            "/a",
+            accountID: "claude_code:a",
+            windows: [
+                unavailableSession,
+                window(20, observedAt: now, type: .weekly)
+            ]
+        )
+        let freshB = account(
+            "/b",
+            accountID: "claude_code:b",
+            windows: [window(50, observedAt: now)]
+        )
+
+        let decisionA = AccountQuotaDecision.evaluate(
+            incompleteA,
+            providerID: .claudeCode,
+            now: now
+        )
+        let headline = AccountQuotaDecision.headline(
+            among: [incompleteA, freshB],
+            providerID: .claudeCode,
+            now: now
+        )
+
+        XCTAssertEqual(decisionA.status, .unknown)
+        XCTAssertEqual(decisionA.usedPercent, 20)
+        XCTAssertNil(decisionA.headroomPercent)
+        XCTAssertEqual(decisionA.bindingWindowIndex, 1)
+        XCTAssertEqual(headline?.account.accountID, "claude_code:b")
+    }
+
     func testR09_04_validUntilIncludesEveryApplicableObservation() throws {
         let sessionObservedAt = now.addingTimeInterval(-1_799)
         let mixed = account(

@@ -6,7 +6,12 @@ public actor CodexJSONLParser {
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
+        /// Raw token components keyed by the parser calendar's start of day.
+        /// Codex identity attribution consumes these dated totals instead of a
+        /// date-relative `today` snapshot so midnight cannot move old usage.
+        public let dailyUsage: [Date: TokenUsage]
         public let dailyTotals: [Date: Int]
+        public let todayStart: Date
         public let hourlyTotals: [Date: Int]?
         public let quotaWindows: [QuotaWindow]
         public let deltaReportedTotalTokens: Int
@@ -34,6 +39,7 @@ public actor CodexJSONLParser {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
+        var dailyUsage: [Date: TokenUsage] = [:]
         var hourlyTotals: [Date: Int] = [:]
         var latestRateLimits: CodexRateLimitSnapshot?
         var deltaReportedTotalTokens = 0
@@ -52,6 +58,7 @@ public actor CodexJSONLParser {
                 apply(
                     cached.aggregate,
                     to: &windows,
+                    dailyUsage: &dailyUsage,
                     hourlyTotals: &hourlyTotals,
                     latestRateLimits: &latestRateLimits,
                     deltaReportedTotalTokens: &deltaReportedTotalTokens,
@@ -108,6 +115,7 @@ public actor CodexJSONLParser {
                     apply(
                         updatedEntry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
@@ -147,6 +155,7 @@ public actor CodexJSONLParser {
                     apply(
                         entry.aggregate,
                         to: &windows,
+                        dailyUsage: &dailyUsage,
                         hourlyTotals: &hourlyTotals,
                         latestRateLimits: &latestRateLimits,
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
@@ -184,7 +193,9 @@ public actor CodexJSONLParser {
             week: snapshot.week,
             month: snapshot.month,
             lifetime: snapshot.lifetime,
+            dailyUsage: dailyUsage,
             dailyTotals: snapshot.dailyTotals,
+            todayStart: calendar.startOfDay(for: referenceDate),
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
@@ -320,6 +331,7 @@ public actor CodexJSONLParser {
     private func apply(
         _ aggregate: FileAggregate,
         to windows: inout UsageWindows,
+        dailyUsage: inout [Date: TokenUsage],
         hourlyTotals: inout [Date: Int],
         latestRateLimits: inout CodexRateLimitSnapshot?,
         deltaReportedTotalTokens: inout Int,
@@ -327,6 +339,9 @@ public actor CodexJSONLParser {
     ) {
         windows.accumulate(aggregate.lifetime, timestamp: nil, dailyTotal: 0)
         for (day, usage) in aggregate.dailyUsage {
+            dailyUsage[day] = (
+                dailyUsage[day] ?? UsageWindows.emptyUsage(usage.confidence)
+            ).merging(usage)
             windows.accumulate(
                 usage,
                 timestamp: day,

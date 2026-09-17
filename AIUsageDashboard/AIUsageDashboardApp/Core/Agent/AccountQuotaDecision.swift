@@ -50,8 +50,11 @@ public struct AccountQuotaDecision: Sendable {
         }
 
         // Account routing requires complete trusted, fresh coverage. A comfortable peak
-        // cannot hide a stale, estimated, or expired sibling window from the same account.
-        let allApplicableWindowsAreRoutable = candidates.allSatisfy { _, utilization in
+        // cannot hide a missing, stale, estimated, or expired sibling window from the same
+        // account. An omitted window is proven inapplicable; an explicit placeholder is a
+        // known applicable window whose reading is missing and therefore incomplete.
+        let hasCompleteCoverage = candidates.count == account.quotaWindows.count
+        let allApplicableWindowsAreRoutable = hasCompleteCoverage && candidates.allSatisfy { _, utilization in
             utilization.observedAt != nil
                 && policy.isRoutable(utilization, now: now)
                 && (utilization.resetAt.map { $0 > now } ?? true)
