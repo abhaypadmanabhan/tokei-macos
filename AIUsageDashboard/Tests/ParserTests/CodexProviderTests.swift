@@ -63,10 +63,11 @@ final class CodexProviderTests: XCTestCase {
             year: 2026,
             month: 7,
             day: 6,
-            hour: 12
+            hour: 11,
+            minute: 15
         ))!
         let parser = CodexJSONLParser(calendar: calendar, now: { now })
-        let provider = CodexProvider(parser: parser, codexDirectory: codex)
+        let provider = CodexProvider(parser: parser, codexDirectory: codex, now: { now })
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertEqual(snapshot.providerID, .codex)

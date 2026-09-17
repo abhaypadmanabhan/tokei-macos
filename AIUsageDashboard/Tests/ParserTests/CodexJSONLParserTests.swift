@@ -767,4 +767,36 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(incremental.finalReportedTotalTokens, 300)
         XCTAssertEqual(incremental.quotaWindows.first?.used, 40)
     }
+
+    func testD9_calendarChangeRebuildsCachedDayBucketsFromOriginalTimestamps() async throws {
+        let timestamp = "2026-01-01T05:00:00.000Z"
+        let url = writeFixture(tokenCountLine(
+            timestamp: timestamp,
+            delta: 10,
+            cumulative: 10,
+            rateLimitUsedPercent: 20
+        ), named: "timezone.jsonl")
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        var tokyo = Calendar(identifier: .gregorian)
+        tokyo.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let reference = ISO8601DateFormatter().date(from: "2026-01-02T00:00:00Z")!
+        let parser = CodexJSONLParser(calendar: losAngeles, now: { reference })
+        let source = makeSourceWithModificationDate(url: url)
+
+        let before = await parser.parse(logSources: [source])
+        await parser.updateCalendar(tokyo)
+        let after = await parser.parse(logSources: [source])
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions.insert(.withFractionalSeconds)
+        let recordDate = try XCTUnwrap(formatter.date(from: timestamp))
+        let laDay = losAngeles.startOfDay(for: recordDate)
+        let tokyoDay = tokyo.startOfDay(for: recordDate)
+        XCTAssertEqual(before.dailyTotals[laDay], 10)
+        XCTAssertNil(before.dailyTotals[tokyoDay])
+        XCTAssertEqual(after.dailyTotals[tokyoDay], 10)
+        XCTAssertNil(after.dailyTotals[laDay])
+        XCTAssertEqual(after.lifetime.totalTokens, before.lifetime.totalTokens)
+    }
 }

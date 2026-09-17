@@ -50,27 +50,48 @@ public actor AgentSnapshotWriter {
     /// Map `[ProviderSnapshot]` to the public `AgentSnapshot`. Pure — no I/O, no clock
     /// beyond the injected `generatedAt` — so schema encoding is directly testable.
     public static func buildSnapshot(from snapshots: [ProviderSnapshot], generatedAt: Date) -> AgentSnapshot {
-        let providers = snapshots.map(agentProvider(from:))
+        let headlineDecisions = Dictionary(
+            uniqueKeysWithValues: snapshots.compactMap { snapshot -> (ProviderID, AccountQuotaDecision)? in
+                guard let accounts = snapshot.accounts,
+                      let decision = AccountQuotaDecision.headline(
+                        among: accounts,
+                        providerID: snapshot.providerID,
+                        now: generatedAt
+                      ) else { return nil }
+                return (snapshot.providerID, decision)
+            }
+        )
+        let providers = snapshots.map {
+            agentProvider(
+                from: $0,
+                generatedAt: generatedAt,
+                headlineDecision: headlineDecisions[$0.providerID]
+            )
+        }
         let aggregate = UtilizationEngine.aggregate(from: snapshots)?.usedPercent
-        let utilizations = UtilizationEngine.utilizations(from: snapshots)
+        let utilizations = snapshots.flatMap { snapshot -> [Utilization] in
+            let windows = headlineDecisions[snapshot.providerID]?.account.quotaWindows
+                ?? snapshot.quotaWindows
+            return windows.compactMap { window in
+                guard let usedPercent = UtilizationEngine.usedPercent(from: window) else { return nil }
+                return Utilization(
+                    providerID: snapshot.providerID,
+                    window: window.type,
+                    usedPercent: usedPercent,
+                    resetAt: window.resetAt,
+                    confidence: window.confidence,
+                    observedAt: window.observedAt
+                )
+            }
+        }
         let displayNames = Dictionary(
             snapshots.map { ($0.providerID, $0.displayName) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        // Per-provider account breakdown, so the recommendation's `reason` can name the
-        // account its headline number came from (multi-account Claude) rather than
-        // leaving the reader to guess which `CLAUDE_CONFIG_DIR` the % belongs to.
-        let accounts = Dictionary(
-            snapshots.compactMap { snapshot -> (ProviderID, [AgentAccount])? in
-                guard let accounts = snapshot.accounts else { return nil }
-                return (snapshot.providerID, accounts.map(agentAccount(from:)))
-            },
             uniquingKeysWith: { first, _ in first }
         )
         let recommendation = AgentRecommendationEngine.recommend(
             from: utilizations,
             displayNames: displayNames,
-            accounts: accounts,
+            providers: providers,
             now: generatedAt
         )
         return AgentSnapshot(
@@ -81,26 +102,68 @@ public actor AgentSnapshotWriter {
         )
     }
 
-    private static func agentProvider(from snapshot: ProviderSnapshot) -> AgentProvider {
-        AgentProvider(
+    private static func agentProvider(
+        from snapshot: ProviderSnapshot,
+        generatedAt: Date,
+        headlineDecision: AccountQuotaDecision?
+    ) -> AgentProvider {
+        let headlineAccountID = headlineDecision.map {
+            AccountQuotaDecision.stableID(for: $0.account, providerID: snapshot.providerID)
+        }
+        return AgentProvider(
             id: snapshot.providerID.rawValue,
             displayName: snapshot.displayName,
-            windows: snapshot.quotaWindows.compactMap(agentWindow(from:)),
+            windows: (headlineDecision?.account.quotaWindows ?? snapshot.quotaWindows)
+                .compactMap(agentWindow(from:)),
             tokensToday: snapshot.todayUsage.totalTokens,
             lastUpdated: snapshot.lastSyncedAt,
             // Absent rather than empty for single-account providers, so nothing changes
             // for readers that never had this field.
-            accounts: snapshot.accounts.map { $0.map(agentAccount(from:)) }
+            accounts: snapshot.accounts.map { accounts in
+                accounts.map {
+                    agentAccount(from: $0, providerID: snapshot.providerID, generatedAt: generatedAt)
+                }
+            },
+            headlineAccountID: headlineAccountID
         )
     }
 
-    private static func agentAccount(from account: ProviderAccountUsage) -> AgentAccount {
-        AgentAccount(
+    private static func agentAccount(
+        from account: ProviderAccountUsage,
+        providerID: ProviderID,
+        generatedAt: Date
+    ) -> AgentAccount {
+        let decision = AccountQuotaDecision.evaluate(
+            account,
+            providerID: providerID,
+            now: generatedAt
+        )
+        return AgentAccount(
             id: account.id,
             label: account.label,
             windows: account.quotaWindows.compactMap(agentWindow(from:)),
-            tokensToday: account.todayUsage.totalTokens
+            tokensToday: account.todayUsage.totalTokens,
+            accountID: AccountQuotaDecision.stableID(for: account, providerID: providerID),
+            selector: account.selector,
+            quota: AgentAccountQuota(
+                status: decision.status.rawValue,
+                usedPercent: decision.usedPercent,
+                headroomPercent: decision.headroomPercent,
+                bindingWindowIndex: decision.bindingWindowIndex,
+                validUntil: decision.validUntil,
+                reasonCode: quotaReasonCode(for: decision, account: account)
+            )
         )
+    }
+
+    private static func quotaReasonCode(
+        for decision: AccountQuotaDecision,
+        account: ProviderAccountUsage
+    ) -> String? {
+        guard decision.status == .unknown else { return nil }
+        return account.quotaWindows.compactMap(UtilizationEngine.usedPercent(from:)).isEmpty
+            ? "no_quota_reading"
+            : "untrusted_reading"
     }
 
     /// A window becomes public only when it has a computable percentage — the same
@@ -114,7 +177,9 @@ public actor AgentSnapshotWriter {
             resetsAt: window.resetAt,
             confidence: publicConfidence(window.confidence),
             source: window.source,
-            observedAt: window.observedAt
+            observedAt: window.observedAt,
+            label: window.label,
+            bucketKey: window.bucketKey
         )
     }
 

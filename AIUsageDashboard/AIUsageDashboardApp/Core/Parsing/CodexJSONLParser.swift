@@ -14,7 +14,7 @@ public actor CodexJSONLParser {
         public let warnings: [ProviderWarning]
     }
 
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: () -> Date
 
     /// Caches per-file aggregates so unchanged logs are not re-parsed on every sync.
@@ -23,6 +23,7 @@ public actor CodexJSONLParser {
     private var fileCache: [String: FileCacheEntry] = [:]
     private var modelDetectionCache: [String: ModelDetectionCacheEntry] = [:]
     private var modelDetectionFileReadCount = 0
+    private var fileReadCount = 0
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -78,6 +79,7 @@ public actor CodexJSONLParser {
                     == cached.continuityTail {
                     incrementalAggregate.lastCumulativeUsageBySession =
                         cached.aggregate.lastCumulativeUsageBySession
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
                         startingAtByte: cached.byteOffset
@@ -118,6 +120,7 @@ public actor CodexJSONLParser {
                         ))
                     }
                 } else {
+                    fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
                         startingAtByte: 0
@@ -165,17 +168,15 @@ public actor CodexJSONLParser {
         // unbounded — Codex creates a new per-session log file continually, and a
         // long-running menu-bar app would otherwise retain every one ever seen.
         //
-        // HAZARD, if Codex ever gains multiple accounts/config directories: filtering on
-        // *this call's* source list is only safe because `CodexProvider` makes exactly one
-        // `parse` call, so the list is the whole corpus. The moment a second caller shares
-        // this parser, each call's list becomes a slice and each one evicts the other's
-        // entries — the cache then never hits and every refresh re-reads everything. That
-        // is precisely what happened to `ClaudeJSONLParser`; see 50276d2, which changed the
-        // predicate to existence on disk. Copy that fix here rather than rediscovering it.
+        // CodexProvider parses one account slice at a time. Retain entries outside this
+        // slice while their files still exist, or alternating accounts evict and re-read
+        // each other's cache on every refresh. This mirrors Claude's multi-root fix.
         // The cross-file dedup ordering bug the Claude fix then exposed does not apply:
         // Codex aggregates per session file with no shared dedupe-key set.
         let activePaths = Set(logSources.map(\.url.path))
-        fileCache = fileCache.filter { activePaths.contains($0.key) }
+        fileCache = fileCache.filter { path, _ in
+            activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
+        }
 
         let snapshot = windows.snapshot()
         return AggregateUsage(
@@ -375,6 +376,21 @@ public actor CodexJSONLParser {
             message: "\(url.lastPathComponent): \(count) malformed line(s) skipped",
             level: .warning
         )
+    }
+
+    /// Rebuild cached day/hour buckets after a timezone or calendar-rule change.
+    public func updateCalendar(_ calendar: Calendar) {
+        guard self.calendar.identifier != calendar.identifier
+            || self.calendar.timeZone.identifier != calendar.timeZone.identifier
+            || self.calendar.firstWeekday != calendar.firstWeekday
+            || self.calendar.minimumDaysInFirstWeek != calendar.minimumDaysInFirstWeek
+            || self.calendar.locale?.identifier != calendar.locale?.identifier else { return }
+        self.calendar = calendar
+        fileCache.removeAll(keepingCapacity: true)
+    }
+
+    func fileReadCountForTesting() -> Int {
+        fileReadCount
     }
 
     private func hourStart(for timestamp: Date) -> Date? {

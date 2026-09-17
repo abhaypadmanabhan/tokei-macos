@@ -47,13 +47,24 @@ guards against a secret-shaped field creeping in.
       "accounts": [                        // omitted for providers without account detail
         {
           "id": "/Users/me/.claude",
+          "accountID": "claude_code:4f5c…", // provider-scoped stable identity
           "label": "default",
+          "selector": {                     // literal env map, never shell text
+            "env": { "CLAUDE_CONFIG_DIR": "/Users/me/.claude" }
+          },
+          "quota": {
+            "status": "expiredCredentials" // bounded account quota state
+          },
           "windows": [],
           "tokensToday": 0
         },
         {
           "id": "/Users/me/.claude-account-1",
+          "accountID": "claude_code:19ac…",
           "label": "account-1",
+          "selector": {
+            "env": { "CLAUDE_CONFIG_DIR": "/Users/me/.claude-account-1" }
+          },
           "windows": [
             {
               "type": "weekly",
@@ -63,19 +74,42 @@ guards against a secret-shaped field creeping in.
               "observedAt": "2026-07-24T09:11:40Z"
             }
           ],
+          "quota": {
+            "status": "eligible",
+            "usedPercent": 42.0,
+            "headroomPercent": 58.0,
+            "bindingWindowIndex": 0,
+            "validUntil": "2026-07-24T09:22:00Z"
+          },
           "tokensToday": 1834000
         }
-      ]
+      ],
+      "headlineAccountID": "claude_code:19ac…"
     }
   ],
   "aggregateUtilizationPercent": 61.5,     // peak-per-provider, averaged; omitted if none
   "recommendation": {                      // omitted when there isn't enough signal
     "routeTo": "codex",                    // least-utilized provider, or null
     "avoid": ["antigravity"],              // providers at/over 85% utilization
-    "reason": "antigravity weekly 92% used, resets in 3h; route to OpenAI Codex (tightest window 31%)"
+    "reason": "antigravity weekly 92% used, resets in 3h; route to OpenAI Codex (tightest window 31%)",
+    "target": {                             // executable account target when verified
+      "provider": "codex",
+      "accountID": "codex:8e31…",
+      "selector": { "env": { "CODEX_HOME": "/Users/me/.codex" } }
+    },
+    "avoidAccounts": [
+      { "provider": "antigravity", "accountID": "antigravity:2a90…" }
+    ],
+    "validUntil": "2026-07-24T09:22:00Z"
   }
 }
 ```
+
+`accounts[].id` remains the legacy local path. `accountID` is the stable provider-scoped
+identity used by `headlineAccountID`, `target`, and `avoidAccounts`. Selectors contain only
+allowlisted literal `CLAUDE_CONFIG_DIR` or `CODEX_HOME` values. Quota `status` is one of
+`eligible`, `expiredCredentials`, `cooldown`, `disabled`, `requestFailed`, `noQuotaSource`,
+or `unknown`; `headroomPercent` and `validUntil` are absent when the account is not eligible.
 
 Fields are **omitted when absent**. Readers must treat an absent
 `recommendation.routeTo` and an explicit `"routeTo": null` identically: there is no

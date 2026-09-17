@@ -15,8 +15,7 @@ import Foundation
 ///
 /// What remains this engine's own job: turning that decision into the public
 /// `AgentRecommendation` schema and writing the human-readable `reason` string,
-/// including naming the Claude account a headline number came from so a reader knows
-/// which `CLAUDE_CONFIG_DIR` to export.
+/// including projecting the already-selected provider headline account as structured data.
 public enum AgentRecommendationEngine {
     /// The single policy this engine routes on. Exposed so callers and tests can read
     /// the thresholds without duplicating them.
@@ -28,9 +27,7 @@ public enum AgentRecommendationEngine {
     /// - Parameters:
     ///   - utilizations: every live reading across providers.
     ///   - displayNames: provider id → human name, for the `reason` string.
-    ///   - accounts: per-provider account breakdown (multi-account Claude), used to
-    ///     name *which* account the headline reading came from. Absent or single-entry
-    ///     lists add nothing to the reason.
+    ///   - providers: public provider projections carrying the canonical headline account.
     ///   - now: current instant, injected for determinism.
     ///
     /// Routing semantics — `routeTo` from trusted readings only, `avoid` from every
@@ -38,24 +35,73 @@ public enum AgentRecommendationEngine {
     public static func recommend(
         from utilizations: [Utilization],
         displayNames: [ProviderID: String],
-        accounts: [ProviderID: [AgentAccount]] = [:],
+        providers: [AgentProvider] = [],
         now: Date
     ) -> AgentRecommendation? {
         let decision = policy.evaluate(utilizations, now: now)
         guard !decision.hasNothingToSay else { return nil }
 
+        let targetProvider = decision.routeTo.flatMap { utilization in
+            providers.first { $0.id == utilization.providerID.rawValue }
+        }
+        let targetAccount: AgentAccount? = targetProvider.flatMap { provider in
+            guard let headlineAccountID = provider.headlineAccountID else { return nil }
+            return provider.accounts?.first { $0.accountID == headlineAccountID }
+        }
+        // An executable account target requires a verified selector. Provider-only `routeTo`
+        // remains for legacy/single-account sources that cannot publish one safely.
+        let target = targetAccount.flatMap { account -> AgentRecommendationTarget? in
+            guard let providerID = decision.routeTo?.providerID.rawValue,
+                  let accountID = account.accountID,
+                  let selector = account.selector else { return nil }
+            return AgentRecommendationTarget(
+                provider: providerID,
+                accountID: accountID,
+                selector: selector
+            )
+        }
+        let avoidedAccounts = providers.flatMap { provider in
+            (provider.accounts ?? []).compactMap { account -> AgentAccountReference? in
+                guard let usedPercent = account.quota?.usedPercent,
+                      usedPercent >= policy.avoidThreshold,
+                      let accountID = account.accountID else { return nil }
+                return AgentAccountReference(provider: provider.id, accountID: accountID)
+            }
+        }.sorted {
+            ($0.provider, $0.accountID) < ($1.provider, $1.accountID)
+        }
+
         let reason = buildReason(
             decision: decision,
             displayNames: displayNames,
-            accounts: accounts,
+            targetProvider: targetProvider,
+            targetAccount: targetAccount,
             now: now
         )
+        let validUntil = targetAccount?.quota?.validUntil
+            ?? recommendationValidity(for: decision.routeTo, now: now)
 
         return AgentRecommendation(
             routeTo: decision.routeTo?.providerID.rawValue,
             avoid: decision.avoid.map(\.providerID.rawValue),
-            reason: reason
+            reason: reason,
+            target: target,
+            avoidAccounts: providers.isEmpty ? nil : avoidedAccounts,
+            validUntil: validUntil
         )
+    }
+
+    private static func recommendationValidity(
+        for target: Utilization?,
+        now: Date
+    ) -> Date? {
+        guard let target else { return nil }
+        let candidates = [
+            now.addingTimeInterval(AgentSnapshot.stalenessThreshold),
+            target.observedAt?.addingTimeInterval(policy.maxRoutableAge),
+            target.resetAt.flatMap { $0 > now ? $0 : nil }
+        ].compactMap { $0 }
+        return candidates.min()
     }
 
     // MARK: - Reason string
@@ -63,7 +109,8 @@ public enum AgentRecommendationEngine {
     private static func buildReason(
         decision: RouteDecision,
         displayNames: [ProviderID: String],
-        accounts: [ProviderID: [AgentAccount]],
+        targetProvider: AgentProvider?,
+        targetAccount: AgentAccount?,
         now: Date
     ) -> String {
         var clauses: [String] = []
@@ -84,40 +131,14 @@ public enum AgentRecommendationEngine {
 
         if let target = decision.routeTo {
             let name = displayName(target.providerID, displayNames)
-            var clause = "route to \(name) (tightest window \(percent(target.usedPercent))%"
-            if let account = headlineAccount(for: target.providerID, accounts: accounts) {
-                clause += ", account \(account.label) — export CLAUDE_CONFIG_DIR=\(account.id)"
-            }
-            clause += ")"
+            let accountClause = (targetProvider?.accounts?.count ?? 0) > 1
+                ? targetAccount.map { " account \($0.label)" } ?? ""
+                : ""
+            let clause = "route to \(name)\(accountClause) (tightest window \(percent(target.usedPercent))%)"
             clauses.append(clause)
         }
 
         return clauses.isEmpty ? "No provider is near its limit." : clauses.joined(separator: "; ")
-    }
-
-    /// The account a multi-account provider's headline number came from: the one with
-    /// the **most headroom** (lowest peak utilization) among accounts that reported a
-    /// usable window. This deliberately mirrors
-    /// `ClaudeCodeProvider.headlineQuotaWindows` — the provider picks the best account's
-    /// windows as its headline quota, so naming any other account here would point the
-    /// reader at a number that is not the one being recommended.
-    ///
-    /// `nil` for a single-account provider: with one account there is nothing to
-    /// disambiguate and `CLAUDE_CONFIG_DIR` is just the default.
-    private static func headlineAccount(
-        for providerID: ProviderID,
-        accounts: [ProviderID: [AgentAccount]]
-    ) -> AgentAccount? {
-        guard let providerAccounts = accounts[providerID], providerAccounts.count >= 2 else {
-            return nil
-        }
-        return providerAccounts
-            .filter { !$0.windows.isEmpty }
-            .min { peakPercent($0.windows) < peakPercent($1.windows) }
-    }
-
-    private static func peakPercent(_ windows: [AgentWindow]) -> Double {
-        windows.map(\.usedPercent).max() ?? 0
     }
 
     /// Why a provider was held back from routing. The two causes are distinct and a reader

@@ -1,5 +1,57 @@
 import Foundation
 
+/// A literal process-environment selector for launching a provider under one profile.
+/// Values are data, never shell fragments. This type lives beside the public schema because
+/// `AgentSnapshot.swift` is also compiled directly into the Foundation-only `tokei` target.
+public struct AccountSelector: Codable, Sendable, Equatable {
+    public static let allowedEnvironmentKeys: Set<String> = [
+        "CLAUDE_CONFIG_DIR", "CODEX_HOME"
+    ]
+
+    public let env: [String: String]
+
+    public init(env: [String: String]) {
+        self.env = Self.sanitized(env)
+    }
+
+    private enum CodingKeys: String, CodingKey { case env }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(env: try container.decode([String: String].self, forKey: .env))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.sanitized(env), forKey: .env)
+    }
+
+    private static func sanitized(_ env: [String: String]) -> [String: String] {
+        env.filter { key, value in
+            Self.allowedEnvironmentKeys.contains(key)
+                && !value.unicodeScalars.contains(where: { $0.value == 0 || $0.value < 0x20 })
+        }
+    }
+
+    public static func verified(
+        environmentKey: String,
+        root: URL,
+        fileManager: FileManager = .default
+    ) -> AccountSelector? {
+        let standardizedRoot = root.standardizedFileURL
+        let path = standardizedRoot.path
+        var isDirectory: ObjCBool = false
+        guard allowedEnvironmentKeys.contains(environmentKey),
+              standardizedRoot.isFileURL,
+              path.hasPrefix("/"),
+              fileManager.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              !path.unicodeScalars.contains(where: { $0.value == 0 || $0.value < 0x20 })
+        else { return nil }
+        return AccountSelector(env: [environmentKey: path])
+    }
+}
+
 /// The public, versioned quota snapshot Tokei exposes to orchestrating agents
 /// (issue #57). It is deliberately **decoupled from the internal stores**: a stable
 /// machine-readable contract that the `tokei` helper reads and that the
@@ -73,13 +125,15 @@ public struct AgentProvider: Codable, Sendable, Equatable {
     /// When this provider last synced (UTC), if known.
     public let lastUpdated: Date?
     /// Per-account breakdown, for providers where one machine can hold several signed-in
-    /// accounts — currently only Claude Code, via `CLAUDE_CONFIG_DIR`. Absent (not empty)
+    /// accounts. Absent (not empty)
     /// for single-account providers, so existing readers see no change.
     ///
     /// `windows` and `tokensToday` above stay the provider-level view: tokens are the
     /// **sum** across accounts, quota is the account with the **most headroom** (work can
     /// be pointed at whichever account you like). Use this array to pick one.
     public let accounts: [AgentAccount]?
+    /// Stable account identity whose windows are projected into `windows`.
+    public let headlineAccountID: String?
 
     public init(
         id: String,
@@ -87,7 +141,8 @@ public struct AgentProvider: Codable, Sendable, Equatable {
         windows: [AgentWindow],
         tokensToday: Int?,
         lastUpdated: Date?,
-        accounts: [AgentAccount]? = nil
+        accounts: [AgentAccount]? = nil,
+        headlineAccountID: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -95,12 +150,13 @@ public struct AgentProvider: Codable, Sendable, Equatable {
         self.tokensToday = tokensToday
         self.lastUpdated = lastUpdated
         self.accounts = accounts
+        self.headlineAccountID = headlineAccountID
     }
 }
 
 /// One signed-in account within a provider. Same security invariant as the rest of this
 /// schema: percentages, token counts, and a label — never a credential. The `id` is the
-/// account's config-directory path, which is what a caller sets `CLAUDE_CONFIG_DIR` to.
+/// account's legacy profile path remains in `id`; stable provider identity is in `accountID`.
 public struct AgentAccount: Codable, Sendable, Equatable {
     /// Config-directory path identifying the account (e.g. `/Users/me/.claude-account-1`).
     public let id: String
@@ -108,12 +164,54 @@ public struct AgentAccount: Codable, Sendable, Equatable {
     public let label: String
     public let windows: [AgentWindow]
     public let tokensToday: Int?
+    public let accountID: String?
+    public let selector: AccountSelector?
+    public let quota: AgentAccountQuota?
 
-    public init(id: String, label: String, windows: [AgentWindow], tokensToday: Int?) {
+    public init(
+        id: String,
+        label: String,
+        windows: [AgentWindow],
+        tokensToday: Int?,
+        accountID: String? = nil,
+        selector: AccountSelector? = nil,
+        quota: AgentAccountQuota? = nil
+    ) {
         self.id = id
         self.label = label
         self.windows = windows
         self.tokensToday = tokensToday
+        self.accountID = accountID
+        self.selector = selector
+        self.quota = quota
+    }
+}
+
+/// Bounded account quota summary. `status` is one of `AccountQuotaStatus`'s raw values;
+/// this Foundation-only schema intentionally does not import the Core model enum.
+public struct AgentAccountQuota: Codable, Sendable, Equatable {
+    public let status: String
+    public let usedPercent: Double?
+    public let headroomPercent: Double?
+    public let bindingWindowIndex: Int?
+    public let validUntil: Date?
+    /// Kept optional for the original additive-v1 fixture; no arbitrary diagnostics enter it.
+    public let reasonCode: String?
+
+    public init(
+        status: String,
+        usedPercent: Double? = nil,
+        headroomPercent: Double? = nil,
+        bindingWindowIndex: Int? = nil,
+        validUntil: Date? = nil,
+        reasonCode: String? = nil
+    ) {
+        self.status = status
+        self.usedPercent = usedPercent
+        self.headroomPercent = headroomPercent
+        self.bindingWindowIndex = bindingWindowIndex
+        self.validUntil = validUntil
+        self.reasonCode = reasonCode
     }
 }
 
@@ -137,6 +235,8 @@ public struct AgentWindow: Codable, Sendable, Equatable {
     /// seconds old (`stale: false`) and still carry hour-old readings. A number whose
     /// `observedAt` is far in the past is absence of data, not a low utilization.
     public let observedAt: Date?
+    public let label: String?
+    public let bucketKey: String?
 
     public init(
         type: String,
@@ -144,7 +244,9 @@ public struct AgentWindow: Codable, Sendable, Equatable {
         resetsAt: Date?,
         confidence: String,
         source: String,
-        observedAt: Date? = nil
+        observedAt: Date? = nil,
+        label: String? = nil,
+        bucketKey: String? = nil
     ) {
         self.type = type
         self.usedPercent = usedPercent
@@ -152,6 +254,8 @@ public struct AgentWindow: Codable, Sendable, Equatable {
         self.confidence = confidence
         self.source = source
         self.observedAt = observedAt
+        self.label = label
+        self.bucketKey = bucketKey
     }
 }
 
@@ -164,11 +268,46 @@ public struct AgentRecommendation: Codable, Sendable, Equatable {
     public let avoid: [String]
     /// Human-readable justification.
     public let reason: String
+    public let target: AgentRecommendationTarget?
+    public let avoidAccounts: [AgentAccountReference]?
+    public let validUntil: Date?
 
-    public init(routeTo: String?, avoid: [String], reason: String) {
+    public init(
+        routeTo: String?,
+        avoid: [String],
+        reason: String,
+        target: AgentRecommendationTarget? = nil,
+        avoidAccounts: [AgentAccountReference]? = nil,
+        validUntil: Date? = nil
+    ) {
         self.routeTo = routeTo
         self.avoid = avoid
         self.reason = reason
+        self.target = target
+        self.avoidAccounts = avoidAccounts
+        self.validUntil = validUntil
+    }
+}
+
+public struct AgentRecommendationTarget: Codable, Sendable, Equatable {
+    public let provider: String
+    public let accountID: String
+    public let selector: AccountSelector?
+
+    public init(provider: String, accountID: String, selector: AccountSelector?) {
+        self.provider = provider
+        self.accountID = accountID
+        self.selector = selector
+    }
+}
+
+public struct AgentAccountReference: Codable, Sendable, Equatable {
+    public let provider: String
+    public let accountID: String
+
+    public init(provider: String, accountID: String) {
+        self.provider = provider
+        self.accountID = accountID
     }
 }
 
@@ -226,6 +365,45 @@ public extension AgentSnapshot {
         copy.ageSeconds = Int(age(asOf: now).rounded())
         copy.stale = age(asOf: now) > threshold
         return copy
+    }
+
+    /// Drops only executable routing fields after their account decision expires.
+    /// Historical windows and avoid information remain intact; this helper never re-ranks.
+    func withRecommendationValidity(asOf now: Date) -> AgentSnapshot {
+        guard let recommendation else { return self }
+        let replacement: AgentRecommendation
+        if let validUntil = recommendation.validUntil, now > validUntil {
+            replacement = AgentRecommendation(
+                routeTo: nil,
+                avoid: recommendation.avoid,
+                reason: recommendation.reason + "; recommendation expired",
+                target: nil,
+                avoidAccounts: recommendation.avoidAccounts,
+                validUntil: validUntil
+            )
+        } else if recommendation.validUntil == nil, recommendation.target != nil {
+            // Legacy provider advice had no expiry. Preserve it, but never expose an
+            // unbounded executable account target.
+            replacement = AgentRecommendation(
+                routeTo: recommendation.routeTo,
+                avoid: recommendation.avoid,
+                reason: recommendation.reason,
+                target: nil,
+                avoidAccounts: recommendation.avoidAccounts,
+                validUntil: nil
+            )
+        } else {
+            return self
+        }
+        return AgentSnapshot(
+            schemaVersion: schemaVersion,
+            generatedAt: generatedAt,
+            providers: providers,
+            aggregateUtilizationPercent: aggregateUtilizationPercent,
+            recommendation: replacement,
+            stale: stale,
+            ageSeconds: ageSeconds
+        )
     }
 }
 

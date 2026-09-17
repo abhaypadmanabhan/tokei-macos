@@ -76,6 +76,8 @@ extension ProviderSnapshot: Codable {
 extension ProviderAccountUsage: Codable {
     private enum CodingKeys: String, CodingKey {
         case id
+        case accountID
+        case selector
         case label
         case quotaWindows
         case todayUsage
@@ -89,6 +91,8 @@ extension ProviderAccountUsage: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
+        accountID = try container.decodeIfPresent(String.self, forKey: .accountID)
+        selector = try container.decodeIfPresent(AccountSelector.self, forKey: .selector)
         label = try container.decode(String.self, forKey: .label)
         quotaWindows = try container.decode([QuotaWindow].self, forKey: .quotaWindows)
         todayUsage = try container.decode(TokenUsage.self, forKey: .todayUsage)
@@ -105,6 +109,8 @@ extension ProviderAccountUsage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+        try container.encodeIfPresent(selector, forKey: .selector)
         try container.encode(label, forKey: .label)
         try container.encode(quotaWindows, forKey: .quotaWindows)
         try container.encode(todayUsage, forKey: .todayUsage)

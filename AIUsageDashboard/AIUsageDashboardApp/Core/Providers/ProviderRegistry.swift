@@ -10,7 +10,7 @@ public actor ProviderRegistry {
     public static func `default`() -> ProviderRegistry {
         ProviderRegistry(providers: [
             // Every Claude account on this machine, not just `~/.claude` — see `ClaudeAccount`.
-            ClaudeCodeProvider(accounts: ClaudeAccount.discover()),
+            ClaudeCodeProvider(accounts: []),
             CodexProvider(),
             CursorProvider(),
             ClineProvider(),
@@ -34,7 +34,10 @@ public actor ProviderRegistry {
                             authStatus: .error,
                             todayUsage: .unavailable,
                             weekUsage: .unavailable,
-                            warnings: [ProviderWarning(message: "Sync error: \(error.localizedDescription)", level: .error)]
+                            warnings: [ProviderWarning(
+                                message: "Sync error: \(error.localizedDescription)",
+                                level: .error
+                            )]
                         )
                     }
                 }
