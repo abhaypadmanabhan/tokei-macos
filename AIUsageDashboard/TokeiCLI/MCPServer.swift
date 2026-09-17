@@ -39,16 +39,18 @@ struct MCPFrameReader {
 
     init(fileDescriptor: Int32) {
         self.init { requestedBytes in
-            var bytes = [UInt8](repeating: 0, count: requestedBytes)
-            while true {
-                let byteCount = bytes.withUnsafeMutableBytes {
-                    Darwin.read(fileDescriptor, $0.baseAddress, $0.count)
-                }
-                if byteCount > 0 {
-                    return Data(bytes.prefix(byteCount))
-                }
-                if byteCount == 0 || errno != EINTR {
-                    return nil
+            autoreleasepool {
+                var bytes = [UInt8](repeating: 0, count: requestedBytes)
+                while true {
+                    let byteCount = bytes.withUnsafeMutableBytes {
+                        Darwin.read(fileDescriptor, $0.baseAddress, $0.count)
+                    }
+                    if byteCount > 0 {
+                        return Data(bytes.prefix(byteCount))
+                    }
+                    if byteCount == 0 || errno != EINTR {
+                        return nil
+                    }
                 }
             }
         }
