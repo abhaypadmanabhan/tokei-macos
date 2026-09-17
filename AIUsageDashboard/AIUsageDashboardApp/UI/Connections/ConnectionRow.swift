@@ -169,9 +169,6 @@ struct ConnectionRow: View {
     /// Honest status, not a toggle: Tokei watches every detected agent's local logs.
     private var watchIndicator: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(snapshot == nil ? PadzyTheme.ink5 : PadzyTheme.good)
-                .frame(width: 6, height: 6)
             Text(snapshot == nil ? "Not found" : "Watching")
                 .font(.sans(size: 11))
                 .foregroundColor(PadzyTheme.ink3)
@@ -208,9 +205,6 @@ struct ConnectionRow: View {
     private var liveQuotaControl: some View {
         if connectable {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(liveDotColor)
-                    .frame(width: 6, height: 6)
                 Text("LIVE QUOTA · \(liveStateLabel)")
                     .font(.mono(size: 9.5))
                     .tracking(9.5 * 0.1)

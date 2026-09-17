@@ -2,9 +2,8 @@ import SwiftUI
 import AIUsageDashboardCore
 
 /// The consolidated Overview home, rebuilt to the WP-5 mockup: a Usage/Quota metric
-/// selector, a big hero number + delta + one-line context, a full-width trend (or
-/// per-agent quota bars), the 1px-gap agent grid, the usage-split donut beside the
-/// by-weekday bars, and the when-you-work heatmap. Sections are ruled off by
+/// selector, a big hero number + one-line context, a full-width trend (or
+/// per-agent quota bars), and the usage-lens agent grid. Sections are ruled off by
 /// hairlines and named with mono kickers — no card stack, no numbered `NN /` labels.
 ///
 /// All analytics come from the frozen `DashboardViewModel` §4 surface
@@ -26,8 +25,6 @@ struct OverviewView: View {
 
     /// Usage vs Quota lens — local pane state, animated on change (reduce-motion safe).
     @State var metric: OverviewMetric = .usage
-    /// Measured content width, drives the split row's side-by-side ↔ stacked reflow.
-    @State private var contentWidth: CGFloat = 0
 
     // MARK: Body
 
@@ -53,20 +50,6 @@ struct OverviewView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xl) {
-                // Multi-account discovery is silent by construction — an Accounts section
-                // appears inside a drill-in and nothing on the way in ever says so. This is
-                // the only surface the user is guaranteed to land on, so this is where they
-                // get told, once.
-                if let provider = multiAccountProvider, let accounts = provider.accounts {
-                    MultiAccountNotice(
-                        kind: .discovered(
-                            provider: provider.displayName, accounts: accounts.count
-                        ),
-                        actionLabel: "Open \(provider.displayName)",
-                        onAction: { onSelectProvider(provider.providerID) }
-                    )
-                }
-
                 OverviewMetricSelector(metric: $metric)
 
                 VStack(alignment: .leading, spacing: PadzySpace.l) {
@@ -75,17 +58,11 @@ struct OverviewView: View {
                 }
                 .animation(reduceMotion ? nil : PadzyMotion.settle, value: metric)
 
-                agentsSection
-                splitAndWeekdaySection
-                heatmapSection
+                if metric == .usage {
+                    agentsSection
+                }
             }
             .padding(PadzySpace.xl)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: OverviewContentWidthKey.self, value: geo.size.width)
-                }
-            )
-            .onPreferenceChange(OverviewContentWidthKey.self) { contentWidth = $0 }
         }
     }
 
@@ -100,11 +77,9 @@ struct OverviewView: View {
                 .lineLimit(1)
                 .lineSpacing(0)
                 .minimumScaleFactor(0.4)
+                .id(metric)
+                .rollingNumber(heroNumericValue, reduceMotion: reduceMotion)
                 .accessibilityLabel("\(metric.title), \(heroNumber)")
-
-            if metric == .usage, let delta = viewModel.overviewDelta {
-                deltaLine(delta)
-            }
 
             Text(heroSubtitle)
                 .font(.sans(size: 15))
@@ -133,6 +108,7 @@ struct OverviewView: View {
     @ViewBuilder
     private var mainChart: some View {
         if metric == .usage {
+            rangedComparison
             LineTrendChart(points: viewModel.overviewTrend, pointDetails: trendPointDetails)
                 .frame(height: 200)
                 .transition(.opacity)
@@ -150,104 +126,37 @@ struct OverviewView: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 kicker("Agents · \(visibleProviders.count)")
                 Spacer(minLength: 8)
-                Button(action: onAddAgent) {
-                    Text("+ Add agent")
-                        .font(.sans(size: 12))
-                        .foregroundColor(PadzyTheme.ink4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Add agent")
             }
             AgentGrid(models: agentModels, onSelect: onSelectProvider)
         }
     }
 
-    // MARK: Usage split + by weekday
-
-    private var splitAndWeekdaySection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.l) {
-            HairlineDivider()
-            if contentWidth > 0 && contentWidth < 620 {
-                VStack(alignment: .leading, spacing: PadzySpace.xl) {
-                    usageSplitColumn
-                    weekdayColumn
-                }
-            } else {
-                HStack(alignment: .top, spacing: PadzySpace.xxl) {
-                    usageSplitColumn
-                    weekdayColumn
-                }
+    /// D12: the ranged delta sits beside the ranged total it was computed from.
+    @ViewBuilder
+    private var rangedComparison: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(TokenFormatter.format(viewModel.overviewRangedTotal))
+                .font(.mono(size: 15, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(Double(viewModel.overviewRangedTotal), reduceMotion: reduceMotion)
+            Text(AnalyticsFormat.rangeTitle(viewModel.range))
+                .font(.mono(size: 13.5))
+                .foregroundColor(PadzyTheme.ink5)
+            if let delta = viewModel.overviewDelta {
+                deltaLine(delta)
             }
         }
-    }
-
-    private var usageSplitColumn: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.m) {
-            kicker("Usage split · \(AnalyticsFormat.rangeTitle(viewModel.range))")
-            ProviderDonut(slices: viewModel.providerSplit)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var weekdayColumn: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.m) {
-            kicker("By weekday")
-            WeekdayBars(bars: weekdayBars)
-            HStack(alignment: .top, spacing: PadzySpace.xxl) {
-                miniStat(
-                    "Daily average",
-                    value: viewModel.dailyAverage.map { TokenFormatter.format($0) } ?? "—"
-                )
-                let streak = viewModel.streak
-                miniStat(
-                    "Active streak",
-                    value: streak.current > 0 ? "\(streak.current)d" : "—",
-                    caption: streak.longest > 0 ? "best \(streak.longest)d" : nil
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: When you work
-
-    private var heatmapSection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.m) {
-            HairlineDivider()
-            kicker("When you work")
-            ActivityHeatmap(cells: heatCells)
-                .frame(minHeight: 96)
-        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Small parts
 
     private func kicker(_ text: String) -> some View {
         Text(text.uppercased())
-            .font(.mono(size: 10))
-            .tracking(10 * 0.16)
+            .font(.mono(size: 13.5))
             .foregroundColor(PadzyTheme.ink5)
             .lineLimit(1)
-    }
-
-    private func miniStat(_ title: String, value: String, caption: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.mono(size: 9))
-                .tracking(9 * 0.16)
-                .foregroundColor(PadzyTheme.ink5)
-            Text(value)
-                .font(.mono(size: 16, weight: .semibold))
-                .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink)
-            if let caption {
-                Text(caption.uppercased())
-                    .font(.mono(size: 10))
-                    .foregroundColor(PadzyTheme.ink5)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Blank canvas
@@ -272,11 +181,3 @@ struct OverviewView: View {
     }
 }
 
-/// Measures the content column width for the split-row reflow (separate from the
-/// agent grid's own width key so the two readers never race).
-struct OverviewContentWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}

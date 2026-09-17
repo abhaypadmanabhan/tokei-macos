@@ -21,6 +21,8 @@ struct ProviderDetailView: View {
     /// §4 `peakHour(for:)`.
     var peakHour: (hour: Int, tokens: Int)? = nil
     var lastSyncedAt: Date? = nil
+    /// Selected dashboard range — daily history names this, not a hardcoded 30d (D6).
+    var historyRange: UsageRange = .thirtyDay
 
     /// This provider's value-scorecard entry (api-equivalent $, plan $, multiple,
     /// confidence). `nil` when the provider isn't priceable — drives the "—".
@@ -44,8 +46,6 @@ struct ProviderDetailView: View {
     private static let hPad: CGFloat = 28
 
     // MARK: - Derived state
-
-    private var tier: ProviderCapabilityTier { ProviderCapabilityTier.classify(snapshot) }
 
     private var activeWindows: [QuotaWindow] {
         snapshot.quotaWindows.filter { $0.confidence != .unavailable }
@@ -88,18 +88,17 @@ struct ProviderDetailView: View {
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
     private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
 
-    private static let syncFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
-
     // MARK: - Body
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xxl) {
                 header
+                if let warningCount = warningCountLine {
+                    Text(warningCount)
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink4)
+                }
                 metaGrid
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
@@ -181,10 +180,6 @@ struct ProviderDetailView: View {
             metaBlock(kicker: "Watched file",
                       value: ProviderMetadata.localPaths(for: snapshot.providerID).first ?? "\u{2014}",
                       color: PadzyTheme.ink3)
-            metaBlock(kicker: "Last sync",
-                      value: lastSyncedAt.map { Self.syncFormatter.string(from: $0) } ?? "NEVER",
-                      color: PadzyTheme.ink3)
-            metaBlock(kicker: "Capability", value: tier.label, color: PadzyTheme.ink2)
         }
     }
 
@@ -254,8 +249,8 @@ struct ProviderDetailView: View {
     private func insightBox(_ sentence: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 11) {
             Text("\u{25C6}")
-                .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.accent)
+                .font(.mono(size: 13.5))
+                .foregroundColor(PadzyTheme.ink3)
             Text(sentence)
                 .font(.sans(size: 13))
                 .foregroundColor(PadzyTheme.ink2)
@@ -280,9 +275,6 @@ struct ProviderDetailView: View {
         VStack(spacing: 0) {
             HairlineDivider()
             HStack(alignment: .center, spacing: PadzySpace.xxxl) {
-                if let tightest = tightestWindow, let pct = usedPercent(tightest) {
-                    gaugeColumn(tightest, pct: pct)
-                }
                 statsFlow
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -291,44 +283,53 @@ struct ProviderDetailView: View {
         }
     }
 
-    private func gaugeColumn(_ window: QuotaWindow, pct: Double) -> some View {
-        VStack(spacing: 10) {
-            CircularGauge(percent: pct, label: insightWindowName(window), size: 120)
-            if let verdict = paceVerdict(window) {
-                Text(verdict.word)
-                    .font(.sans(size: 11))
-                    .foregroundColor(verdict.color)
-            }
-        }
-        .fixedSize()
+    private var warningCountLine: String? {
+        let warnings = snapshot.warnings.filter { $0.level != .info }
+        guard !warnings.isEmpty else { return nil }
+        return warnings.count == 1 ? "1 warning" : "\(warnings.count) warnings"
     }
 
     private var statsFlow: some View {
         FlowLayout(hSpacing: 40, vSpacing: 30) {
             statBlock(kicker: "Tokens · today",
                       value: TokenFormatter.format(todayTotal),
-                      sub: todayDeltaSub,
-                      known: todayTotal != nil)
-            statBlock(kicker: "This week",
+                      sub: todayTokenSub,
+                      known: todayTotal != nil,
+                      numeric: todayTotal.map(Double.init))
+            statBlock(kicker: UsageAnalytics.rollingSevenDayLabel,
                       value: TokenFormatter.format(weekTokens),
                       sub: weekDeltaSub,
-                      known: weekTokens != nil)
+                      known: weekTokens != nil,
+                      numeric: weekTokens.map(Double.init))
             statBlock(kicker: "Peak hour",
                       value: peakHour.map { AnalyticsFormat.hourLabel($0.hour) } ?? "\u{2014}",
                       sub: peakHour == nil ? "" : "most active",
-                      known: peakHour != nil)
+                      known: peakHour != nil,
+                      numeric: peakHour.map { Double($0.hour) })
             statBlock(kicker: "Plan value",
                       value: MaxxerMath.formatMultiple(value?.valueMultiple),
                       sub: planValueSub,
-                      known: value?.valueMultiple != nil)
+                      known: value?.valueMultiple != nil,
+                      numeric: value?.valueMultiple)
         }
     }
 
-    private func statBlock(kicker: String, value: String, sub: String, known: Bool) -> some View {
+    private var todayTokenSub: String {
+        let cache = todayDeltaSub
+        if cache.isEmpty { return "incl. cache" }
+        return "incl. cache · \(cache)"
+    }
+
+    private func statBlock(
+        kicker: String,
+        value: String,
+        sub: String,
+        known: Bool,
+        numeric: Double? = nil
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(kicker.uppercased())
-                .font(.mono(size: 9.5))
-                .tracking(1.0)
+                .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
             Text(value)
                 .font(.mono(size: 26, weight: .semibold))
@@ -336,6 +337,7 @@ struct ProviderDetailView: View {
                 .foregroundColor(known ? PadzyTheme.ink : PadzyTheme.ink5)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .rollingNumber(numeric, reduceMotion: reduceMotion)
             if !sub.isEmpty {
                 Text(sub)
                     .font(.sans(size: 11))

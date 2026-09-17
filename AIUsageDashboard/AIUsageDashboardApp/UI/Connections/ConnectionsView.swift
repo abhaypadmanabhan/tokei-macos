@@ -25,9 +25,6 @@ struct ConnectionsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 header
 
-                framing
-                    .padding(.top, 12)
-
                 if agents.isEmpty {
                     SurfaceStateView(
                         kind: .empty(
@@ -63,14 +60,6 @@ struct ConnectionsView: View {
             AddAgentButton { onAddAgent() }
                 .fixedSize()
         }
-    }
-
-    private var framing: some View {
-        Text("Everything here is local and read-only.")
-            .font(.sans(size: 13.5))
-            .foregroundColor(PadzyTheme.ink3)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: 580, alignment: .leading)
     }
 
     private var privacyNote: some View {

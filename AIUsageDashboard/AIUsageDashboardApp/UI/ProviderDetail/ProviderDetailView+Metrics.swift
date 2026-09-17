@@ -58,6 +58,7 @@ extension ProviderDetailView {
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
                 .frame(width: 44, alignment: .trailing)
+                .rollingNumber(known, reduceMotion: reduceMotion)
 
             Text(verdict?.word ?? "\u{2014}")
                 .font(.sans(size: 10.5, weight: .semibold))
@@ -84,6 +85,7 @@ extension ProviderDetailView {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(PadzyTheme.quotaColor(pct))
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
+                    .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 if let elapsedFraction {
                     let notchX = geo.size.width * CGFloat(elapsedFraction)
                     Rectangle()
@@ -125,7 +127,7 @@ extension ProviderDetailView {
 
     var dailyHistorySection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Daily history · 30d")
+            SectionLabel(UsageAnalytics.dailyHistoryTitle(for: historyRange))
             if trend.count >= 2 {
                 LineTrendChart(points: trend, tint: AgentTint.color(snapshot.providerID))
                     .frame(height: 150)

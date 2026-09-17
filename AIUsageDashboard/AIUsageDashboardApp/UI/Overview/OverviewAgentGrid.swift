@@ -10,6 +10,7 @@ struct AgentCellModel: Identifiable {
     let providerID: ProviderID
     let name: String
     let stat: String
+    var statValue: Double? = nil
     let statColor: Color
     /// Secondary line under the stat — the Quota lens's "54% left" / "FETCHING…" /
     /// "ENABLE →" / "LOCAL LOGS" caption. `nil` in the Usage lens.
@@ -85,6 +86,7 @@ struct AgentGrid: View {
 struct AgentGridCell: View {
     let model: AgentCellModel
     let onSelect: (ProviderID) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
@@ -100,10 +102,9 @@ struct AgentGridCell: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     if model.hasHeadroom {
-                        Circle()
-                            .fill(PadzyTheme.good)
-                            .frame(width: 6, height: 6)
-                            .help("Most headroom — route new work here")
+                        Text("HEADROOM")
+                            .font(.mono(size: 13.5))
+                            .foregroundColor(PadzyTheme.ink3)
                             .accessibilityLabel("Most headroom, route new work here")
                     }
                 }
@@ -129,6 +130,7 @@ struct AgentGridCell: View {
                     .font(.mono(size: 18, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(model.statColor)
+                    .rollingNumber(model.statValue, reduceMotion: reduceMotion)
                 DottedUnderline()
                     .fixedSize()
                     .help("Estimated — not directly reported")
@@ -137,6 +139,7 @@ struct AgentGridCell: View {
                     .font(.mono(size: 18, weight: .semibold))
                     .monospacedDigit()
                     .foregroundColor(model.statColor)
+                    .rollingNumber(model.statValue, reduceMotion: reduceMotion)
             }
 
             if let substat = model.substat {

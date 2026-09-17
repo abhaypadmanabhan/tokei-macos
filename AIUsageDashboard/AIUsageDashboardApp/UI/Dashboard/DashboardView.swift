@@ -51,10 +51,7 @@ struct DashboardView: View {
                 // Settings drawer — driven directly by `viewModel.showingSettings`
                 // (the gear toggles it; the menu-bar Settings action sets it true).
                 if viewModel.showingSettings {
-                    SettingsDrawer(
-                        onClose: { viewModel.showingSettings = false },
-                        onOpenAgents: { select(tab: .agents) }
-                    )
+                    SettingsDrawer(onClose: { viewModel.showingSettings = false })
                     .zIndex(1)
                 }
 
@@ -77,10 +74,15 @@ struct DashboardView: View {
         // Slide/fade the drawers in and out; static under Reduce Motion.
         .animation(reduceMotion ? nil : PadzyMotion.quick, value: viewModel.showingSettings)
         .animation(reduceMotion ? nil : PadzyMotion.quick, value: showingAddAgent)
+        .onAppear { viewModel.dashboardWindowVisible = dashboardVisible }
+        .onChange(of: dashboardVisible) { _, visible in
+            viewModel.dashboardWindowVisible = visible
+            if visible { viewModel.noteStatusStripTick(at: Date()) }
+        }
     }
 
-    /// The dashboard shell — tab bar, ambient quota banner, routed content, and the
-    /// status strip. The Settings and Add-agent drawers overlay this in `body`.
+    /// The dashboard shell — tab bar, routed content, and the status strip.
+    /// The Settings and Add-agent drawers overlay this in `body`.
     private var shell: some View {
         VStack(spacing: 0) {
             DashboardTabBar(
@@ -91,17 +93,6 @@ struct DashboardView: View {
                 onSelect: { select(tab: $0) },
                 onOpenSettings: { viewModel.showingSettings.toggle() }
             )
-
-            // Ambient quota strip: only on a non-drill-in, non-Agents tab, and only
-            // when a live window actually exists (the banner carries its own top
-            // hairline; the divider below closes the strip and rules off the content).
-            if !section.isDrillIn, section.tab != .agents, let tightest = tightestUtilization {
-                PressureBanner(
-                    utilization: tightest,
-                    providerDisplayName: providerDisplayName(for: tightest.providerID),
-                    onTap: { openProvider($0) }
-                )
-            }
             HairlineDivider()
 
             content
@@ -152,18 +143,6 @@ struct DashboardView: View {
     }
 
     // MARK: Navigation
-
-    /// The single tightest live window across providers — drives the ambient
-    /// pressure banner. `nil` when no provider reports a live quota anywhere.
-    private var tightestUtilization: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization)
-    }
-
-    /// Resolved provider name for the banner (falls back to a de-underscored id).
-    private func providerDisplayName(for providerID: ProviderID) -> String {
-        viewModel.snapshot(for: providerID)?.displayName
-            ?? providerID.rawValue.replacingOccurrences(of: "_", with: " ")
-    }
 
     private func select(tab: DashboardTab) {
         homeTab = tab
@@ -267,8 +246,7 @@ struct DashboardView: View {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
                     Text("BACK")
-                        .font(.mono(size: 10))
-                        .tracking(0.5)
+                        .font(.mono(size: 13.5))
                 }
                 .foregroundColor(PadzyTheme.ink)
                 .padding(.horizontal, 10)
@@ -283,28 +261,10 @@ struct DashboardView: View {
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Back to \(homeTab.accessibilityName)")
 
-            Text(breadcrumb)
-                .font(.mono(size: 10))
-                .tracking(0.5)
-                .foregroundColor(PadzyTheme.muted)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-    }
-
-    private var breadcrumb: String {
-        let leaf: String
-        switch section {
-        case let .provider(providerID):
-            leaf = (viewModel.snapshot(for: providerID)?.displayName ?? providerID.rawValue)
-                .replacingOccurrences(of: "_", with: " ")
-        case .overview, .value, .connections: leaf = ""
-        }
-        return "\(homeTab.accessibilityName) / \(leaf)".uppercased()
     }
 
 }

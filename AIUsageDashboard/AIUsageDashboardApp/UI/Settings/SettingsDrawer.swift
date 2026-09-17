@@ -83,8 +83,6 @@ struct DrawerScaffold<Content: View>: View {
 struct SettingsDrawer: View {
     /// Closes the drawer (× / scrim / Escape all route here).
     let onClose: () -> Void
-    /// Closes the drawer and switches the shell to the Agents tab.
-    let onOpenAgents: () -> Void
 
     @EnvironmentObject private var viewModel: DashboardViewModel
 
@@ -116,10 +114,8 @@ struct SettingsDrawer: View {
     var body: some View {
         DrawerScaffold(title: "Settings", onClose: onClose) {
             planCostSection
-            agentsDataSection
             appearanceSection
             notificationsSection
-            feedbackSection
             versionSection
         }
     }
@@ -164,41 +160,11 @@ struct SettingsDrawer: View {
         }
     }
 
-    // MARK: 2 · Agents & data sources
-
-    private var agentsDataSection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.s) {
-            SectionLabel("Agents & data sources")
-            Text("Connect, hide, or reorder agents and see exactly which local file each one is read from.")
-                .font(.sans(size: 11))
-                .foregroundColor(PadzyTheme.ink4)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: onOpenAgents) {
-                Text("Agents tab \u{2192}")
-                    .font(.sans(size: 12, weight: .medium))
-                    .foregroundColor(PadzyTheme.accent)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open the Agents tab")
-        }
-    }
-
-    // MARK: 3 · Appearance
+    // MARK: Appearance
 
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
             SectionLabel("Appearance")
-
-            HStack(spacing: 12) {
-                Text("Theme")
-                    .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink2)
-                Spacer(minLength: 8)
-                Text("Dark")
-                    .font(.mono(size: 12))
-                    .foregroundColor(PadzyTheme.ink3)
-            }
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Menu bar shows")
@@ -223,7 +189,7 @@ struct SettingsDrawer: View {
                     menuBarModeRaw = mode.rawValue
                 } label: {
                     Text(mode.title)
-                        .font(.mono(size: 10))
+                        .font(.mono(size: 13.5))
                         .foregroundColor(isSelected ? PadzyTheme.ink : PadzyTheme.ink4)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -232,7 +198,7 @@ struct SettingsDrawer: View {
                         .padding(.horizontal, 4)
                         .overlay(alignment: .bottom) {
                             Rectangle()
-                                .fill(isSelected ? PadzyTheme.accent : Color.clear)
+                                .fill(isSelected ? PadzyTheme.ink : Color.clear)
                                 .frame(height: 2)
                         }
                         .contentShape(Rectangle())
@@ -275,44 +241,7 @@ struct SettingsDrawer: View {
         }
     }
 
-    // MARK: 5 · Feedback
-
-    /// Feedback + diagnostics entry point. Not wired to a backend yet, so it reads
-    /// as an honest "coming soon" rather than a dead button.
-    private var feedbackSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HairlineDivider()
-            VStack(alignment: .leading, spacing: PadzySpace.m) {
-                SectionLabel("Feedback")
-                Text("Tell us what's working and what isn't, or send a diagnostic if something looks off.")
-                    .font(.sans(size: 11))
-                    .foregroundColor(PadzyTheme.ink5)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Text("Send feedback & diagnostics")
-                        .font(.sans(size: 12, weight: .medium))
-                        .foregroundColor(PadzyTheme.ink4)
-                    Text("COMING SOON")
-                        .font(.mono(size: 8.5))
-                        .tracking(8.5 * 0.1)
-                        .foregroundColor(PadzyTheme.ink5)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                                .stroke(PadzyTheme.border2, lineWidth: 1)
-                        )
-                    Spacer(minLength: 8)
-                }
-            }
-            .padding(.top, PadzySpace.l)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Feedback and diagnostics, coming soon")
-    }
-
-    // MARK: 6 · Version
+    // MARK: Version
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -332,7 +261,7 @@ struct SettingsDrawer: View {
                     Button(action: { AppDelegate.shared?.checkForUpdates() }) {
                         Text("Check for updates")
                             .font(.sans(size: 12, weight: .medium))
-                            .foregroundColor(canCheckForUpdates ? PadzyTheme.accent : PadzyTheme.ink5)
+                            .foregroundColor(canCheckForUpdates ? PadzyTheme.ink : PadzyTheme.ink5)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -574,7 +503,7 @@ private func mockVM(_ ids: [ProviderID]) -> DashboardViewModel {
 #Preview("Settings drawer") {
     ZStack {
         PadzyTheme.ground.ignoresSafeArea()
-        SettingsDrawer(onClose: {}, onOpenAgents: {})
+        SettingsDrawer(onClose: {})
             .environmentObject(mockVM(ProviderID.allCases))
     }
     .frame(width: 900, height: 700)

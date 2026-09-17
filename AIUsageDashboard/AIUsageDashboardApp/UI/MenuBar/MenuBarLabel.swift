@@ -38,8 +38,8 @@ struct MenuBarLabel: View {
     }
 
     /// The constraining reading across every provider — what the bars fill by.
-    private var tightest: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization)
+    private var tightestPercent: Double? {
+        viewModel.tightestAccountPressure?.usedPercent
     }
 
     /// All-time tokens across visible providers (#41). Hidden agents are skipped
@@ -52,7 +52,7 @@ struct MenuBarLabel: View {
     }
 
     private var mark: some View {
-        Image(nsImage: TokeiStatusIcon.image(percent: tightest?.usedPercent))
+        Image(nsImage: TokeiStatusIcon.image(percent: tightestPercent))
     }
 
     @ViewBuilder
@@ -87,11 +87,13 @@ struct MenuBarLabel: View {
             case .todayTokens:
                 Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
                     .monospacedDigit()
+                    .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
 
             case .tightestPercent:
-                if let tightest {
-                    Text("\(Int(round(tightest.usedPercent)))%")
+                if let tightestPercent {
+                    Text("\(Int(round(tightestPercent)))%")
                         .monospacedDigit()
+                        .rollingNumber(tightestPercent, reduceMotion: reduceMotion)
                 } else {
                     // No live quota anywhere yet — honest placeholder, never a "0%".
                     Text("—")

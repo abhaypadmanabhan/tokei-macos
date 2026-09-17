@@ -32,7 +32,6 @@ public struct PadzyTheme {
     public static let muted = Color(hex: "6E6E78")      // == ink4 (back-compat)
 
     public static let accent = Color(hex: "FF3B70")
-    public static let accentHover = Color(hex: "FF5A86")
 
     // Semantic status hues (data/state signals — never chrome accent).
     public static let good = Color(hex: "6BBF8A")       // headroom / live / positive
@@ -86,7 +85,6 @@ public enum PadzyRadius {
     public static let cell: CGFloat = 4
     public static let chip: CGFloat = 4
     public static let control: CGFloat = 8
-    public static let pill: CGFloat = 999
 }
 
 /// 4pt-based spacing scale (WP-5). Adopt in rebuilt surfaces so call-site literals
@@ -101,13 +99,40 @@ public enum PadzySpace {
     public static let xxxl: CGFloat = 40
 }
 
-/// Motion tokens. The mockup settles metric/tab/drill changes over ~650ms ease-out.
-/// Every animated surface MUST fall back to a static path under Reduce Motion — gate
-/// with `@Environment(\.accessibilityReduceMotion)` and pass `nil` when it is set.
+/// Motion tokens. Live numbers roll in 200–250ms ease-out and never bounce.
+/// Nothing here exceeds 300ms. Every animated surface MUST fall back to a static
+/// path under Reduce Motion — gate with `accessibilityReduceMotion` and pass `nil`.
 public enum PadzyMotion {
-    public static let settle: Animation = .easeOut(duration: 0.65)
+    public static let numberRollDuration: Double = 0.22
+    public static let numberRoll: Animation = .easeOut(duration: numberRollDuration)
+    public static let settle: Animation = .easeOut(duration: 0.25)
     public static let quick: Animation = .easeOut(duration: 0.2)
     public static let toggle: Animation = .easeOut(duration: 0.15)
+}
+
+/// Shared gate for rolling figures. Reduce Motion returns nil so the value snaps.
+public enum LiveNumberMotion {
+    public static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : PadzyMotion.numberRoll
+    }
+}
+
+extension View {
+    /// Rolls a live figure. Reduce Motion snaps. Duration is `PadzyMotion.numberRollDuration`.
+    @ViewBuilder
+    func rollingNumber(_ value: Double?, reduceMotion: Bool) -> some View {
+        if reduceMotion || value == nil {
+            self
+        } else if #available(macOS 15.0, *) {
+            self
+                .contentTransition(.numericText(value: value ?? 0))
+                .animation(LiveNumberMotion.animation(reduceMotion: false), value: value)
+        } else {
+            self
+                .contentTransition(.numericText())
+                .animation(LiveNumberMotion.animation(reduceMotion: false), value: value)
+        }
+    }
 }
 
 /// Categorical + sequential color for DATA ONLY (design spec §2). Per-METRIC hues
