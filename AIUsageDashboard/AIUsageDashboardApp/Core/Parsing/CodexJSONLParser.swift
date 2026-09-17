@@ -274,6 +274,12 @@ public actor CodexJSONLParser {
         record: CodexUsageRecord,
         sessionKey: String
     ) {
+        if let timestamp = record.timestamp {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
+        }
+        guard record.contributesUsage else { return }
+
         let repeatsCumulativeUsage: Bool
         if let signature = record.cumulativeUsageSignature {
             repeatsCumulativeUsage = aggregate.lastCumulativeUsageBySession[sessionKey] == signature
@@ -285,11 +291,6 @@ public actor CodexJSONLParser {
             ? UsageWindows.emptyUsage(.localParsed)
             : record.deltaUsage
         let deltaReportedTotalTokens = repeatsCumulativeUsage ? 0 : record.deltaReportedTotalTokens
-
-        if let timestamp = record.timestamp {
-            aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
-            aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
-        }
 
         aggregate.lifetime = aggregate.lifetime.merging(deltaUsage)
         aggregate.deltaReportedTotalTokens += deltaReportedTotalTokens
@@ -465,6 +466,7 @@ enum CodexLineParseOutcome: Sendable {
 
 struct CodexUsageRecord: Sendable {
     let timestamp: Date?
+    let contributesUsage: Bool
     let deltaUsage: TokenUsage
     let deltaReportedTotalTokens: Int
     let cumulativeReportedTotalTokens: Int?
@@ -631,10 +633,21 @@ extension CodexJSONLParser {
             return .malformed
         }
 
+        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
+
         guard json["type"] as? String == "event_msg",
               let payload = json["payload"] as? [String: Any],
               payload["type"] as? String == "token_count" else {
-            return .skipped
+            guard let timestamp else { return .skipped }
+            return .usage(CodexUsageRecord(
+                timestamp: timestamp,
+                contributesUsage: false,
+                deltaUsage: UsageWindows.emptyUsage(.localParsed),
+                deltaReportedTotalTokens: 0,
+                cumulativeReportedTotalTokens: nil,
+                cumulativeUsageSignature: nil,
+                rateLimits: nil
+            ))
         }
 
         guard let info = payload["info"] as? [String: Any],
@@ -642,7 +655,6 @@ extension CodexJSONLParser {
             return .malformed
         }
 
-        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
         let deltaUsage = tokenUsage(from: lastUsage)
         let deltaReportedTotal = intValue(lastUsage["total_tokens"]) ?? deltaUsage.totalTokens ?? 0
         let cumulativeUsage = info["total_token_usage"] as? [String: Any]
@@ -663,6 +675,7 @@ extension CodexJSONLParser {
 
         return .usage(CodexUsageRecord(
             timestamp: timestamp,
+            contributesUsage: true,
             deltaUsage: deltaUsage,
             deltaReportedTotalTokens: deltaReportedTotal,
             cumulativeReportedTotalTokens: cumulativeReportedTotal,
