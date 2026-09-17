@@ -378,3 +378,38 @@ The 0.8.0 `/dev-approved` run. Most of the day's cost was not in the code.
   warning to an error; `main` carried 370. Comparing against the baseline (rather than
   reading the red) is what turned "this branch broke lint" into "this branch is +10, here
   are the 10" — and then into 361, below what it inherited.
+
+## 2026-09-17 — six packages, one night, and what the fleet taught
+
+The 0.9.0 run: four read-only audits, six work packages on Codex Sol / Cursor auto, every
+package reviewed on a different seat, orchestrated from a Claude seat that was already at 81 %.
+
+- **A design that needs a fifth fix is the wrong design.** Codex identity attribution across a
+  re-login went cumulative-baseline → calendar-keyed → instant-keyed, and each review found a
+  fresh hole (timezone, deletion, split). The per-session-file ownership model that replaced it
+  was smaller (−53 lines), conserved totals by construction, and passed the same probes on the
+  first try. When the third review of the same mechanism finds a new class of failure, stop
+  patching and change the invariant.
+- **Fixture-only tests do not catch integration state.** 638 green tests, and the first launch of
+  the integrated build showed a fresh official Codex window judged "untrusted" (a coverage rule
+  that was provider-agnostic where it had to be provider-aware). Launch the real artifact and
+  read the real snapshot before calling a phase done — it cost ten minutes and caught it.
+- **A "regression" can be the machine.** account-1 read `expiredCredentials` on one launch and
+  `eligible` 71 s later on the next; the token had rotated. Reproduce on a second launch before
+  dispatching a fix; the fix agent correctly refused to change auth code without a failing fixture.
+- **Read-only review budgets are the cheap part.** Three Astra research passes moved the Codex
+  weekly window 31 % → 33 %; the twelve review passes over the night cost less than one
+  implementation round. Spend reviews freely, implementation carefully.
+- **Perf gates measured on a loaded host are not gates.** The 826-file Codex corpus read
+  36–50 s at load average 10–20 and the reviewer blocked on a ≤ 35 s target; the same tree
+  measured 26 s in isolation. Record the load average next to every timing and re-measure
+  quiet before treating a miss as real.
+- **Frozen corpora fill disks.** 5.6 GB of copies plus a DerivedData tree per review pass hit
+  ENOSPC mid-run, and `chmod -R a-w` on the copies then blocked their own `rm`. Budget disk
+  like tokens: one frozen copy per corpus, delete on settle, never make a scratch copy read-only
+  for its directories.
+- **The Bible §8 append conflicts on every merge and that is fine.** Keep-both is always the
+  right resolution; automate it rather than reading the hunk.
+- **Cursor at 85 % context still finishes.** It compacted twice on the UI package and delivered;
+  the lifecycle state read `done` while a background build ran. Herdr's state is a hint — the
+  worktree's dirty file count is the liveness signal.
