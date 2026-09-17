@@ -153,9 +153,7 @@ merge merely because both are unknown.
 | Gemini CLI | Single-account public view | No account descriptor/selector adapter. |
 | GitHub Copilot | Single-account public view | Install detection only; no local usage/quota account adapter. |
 
-The provider-agnostic `SingleAccountDiscoverer` is available as a compatibility
-fallback, but providers without an adapter currently omit public `accounts` rather
-than inventing an identity.
+Providers without an adapter omit public `accounts` rather than inventing an identity.
 
 ## Protocols
 
