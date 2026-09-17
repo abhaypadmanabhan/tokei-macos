@@ -23,6 +23,7 @@ struct UsageWindows: Sendable {
     private var lifetime: TokenUsage
     private var dailyTotals: [Date: Int] = [:]
     private var hourlyTotals: [Date: Int] = [:]
+    private(set) var arithmeticOverflowed = false
 
     /// `emptyConfidence` seeds the accumulators, so it becomes the floor for the
     /// resulting windows (`TokenUsage.merging` keeps the least-trustworthy input).
@@ -44,17 +45,34 @@ struct UsageWindows: Sendable {
     }
 
     mutating func accumulate(_ usage: TokenUsage, timestamp: Date?, dailyTotal: Int, includeInLifetime: Bool = true) {
-        if includeInLifetime { lifetime = lifetime.merging(usage) }
+        if includeInLifetime {
+            lifetime = lifetime.merging(usage, overflowed: &arithmeticOverflowed)
+        }
 
         guard let timestamp, timestamp < nextDayStart else { return }
-        if timestamp >= todayStart { today = today.merging(usage) }
-        if timestamp >= weekStart { week = week.merging(usage) }
-        if timestamp >= monthStart { month = month.merging(usage) }
-        dailyTotals[calendar.startOfDay(for: timestamp), default: 0] += dailyTotal
+        if timestamp >= todayStart {
+            today = today.merging(usage, overflowed: &arithmeticOverflowed)
+        }
+        if timestamp >= weekStart {
+            week = week.merging(usage, overflowed: &arithmeticOverflowed)
+        }
+        if timestamp >= monthStart {
+            month = month.merging(usage, overflowed: &arithmeticOverflowed)
+        }
+        let day = calendar.startOfDay(for: timestamp)
+        dailyTotals[day] = TokenArithmetic.adding(
+            dailyTotals[day, default: 0],
+            dailyTotal,
+            overflowed: &arithmeticOverflowed
+        )
         if timestamp >= hourlyStart,
            dailyTotal > 0,
            let hour = Self.hourStart(for: timestamp, calendar: calendar) {
-            hourlyTotals[hour, default: 0] += dailyTotal
+            hourlyTotals[hour] = TokenArithmetic.adding(
+                hourlyTotals[hour, default: 0],
+                dailyTotal,
+                overflowed: &arithmeticOverflowed
+            )
         }
     }
 

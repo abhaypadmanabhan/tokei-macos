@@ -39,7 +39,12 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
     }
 
     public var totalTokens: Int {
-        inputTokens + outputTokens + cacheReadInputTokens + cacheCreationInputTokens
+        TokenArithmetic.sum([
+            inputTokens,
+            outputTokens,
+            cacheReadInputTokens,
+            cacheCreationInputTokens
+        ])
     }
 
     public func toTokenUsage() -> TokenUsage {

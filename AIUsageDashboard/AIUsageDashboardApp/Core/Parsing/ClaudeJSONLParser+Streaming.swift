@@ -396,6 +396,22 @@ extension ClaudeJSONLParser {
         let requestID = json["requestId"] as? String ?? json["request_id"] as? String
         let sessionID = json["sessionId"] as? String ?? json["session_id"] as? String
         let uuid = json["uuid"] as? String
+        guard let inputTokens = CheckedNumericConversion.tokenCount(usage["input_tokens"]),
+              let outputTokens = CheckedNumericConversion.tokenCount(usage["output_tokens"]),
+              let cacheReadInputTokens = CheckedNumericConversion.tokenCount(
+                  usage["cache_read_input_tokens"]
+              ),
+              let cacheCreationInputTokens = CheckedNumericConversion.tokenCount(
+                  usage["cache_creation_input_tokens"]
+              ) else {
+            return .malformed
+        }
+        var totalOverflowed = false
+        _ = TokenArithmetic.sum(
+            [inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens],
+            overflowed: &totalOverflowed
+        )
+        guard !totalOverflowed else { return .malformed }
 
         let record = ClaudeUsageRecord(
             messageID: messageID,
@@ -403,10 +419,10 @@ extension ClaudeJSONLParser {
             sessionID: sessionID,
             uuid: uuid,
             timestamp: JSONLDateParsing.parseTimestamp(from: json),
-            inputTokens: usage["input_tokens"] as? Int ?? 0,
-            outputTokens: usage["output_tokens"] as? Int ?? 0,
-            cacheReadInputTokens: usage["cache_read_input_tokens"] as? Int ?? 0,
-            cacheCreationInputTokens: usage["cache_creation_input_tokens"] as? Int ?? 0
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheReadInputTokens: cacheReadInputTokens,
+            cacheCreationInputTokens: cacheCreationInputTokens
         )
         return .usage(record)
     }

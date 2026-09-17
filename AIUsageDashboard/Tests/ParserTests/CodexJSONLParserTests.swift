@@ -539,6 +539,31 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertEqual(usage.warnings[0].level, .warning)
     }
 
+    func testS02CodexExtremeDoubleFixtureIsRejectedAsMalformedInsteadOfTrapping() async {
+        let fixture = #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1e100}}}}"#
+        let url = writeFixture(fixture, named: "s02-codex-extreme.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, 0)
+        XCTAssertEqual(usage.warnings.count, 1)
+        XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
+    }
+
+    func testS02CodexCrossRecordOverflowSaturatesWithWarning() async {
+        let fixture = [
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":9223372036854775806,"total_tokens":9223372036854775806}}}}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2,"total_tokens":2}}}}"#
+        ].joined(separator: "\n")
+        let url = writeFixture(fixture, named: "s02-codex-cross-record-overflow.jsonl")
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+        XCTAssertEqual(usage.lifetime.totalTokens, .max)
+        XCTAssertEqual(usage.deltaReportedTotalTokens, .max)
+        XCTAssertTrue(usage.warnings.contains { $0.message.contains("integer range") })
+    }
+
     func testUnchangedFileReusesCachedAggregate() async throws {
         let line = tokenCountLine(
             timestamp: "2026-07-06T10:00:00.000Z",

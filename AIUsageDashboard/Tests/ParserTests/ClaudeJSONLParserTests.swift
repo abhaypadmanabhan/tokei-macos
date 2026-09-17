@@ -206,6 +206,30 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(usage.warnings[0].level, .warning)
   }
 
+  func testS02ClaudeOverflowFixtureIsRejectedAsMalformedInsteadOfTrapping() async {
+    let fixture = #"{"usage":{"input_tokens":9223372036854775807,"output_tokens":1}}"#
+    let url = writeFixture(fixture, named: "s02-claude-overflow.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.totalTokens, 0)
+    XCTAssertEqual(usage.warnings.count, 1)
+    XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
+  }
+
+  func testS02ClaudeCrossRecordOverflowSaturatesWithWarning() async {
+    let fixture = [
+      #"{"message":{"id":"first","usage":{"input_tokens":9223372036854775806}}}"#,
+      #"{"message":{"id":"second","usage":{"input_tokens":2}}}"#
+    ].joined(separator: "\n")
+    let url = writeFixture(fixture, named: "s02-claude-cross-record-overflow.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.totalTokens, .max)
+    XCTAssertTrue(usage.warnings.contains { $0.message.contains("integer range") })
+  }
+
   func testS01ClaudeAcceptsRecordsThroughSixteenMiBAtChunkBoundaries() async throws {
     for mebibytes in [1, 4, 16] {
       var fixture = ignoredRecord(byteCount: mebibytes * 1024 * 1024)
