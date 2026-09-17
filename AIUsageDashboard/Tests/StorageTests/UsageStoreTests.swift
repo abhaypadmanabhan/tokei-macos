@@ -77,8 +77,8 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.hourlyTotals?[hour], 42)
     }
 
-    /// The per-account series must survive persistence, or a dashboard hydrated from disk
-    /// would show "no per-account history" until the next live parse.
+    /// The per-account series and D7 quota status must survive persistence, or a dashboard
+    /// hydrated from disk would lose the reason one account has no computable windows.
     func testRoundTripPreservesPerAccountHistory() async {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
@@ -99,7 +99,9 @@ final class UsageStoreTests: XCTestCase {
                     todayUsage: TokenUsage(inputTokens: 42, confidence: .localParsed),
                     dailyTotals: [day: 42],
                     configDirectories: ["/Users/test/.claude", "/Users/test/.claude-account-2"],
-                    unreadableDirectories: ["/Users/test/.claude-account-2"]
+                    unreadableDirectories: ["/Users/test/.claude-account-2"],
+                    quotaStatus: .expiredCredentials,
+                    quotaStatusDetail: "Claude usage credentials are expired."
                 )
             ]
         )
@@ -112,6 +114,8 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(account?.dailyTotals?[day], 42)
         XCTAssertEqual(account?.configDirectories.count, 2)
         XCTAssertEqual(account?.unreadableDirectories, ["/Users/test/.claude-account-2"])
+        XCTAssertEqual(account?.quotaStatus, .expiredCredentials)
+        XCTAssertEqual(account?.quotaStatusDetail, "Claude usage credentials are expired.")
     }
 
     /// An account written before per-account history existed has none of those keys. It must
@@ -129,6 +133,8 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertNil(account.dailyTotals)
         XCTAssertEqual(account.configDirectories, [])
         XCTAssertEqual(account.unreadableDirectories, [])
+        XCTAssertEqual(account.quotaStatus, .unknown)
+        XCTAssertNil(account.quotaStatusDetail)
     }
 
     func testCorruptFileRecovery() async {

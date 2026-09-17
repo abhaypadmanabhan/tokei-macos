@@ -14,6 +14,7 @@ struct UsageWindows: Sendable {
     private let todayStart: Date
     private let weekStart: Date
     private let monthStart: Date
+    private let nextDayStart: Date
     private let hourlyStart: Date
 
     private var today: TokenUsage
@@ -32,7 +33,8 @@ struct UsageWindows: Sendable {
         self.calendar = calendar
         self.todayStart = calendar.startOfDay(for: referenceDate)
         self.weekStart = calendar.date(byAdding: .day, value: -6, to: todayStart) ?? todayStart
-        self.monthStart = calendar.date(byAdding: .month, value: -1, to: todayStart) ?? todayStart
+        self.monthStart = calendar.date(byAdding: .day, value: -29, to: todayStart) ?? todayStart
+        self.nextDayStart = calendar.date(byAdding: .day, value: 1, to: todayStart) ?? todayStart
         self.hourlyStart = calendar.date(byAdding: .day, value: -13, to: todayStart) ?? todayStart
         let seed = Self.emptyUsage(emptyConfidence)
         self.today = seed
@@ -44,17 +46,20 @@ struct UsageWindows: Sendable {
     mutating func accumulate(_ usage: TokenUsage, timestamp: Date?, dailyTotal: Int, includeInLifetime: Bool = true) {
         if includeInLifetime { lifetime = lifetime.merging(usage) }
 
-        guard let timestamp else { return }
+        guard let timestamp, timestamp < nextDayStart else { return }
         if timestamp >= todayStart { today = today.merging(usage) }
         if timestamp >= weekStart { week = week.merging(usage) }
         if timestamp >= monthStart { month = month.merging(usage) }
         dailyTotals[calendar.startOfDay(for: timestamp), default: 0] += dailyTotal
-        if timestamp >= hourlyStart, dailyTotal > 0, let hour = hourStart(for: timestamp) {
+        if timestamp >= hourlyStart,
+           dailyTotal > 0,
+           let hour = Self.hourStart(for: timestamp, calendar: calendar) {
             hourlyTotals[hour, default: 0] += dailyTotal
         }
     }
 
     var hourlyStartDate: Date { hourlyStart }
+    var nextDayStartDate: Date { nextDayStart }
 
     func snapshot() -> WindowedTokenUsage {
         WindowedTokenUsage(
@@ -67,7 +72,7 @@ struct UsageWindows: Sendable {
         )
     }
 
-    private func hourStart(for timestamp: Date) -> Date? {
+    static func hourStart(for timestamp: Date, calendar: Calendar) -> Date? {
         let components = calendar.dateComponents([.year, .month, .day, .hour], from: timestamp)
         return calendar.date(from: components)
     }
