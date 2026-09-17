@@ -337,7 +337,7 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.confidence, .providerReported)
     }
 
-    /// Estimates are display-only; they cannot become an executable headline account.
+    /// A2: estimates are display-only; they cannot become an executable headline account.
     func testHeadlineAccountIsNilWhenNothingIsConfirmed() async throws {
         let base = try makeAccountDirectory(".claude", outputTokens: 10)
         let one = try makeAccountDirectory(".claude-account-1", outputTokens: 10)

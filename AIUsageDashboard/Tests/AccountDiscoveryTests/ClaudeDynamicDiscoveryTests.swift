@@ -39,6 +39,7 @@ final class ClaudeDynamicDiscoveryTests: XCTestCase {
         let provider = ClaudeCodeProvider(
             accounts: [],
             discoveryHome: home,
+            environment: [:],
             userDefaults: defaults
         )
 
@@ -55,5 +56,44 @@ final class ClaudeDynamicDiscoveryTests: XCTestCase {
         XCTAssertEqual(added.accounts?.count, 2)
         XCTAssertEqual(removed.accounts?.count, 1)
         XCTAssertNotEqual(first.accounts?.first?.accountID, switched.accounts?.first?.accountID)
+    }
+
+    func testR09_06_removedRegisteredClaudeRootDisappearsOnRefresh() async throws {
+        try makeAccount(".claude", identity: "uuid-a", tokens: 1)
+        try makeAccount("registered", identity: "uuid-b", tokens: 2)
+        let registered = home.appendingPathComponent("registered", isDirectory: true)
+        let provider = ClaudeCodeProvider(
+            accounts: [],
+            discoveryHome: home,
+            registeredDirectories: [registered],
+            environment: [:],
+            userDefaults: defaults
+        )
+
+        let beforeRemoval = try await provider.fetchSnapshot()
+        try FileManager.default.removeItem(at: registered)
+        let afterRemoval = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(beforeRemoval.accounts?.count, 2)
+        XCTAssertEqual(afterRemoval.accounts?.count, 1)
+    }
+
+    func testR09_09_explicitInheritedClaudeRootIsTestedWithoutAmbientEnvironment() async throws {
+        try makeAccount(".claude", identity: "uuid-a", tokens: 1)
+        try makeAccount("inherited", identity: "uuid-b", tokens: 2)
+        let inherited = home.appendingPathComponent("inherited", isDirectory: true)
+        let provider = ClaudeCodeProvider(
+            accounts: [],
+            discoveryHome: home,
+            environment: ["CLAUDE_CONFIG_DIR": inherited.path],
+            userDefaults: defaults
+        )
+
+        let inheritedPresent = try await provider.fetchSnapshot()
+        try FileManager.default.removeItem(at: inherited)
+        let inheritedRemoved = try await provider.fetchSnapshot()
+
+        XCTAssertEqual(inheritedPresent.accounts?.count, 2)
+        XCTAssertEqual(inheritedRemoved.accounts?.count, 1)
     }
 }

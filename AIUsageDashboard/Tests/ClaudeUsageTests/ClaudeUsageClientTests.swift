@@ -487,7 +487,7 @@ final class ClaudeCodeProviderQuotaTests: XCTestCase {
             Data(ClaudeFixtures.oauthUsageResponse.utf8),
             providerID: .claudeCode
         ).map { window in
-            // The decoder fixture's reset dates are historical and the pure decoder has no
+            // A2: the decoder fixture's reset dates are historical and the pure decoder has no
             // observation clock. A mock live client must supply the same freshness contract
             // as the real client before provider routing can consume its windows.
             QuotaWindow(

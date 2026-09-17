@@ -223,11 +223,17 @@ public struct ClaudeAccount: Sendable, Equatable, Identifiable, Hashable {
             .sorted { label(of: $0) < label(of: $1) }
 
         // The default directory is listed whether or not it exists — a fresh install still
-        // has credentials worth reading — so it always heads the list.
-        let directories = [home.appendingPathComponent(defaultDirectoryName, isDirectory: true)]
-            + siblings
-            + [inheritedRoot].compactMap { $0 }
-            + registeredRoots
+        // has credentials worth reading — so it always heads the list. Explicit nondefault
+        // roots are live registrations, not synthetic defaults, and disappear on refresh
+        // once their directory is removed.
+        let defaultRoot = home.appendingPathComponent(defaultDirectoryName, isDirectory: true)
+        let explicitRoots = ([inheritedRoot].compactMap { $0 } + registeredRoots).filter { root in
+            if root.standardizedFileURL.path == defaultRoot.standardizedFileURL.path { return true }
+            var isDirectory: ObjCBool = false
+            return fileManager.fileExists(atPath: root.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+        let directories = [defaultRoot] + siblings + explicitRoots
 
         return group(
             directories,
