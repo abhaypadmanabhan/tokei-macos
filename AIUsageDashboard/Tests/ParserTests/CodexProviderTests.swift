@@ -63,15 +63,35 @@ final class CodexProviderTests: XCTestCase {
     private func codexEvent(
         totalTokens: Int,
         lastTokens: Int,
-        timestamp: String
+        timestamp: String,
+        usedPercent: Int = 20
     ) -> String {
         "{\"timestamp\":\"\(timestamp)\",\"type\":\"event_msg\",\"payload\":{" +
             "\"type\":\"token_count\",\"info\":{\"total_token_usage\":{" +
             "\"input_tokens\":\(totalTokens),\"total_tokens\":\(totalTokens)}," +
             "\"last_token_usage\":{\"input_tokens\":\(lastTokens)," +
             "\"total_tokens\":\(lastTokens)}},\"rate_limits\":{" +
-            "\"primary\":{\"used_percent\":20,\"limit_window_seconds\":604800," +
+            "\"primary\":{\"used_percent\":\(usedPercent),\"limit_window_seconds\":604800," +
             "\"resets_at\":1789698141}}}}"
+    }
+
+    @discardableResult
+    private func writeSession(
+        _ name: String,
+        to codex: URL,
+        events: [String]
+    ) throws -> URL {
+        let sessions = codex.appendingPathComponent("sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        let file = sessions.appendingPathComponent(name)
+        try Data(events.joined(separator: "\n").utf8).write(to: file, options: .atomic)
+        return file
+    }
+
+    private func utcCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar
     }
 
     private func makeCalendarEpochFixture() async throws -> CalendarEpochFixture {
@@ -154,14 +174,15 @@ final class CodexProviderTests: XCTestCase {
         fixture.clock.set(try XCTUnwrap(
             fixture.formatter.date(from: "2026-09-17T15:16:40Z")
         ))
-        var sessionData = try Data(contentsOf: fixture.session)
-        sessionData.append(0x0A)
-        sessionData.append(Data(codexEvent(
-            totalTokens: 15,
-            lastTokens: 5,
-            timestamp: "2026-09-17T15:15:00Z"
-        ).utf8))
-        try sessionData.write(to: fixture.session, options: .atomic)
+        try writeSession(
+            "session-b.jsonl",
+            to: fixture.session.deletingLastPathComponent().deletingLastPathComponent(),
+            events: [codexEvent(
+                totalTokens: 5,
+                lastTokens: 5,
+                timestamp: "2026-09-17T15:15:00Z"
+            )]
+        )
     }
 
     func testDetectAvailabilityAndAuthUseCodexDirectoryPresenceOnly() async throws {
@@ -236,7 +257,9 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.accounts?.first?.quotaWindows.count, 2)
         XCTAssertTrue(snapshot.warnings.isEmpty)
     }
+}
 
+extension CodexProviderTests {
     func testR09C_01_identityEpochOwnershipSurvivesCalendarChangesAndTokyoRollover() async throws {
         let fixture = try await makeCalendarEpochFixture()
         assertConservation(fixture.switched, today: 10)
@@ -252,7 +275,7 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertEqual(try account(fixture.accountA, in: inTokyo).todayUsage.totalTokens, 10)
         XCTAssertEqual(try account(fixture.accountB, in: inTokyo).todayUsage.totalTokens, 0)
         XCTAssertEqual(try account(fixture.accountA, in: inTokyo).dailyTotals?[tokyoFirstDay], 10)
-        XCTAssertEqual(try account(fixture.accountB, in: inTokyo).dailyTotals?[tokyoFirstDay], 0)
+        XCTAssertEqual(try account(fixture.accountB, in: inTokyo).dailyTotals?[tokyoFirstDay] ?? 0, 0)
 
         await fixture.provider.updateCalendar(fixture.losAngeles)
         let backInLosAngeles = try await fixture.provider.fetchSnapshot()
@@ -277,5 +300,101 @@ final class CodexProviderTests: XCTestCase {
             try account(fixture.accountB, in: afterTokyoRollover).dailyTotals?[tokyoSecondDay],
             5
         )
+    }
+
+    func testR09D_01_deletingOldIdentitySessionPreservesRemainingFileOwnership() async throws {
+        let codex = codexDirectory()
+        try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
+        let formatter = ISO8601DateFormatter()
+        let clock = CodexProviderTestClock(try XCTUnwrap(formatter.date(from: "2026-09-17T02:16:40Z")))
+        try writeIdentity("acct-a", to: codex)
+        let sessionA = try writeSession("session-a.jsonl", to: codex, events: [codexEvent(
+            totalTokens: 10,
+            lastTokens: 10,
+            timestamp: "2026-09-17T02:14:00Z"
+        )])
+        let provider = CodexProvider(
+            parser: CodexJSONLParser(calendar: utcCalendar(), now: { clock.read() }),
+            codexDirectory: codex,
+            environment: [:],
+            now: { clock.read() }
+        )
+        let initial = try await provider.fetchSnapshot()
+        let accountA = try XCTUnwrap(initial.accounts?.first?.accountID)
+
+        try writeIdentity("acct-b", to: codex)
+        let switched = try await provider.fetchSnapshot()
+        let accountB = try XCTUnwrap(switched.accounts?.first { $0.accountID != accountA }?.accountID)
+        clock.set(try XCTUnwrap(formatter.date(from: "2026-09-18T02:16:40Z")))
+        try writeSession("session-b.jsonl", to: codex, events: [codexEvent(
+            totalTokens: 5,
+            lastTokens: 5,
+            timestamp: "2026-09-18T02:15:00Z",
+            usedPercent: 35
+        )])
+
+        let beforeDeletion = try await provider.fetchSnapshot()
+        assertConservation(beforeDeletion, today: 5)
+        XCTAssertEqual(try account(accountA, in: beforeDeletion).todayUsage.totalTokens, 0)
+        XCTAssertEqual(try account(accountB, in: beforeDeletion).todayUsage.totalTokens, 5)
+        XCTAssertEqual(try account(accountA, in: beforeDeletion).dailyTotals?.values.reduce(0, +), 10)
+        XCTAssertEqual(try account(accountB, in: beforeDeletion).dailyTotals?.values.reduce(0, +), 5)
+
+        try FileManager.default.removeItem(at: sessionA)
+        for _ in 0..<2 {
+            let afterDeletion = try await provider.fetchSnapshot()
+            assertConservation(afterDeletion, today: 5)
+            XCTAssertEqual(try account(accountA, in: afterDeletion).todayUsage.totalTokens, 0)
+            XCTAssertEqual(try account(accountB, in: afterDeletion).todayUsage.totalTokens, 5)
+            let deletedTotal = try account(accountA, in: afterDeletion).dailyTotals?.values.reduce(0, +)
+            let retainedTotal = try account(accountB, in: afterDeletion).dailyTotals?.values.reduce(0, +)
+            XCTAssertEqual(deletedTotal, 0)
+            XCTAssertEqual(retainedTotal, 5)
+        }
+    }
+
+    func testPerFileOwnershipAttributesStraddlingSessionToIdentityAtFirstEvent() async throws {
+        let formatter = ISO8601DateFormatter()
+        let clock = CodexProviderTestClock(try XCTUnwrap(formatter.date(from: "2026-09-17T02:16:40Z")))
+        let codex = codexDirectory()
+        try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
+        try writeIdentity("acct-a", to: codex)
+        let session = try writeSession("straddling.jsonl", to: codex, events: [codexEvent(
+            totalTokens: 10,
+            lastTokens: 10,
+            timestamp: "2026-09-17T02:14:00Z"
+        )])
+        let provider = CodexProvider(
+            parser: CodexJSONLParser(calendar: utcCalendar(), now: { clock.read() }),
+            codexDirectory: codex,
+            environment: [:],
+            now: { clock.read() }
+        )
+        let initial = try await provider.fetchSnapshot()
+        let accountA = try XCTUnwrap(initial.accounts?.first?.accountID)
+        try writeIdentity("acct-b", to: codex)
+        let switched = try await provider.fetchSnapshot()
+        let accountB = try XCTUnwrap(switched.accounts?.first { $0.accountID != accountA }?.accountID)
+
+        try Data([
+            codexEvent(
+                totalTokens: 10,
+                lastTokens: 10,
+                timestamp: "2026-09-17T02:14:00Z"
+            ),
+            codexEvent(
+                totalTokens: 15,
+                lastTokens: 5,
+                timestamp: "2026-09-17T02:17:00Z",
+                usedPercent: 35
+            )
+        ].joined(separator: "\n").utf8).write(to: session, options: .atomic)
+        clock.set(try XCTUnwrap(formatter.date(from: "2026-09-17T02:17:00Z")))
+        let straddled = try await provider.fetchSnapshot()
+
+        assertConservation(straddled, today: 15)
+        XCTAssertEqual(try account(accountA, in: straddled).todayUsage.totalTokens, 15)
+        XCTAssertEqual(try account(accountB, in: straddled).todayUsage.totalTokens, 0)
+        XCTAssertEqual(try account(accountB, in: straddled).quotaStatus, .eligible)
     }
 }

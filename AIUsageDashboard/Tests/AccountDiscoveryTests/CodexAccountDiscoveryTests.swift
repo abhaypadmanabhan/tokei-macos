@@ -84,6 +84,23 @@ final class CodexAccountDiscoveryTests: XCTestCase {
         try data.write(to: file, options: .atomic)
     }
 
+    private func writeEventFile(
+        _ name: String,
+        to root: URL,
+        totalTokens: Int,
+        usedPercent: Int,
+        timestamp: String
+    ) throws {
+        let file = root.appendingPathComponent("sessions/2026/09/17/\(name)")
+        let event = codexEventLine(
+            totalTokens: totalTokens,
+            lastTokens: totalTokens,
+            usedPercent: usedPercent,
+            timestamp: timestamp
+        )
+        try Data(event.utf8).write(to: file, options: .atomic)
+    }
+
     private func accountTokenSum(_ snapshot: ProviderSnapshot) -> Int {
         (snapshot.accounts ?? []).reduce(0) { $0 + ($1.todayUsage.totalTokens ?? 0) }
     }
@@ -249,10 +266,10 @@ extension CodexAccountDiscoveryTests {
         XCTAssertEqual(accountB.quotaStatus, .unknown)
         XCTAssertNil(quarantined.headroomPercent)
 
-        try appendEvent(
+        try writeEventFile(
+            "session-b.jsonl",
             to: root,
             totalTokens: 30,
-            lastTokens: 10,
             usedPercent: 35,
             timestamp: "2026-09-17T02:17:00Z"
         )
@@ -302,10 +319,10 @@ extension CodexAccountDiscoveryTests {
         XCTAssertEqual(split.accounts?.first { $0.accountID == accountA }?.todayUsage.totalTokens, 40)
         XCTAssertEqual(split.accounts?.first { $0.accountID == accountB }?.todayUsage.totalTokens, 0)
 
-        try appendEvent(
+        try writeEventFile(
+            "session-b.jsonl",
             to: firstRoot,
-            totalTokens: 20,
-            lastTokens: 10,
+            totalTokens: 10,
             usedPercent: 35,
             timestamp: "2026-09-17T02:17:00Z"
         )
@@ -326,10 +343,10 @@ extension CodexAccountDiscoveryTests {
         let switched = try await provider.fetchSnapshot()
         let accountB = try XCTUnwrap(switched.accounts?.first { $0.accountID != accountA }?.accountID)
         now = ISO8601DateFormatter().date(from: "2026-09-18T02:16:40Z")!
-        try appendEvent(
+        try writeEventFile(
+            "session-b-next-day.jsonl",
             to: root,
-            totalTokens: 15,
-            lastTokens: 5,
+            totalTokens: 5,
             usedPercent: 35,
             timestamp: "2026-09-18T02:15:00Z"
         )

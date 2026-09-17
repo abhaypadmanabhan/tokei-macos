@@ -1,7 +1,7 @@
 import Foundation
 
-/// Assigns each Codex root's raw dated totals to the identities observed on that root.
-/// Attributed account rows are projections only; later refreshes always start from parser data.
+/// Assigns each Codex session file to the identity active when its first event occurred.
+/// A session that straddles a later identity transition remains owned by its starting identity.
 struct CodexIdentityAttribution {
     struct Profile {
         let account: ProviderAccount
@@ -9,22 +9,18 @@ struct CodexIdentityAttribution {
         let aggregate: CodexJSONLParser.AggregateUsage
     }
 
-    private struct IdentityEpoch {
+    private struct IdentityTransition {
         let accountID: String
         let legacyID: String
         let label: String
-        let baselineUsage: TokenUsage
-        let baselineTotal: Int
-        /// Nil for the identity first observed on this root. A later identity must
-        /// produce a quota event at or after this refresh boundary.
-        let transitionObservedAt: Date?
+        /// Nil for the identity first observed on this root. Files older than the
+        /// first observation belong to that initial identity.
+        let observedAt: Date?
     }
 
     private struct RootAttribution {
         var currentAccountID: String
-        var rawDailyUsage: [Date: TokenUsage]
-        var rawDailyTotals: [Date: Int]
-        var epochs: [IdentityEpoch]
+        var transitions: [IdentityTransition]
     }
 
     private struct QuotaProjection {
@@ -33,16 +29,8 @@ struct CodexIdentityAttribution {
         let detail: String?
     }
 
-    private struct EpochAllocation {
-        var dailyUsage: [Date: TokenUsage] = [:]
-        var dailyTotals: [Date: Int] = [:]
-    }
-
     private var attributionByRoot: [String: RootAttribution] = [:]
 
-    /// Epoch baselines are calendar-independent cumulative counters captured at the
-    /// transition instant. Their non-overlapping deltas conserve provider totals across
-    /// repeated switches, regrouping, calendar changes, and day rollover.
     mutating func attribute(
         accounts: [ProviderAccount],
         profiles: [Profile],
@@ -53,20 +41,14 @@ struct CodexIdentityAttribution {
         var usageByIdentity: [String: [Date: TokenUsage]] = [:]
         var totalsByIdentity: [String: [Date: Int]] = [:]
         var rootsByIdentity: [String: Set<String>] = [:]
-        var historicalMetadata: [String: IdentityEpoch] = [:]
-        for (root, attribution) in attributionByRoot.sorted(by: { $0.key < $1.key }) {
-            let allocations = Self.epochAllocations(for: attribution)
-            for (index, epoch) in attribution.epochs.enumerated() {
-                historicalMetadata[epoch.accountID] = historicalMetadata[epoch.accountID] ?? epoch
-                rootsByIdentity[epoch.accountID, default: []].insert(root)
-                Self.merge(
-                    allocations[index],
-                    into: epoch.accountID,
-                    usageByIdentity: &usageByIdentity,
-                    totalsByIdentity: &totalsByIdentity
-                )
-            }
-        }
+        var historicalMetadata: [String: IdentityTransition] = [:]
+        collectUsage(
+            profiles: profiles,
+            usageByIdentity: &usageByIdentity,
+            totalsByIdentity: &totalsByIdentity,
+            rootsByIdentity: &rootsByIdentity,
+            historicalMetadata: &historicalMetadata
+        )
 
         let currentByIdentity = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         let currentIDs = accounts.map(\.id)
@@ -101,69 +83,96 @@ struct CodexIdentityAttribution {
         }
     }
 
+    private func collectUsage(
+        profiles: [Profile],
+        usageByIdentity: inout [String: [Date: TokenUsage]],
+        totalsByIdentity: inout [String: [Date: Int]],
+        rootsByIdentity: inout [String: Set<String>],
+        historicalMetadata: inout [String: IdentityTransition]
+    ) {
+        for collected in profiles.sorted(by: {
+            Self.canonicalPath($0.profile.root) < Self.canonicalPath($1.profile.root)
+        }) {
+            let root = Self.canonicalPath(collected.profile.root)
+            guard let attribution = attributionByRoot[root] else { continue }
+
+            for transition in attribution.transitions {
+                historicalMetadata[transition.accountID] =
+                    historicalMetadata[transition.accountID] ?? transition
+                rootsByIdentity[transition.accountID, default: []].insert(root)
+            }
+            for file in collected.aggregate.files.sorted(by: { $0.path < $1.path }) {
+                let owner = Self.owner(of: file, transitions: attribution.transitions)
+                Self.merge(
+                    file,
+                    into: owner.accountID,
+                    usageByIdentity: &usageByIdentity,
+                    totalsByIdentity: &totalsByIdentity
+                )
+            }
+        }
+    }
+
     private mutating func refreshRoots(from profiles: [Profile], observedAt: Date) {
         let activeRoots = Set(profiles.map { Self.canonicalPath($0.profile.root) })
         attributionByRoot = attributionByRoot.filter { activeRoots.contains($0.key) }
 
         for collected in profiles {
             let root = Self.canonicalPath(collected.profile.root)
-            let aggregate = collected.aggregate
             if var attribution = attributionByRoot[root] {
                 if attribution.currentAccountID != collected.account.id {
                     attribution.currentAccountID = collected.account.id
-                    attribution.epochs.append(Self.epoch(
+                    attribution.transitions.append(Self.transition(
                         for: collected.account,
-                        aggregate: aggregate,
-                        transitionObservedAt: observedAt
+                        observedAt: observedAt
                     ))
                 }
-                attribution.rawDailyUsage = aggregate.dailyUsage
-                attribution.rawDailyTotals = aggregate.dailyTotals
                 attributionByRoot[root] = attribution
             } else {
                 attributionByRoot[root] = RootAttribution(
                     currentAccountID: collected.account.id,
-                    rawDailyUsage: aggregate.dailyUsage,
-                    rawDailyTotals: aggregate.dailyTotals,
-                    epochs: [Self.epoch(
-                        for: collected.account,
-                        aggregate: nil,
-                        transitionObservedAt: nil
-                    )]
+                    transitions: [Self.transition(for: collected.account, observedAt: nil)]
                 )
             }
         }
     }
 
-    private static func epoch(
+    private static func transition(
         for account: ProviderAccount,
-        aggregate: CodexJSONLParser.AggregateUsage?,
-        transitionObservedAt: Date?
-    ) -> IdentityEpoch {
-        IdentityEpoch(
+        observedAt: Date?
+    ) -> IdentityTransition {
+        IdentityTransition(
             accountID: account.id,
             legacyID: account.legacyID,
             label: account.label,
-            baselineUsage: cumulativeUsage(in: aggregate?.dailyUsage ?? [:]),
-            baselineTotal: aggregate?.dailyTotals.values.reduce(0, +) ?? 0,
-            transitionObservedAt: transitionObservedAt
+            observedAt: observedAt
         )
     }
 
+    private static func owner(
+        of file: CodexJSONLParser.FileUsage,
+        transitions: [IdentityTransition]
+    ) -> IdentityTransition {
+        guard let firstEventAt = file.firstEventAt else { return transitions[0] }
+        return transitions.last { transition in
+            transition.observedAt.map { $0 <= firstEventAt } ?? true
+        } ?? transitions[0]
+    }
+
     private static func merge(
-        _ allocation: EpochAllocation,
+        _ file: CodexJSONLParser.FileUsage,
         into accountID: String,
         usageByIdentity: inout [String: [Date: TokenUsage]],
         totalsByIdentity: inout [String: [Date: Int]]
     ) {
-        for (day, usage) in allocation.dailyUsage {
+        for (day, usage) in file.dailyUsage {
             if let current = usageByIdentity[accountID]?[day] {
                 usageByIdentity[accountID]?[day] = current.merging(usage)
             } else {
                 usageByIdentity[accountID, default: [:]][day] = usage
             }
         }
-        for (day, total) in allocation.dailyTotals {
+        for (day, total) in file.dailyTotals {
             totalsByIdentity[accountID, default: [:]][day, default: 0] += total
         }
     }
@@ -172,7 +181,7 @@ struct CodexIdentityAttribution {
         let withWindows = profiles.filter { !$0.aggregate.quotaWindows.isEmpty }
         let attributable = withWindows.filter { collected in
             let root = Self.canonicalPath(collected.profile.root)
-            guard let boundary = attributionByRoot[root]?.epochs.last?.transitionObservedAt else {
+            guard let boundary = attributionByRoot[root]?.transitions.last?.observedAt else {
                 return true
             }
             return Self.latestQuotaObservation(in: collected.aggregate.quotaWindows)
@@ -211,110 +220,5 @@ struct CodexIdentityAttribution {
 
     private static func canonicalPath(_ root: URL) -> String {
         root.resolvingSymlinksInPath().standardizedFileURL.path
-    }
-}
-
-private extension CodexIdentityAttribution {
-    private static func epochAllocations(for attribution: RootAttribution) -> [EpochAllocation] {
-        var result = Array(repeating: EpochAllocation(), count: attribution.epochs.count)
-
-        let usageDays = attribution.rawDailyUsage.keys.sorted()
-        let usage = usageDays.compactMap { attribution.rawDailyUsage[$0] }
-        let input = allocateDaily(
-            values: usage.map(\.inputTokens),
-            baselines: attribution.epochs.map { $0.baselineUsage.inputTokens }
-        )
-        let output = allocateDaily(
-            values: usage.map(\.outputTokens),
-            baselines: attribution.epochs.map { $0.baselineUsage.outputTokens }
-        )
-        let cacheRead = allocateDaily(
-            values: usage.map(\.cacheReadTokens),
-            baselines: attribution.epochs.map { $0.baselineUsage.cacheReadTokens }
-        )
-        let cacheCreation = allocateDaily(
-            values: usage.map(\.cacheCreationTokens),
-            baselines: attribution.epochs.map { $0.baselineUsage.cacheCreationTokens }
-        )
-        let reasoning = allocateDaily(
-            values: usage.map(\.reasoningTokens),
-            baselines: attribution.epochs.map { $0.baselineUsage.reasoningTokens }
-        )
-        for (dayIndex, day) in usageDays.enumerated() {
-            let total = usage[dayIndex]
-            for index in attribution.epochs.indices {
-                result[index].dailyUsage[day] = TokenUsage(
-                    inputTokens: input[dayIndex][index],
-                    outputTokens: output[dayIndex][index],
-                    cacheReadTokens: cacheRead[dayIndex][index],
-                    cacheCreationTokens: cacheCreation[dayIndex][index],
-                    reasoningTokens: reasoning[dayIndex][index],
-                    confidence: total.confidence
-                )
-            }
-        }
-
-        let totalDays = attribution.rawDailyTotals.keys.sorted()
-        let allocatedTotals = allocateDaily(
-            values: totalDays.map { attribution.rawDailyTotals[$0] },
-            baselines: attribution.epochs.map { $0.baselineTotal }
-        )
-        for (dayIndex, day) in totalDays.enumerated() {
-            for index in attribution.epochs.indices {
-                result[index].dailyTotals[day] = allocatedTotals[dayIndex][index] ?? 0
-            }
-        }
-        return result
-    }
-
-    static func cumulativeUsage(in dailyUsage: [Date: TokenUsage]) -> TokenUsage {
-        let usage = Array(dailyUsage.values)
-        func total(_ field: (TokenUsage) -> Int?) -> Int? {
-            let values = usage.compactMap(field)
-            return values.isEmpty ? nil : values.reduce(0, +)
-        }
-        return TokenUsage(
-            inputTokens: total(\.inputTokens),
-            outputTokens: total(\.outputTokens),
-            cacheReadTokens: total(\.cacheReadTokens),
-            cacheCreationTokens: total(\.cacheCreationTokens),
-            reasoningTokens: total(\.reasoningTokens),
-            confidence: usage.first?.confidence ?? .localParsed
-        )
-    }
-
-    /// Split calendar-projected days at calendar-independent cumulative epoch boundaries.
-    /// The clamp keeps current raw data authoritative after truncation or replacement.
-    static func allocateDaily(
-        values: [Int?],
-        baselines: [Int?]
-    ) -> [[Int?]] {
-        guard values.contains(where: { $0 != nil }) else {
-            return Array(
-                repeating: Array(repeating: nil, count: baselines.count),
-                count: values.count
-            )
-        }
-        let boundedTotal = values.compactMap { $0 }.reduce(0) { $0 + max(0, $1) }
-        var floor = 0
-        let starts = baselines.map { baseline -> Int in
-            let start = min(boundedTotal, max(floor, max(0, baseline ?? 0)))
-            floor = start
-            return start
-        }
-
-        var cursor = 0
-        return values.map { value in
-            guard let value else {
-                return Array(repeating: nil, count: starts.count)
-            }
-            let dayStart = cursor
-            let dayEnd = dayStart + max(0, value)
-            cursor = dayEnd
-            return starts.indices.map { index in
-                let epochEnd = index + 1 < starts.count ? starts[index + 1] : boundedTotal
-                return max(0, min(dayEnd, epochEnd) - max(dayStart, starts[index]))
-            }
-        }
     }
 }

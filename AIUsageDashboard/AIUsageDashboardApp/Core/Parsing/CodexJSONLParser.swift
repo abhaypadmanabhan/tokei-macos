@@ -1,6 +1,16 @@
 import Foundation
 
 public actor CodexJSONLParser {
+    struct FileUsage: Sendable {
+        let path: String
+        let firstEventAt: Date?
+        let lastEventAt: Date?
+        let lifetime: TokenUsage
+        let dailyUsage: [Date: TokenUsage]
+        let dailyTotals: [Date: Int]
+        let hourlyTotals: [Date: Int]
+    }
+
     public struct AggregateUsage: Sendable {
         public let today: TokenUsage
         public let week: TokenUsage
@@ -17,6 +27,7 @@ public actor CodexJSONLParser {
         public let deltaReportedTotalTokens: Int
         public let finalReportedTotalTokens: Int
         public let warnings: [ProviderWarning]
+        let files: [FileUsage]
     }
 
     private var calendar: Calendar
@@ -44,6 +55,7 @@ public actor CodexJSONLParser {
         var latestRateLimits: CodexRateLimitSnapshot?
         var deltaReportedTotalTokens = 0
         var finalTotalsBySession: [String: CodexSessionFinalTotal] = [:]
+        var files: [FileUsage] = []
 
         for source in logSources {
             let path = source.url.path
@@ -64,6 +76,7 @@ public actor CodexJSONLParser {
                     deltaReportedTotalTokens: &deltaReportedTotalTokens,
                     finalTotalsBySession: &finalTotalsBySession
                 )
+                files.append(fileUsage(path: path, aggregate: cached.aggregate))
                 if cached.malformedCount > 0 {
                     warnings.append(malformedWarning(count: cached.malformedCount, url: source.url))
                 }
@@ -121,6 +134,7 @@ public actor CodexJSONLParser {
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
                         finalTotalsBySession: &finalTotalsBySession
                     )
+                    files.append(fileUsage(path: path, aggregate: updatedEntry.aggregate))
                     if updatedEntry.malformedCount > 0 {
                         warnings.append(malformedWarning(
                             count: updatedEntry.malformedCount,
@@ -161,6 +175,7 @@ public actor CodexJSONLParser {
                         deltaReportedTotalTokens: &deltaReportedTotalTokens,
                         finalTotalsBySession: &finalTotalsBySession
                     )
+                    files.append(fileUsage(path: path, aggregate: entry.aggregate))
                     if entry.malformedCount > 0 {
                         warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
                     }
@@ -200,7 +215,8 @@ public actor CodexJSONLParser {
             quotaWindows: quotaWindows(from: latestRateLimits, referenceDate: referenceDate),
             deltaReportedTotalTokens: deltaReportedTotalTokens,
             finalReportedTotalTokens: finalTotalsBySession.values.map(\.totalTokens).reduce(0, +),
-            warnings: warnings
+            warnings: warnings,
+            files: files
         )
     }
 
@@ -234,6 +250,8 @@ public actor CodexJSONLParser {
         var finalTotalsBySession: [String: CodexSessionFinalTotal]
         var latestRateLimits: CodexRateLimitSnapshot?
         var lastCumulativeUsageBySession: [String: CodexCumulativeUsageSignature]
+        var firstEventAt: Date?
+        var lastEventAt: Date?
 
         static var empty: FileAggregate {
             FileAggregate(
@@ -244,7 +262,9 @@ public actor CodexJSONLParser {
                 deltaReportedTotalTokens: 0,
                 finalTotalsBySession: [:],
                 latestRateLimits: nil,
-                lastCumulativeUsageBySession: [:]
+                lastCumulativeUsageBySession: [:],
+                firstEventAt: nil,
+                lastEventAt: nil
             )
         }
     }
@@ -265,6 +285,11 @@ public actor CodexJSONLParser {
             ? UsageWindows.emptyUsage(.localParsed)
             : record.deltaUsage
         let deltaReportedTotalTokens = repeatsCumulativeUsage ? 0 : record.deltaReportedTotalTokens
+
+        if let timestamp = record.timestamp {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
+        }
 
         aggregate.lifetime = aggregate.lifetime.merging(deltaUsage)
         aggregate.deltaReportedTotalTokens += deltaReportedTotalTokens
@@ -326,6 +351,24 @@ public actor CodexJSONLParser {
         for (sessionKey, signature) in incremental.lastCumulativeUsageBySession {
             aggregate.lastCumulativeUsageBySession[sessionKey] = signature
         }
+        if let firstEventAt = incremental.firstEventAt {
+            aggregate.firstEventAt = min(aggregate.firstEventAt ?? firstEventAt, firstEventAt)
+        }
+        if let lastEventAt = incremental.lastEventAt {
+            aggregate.lastEventAt = max(aggregate.lastEventAt ?? lastEventAt, lastEventAt)
+        }
+    }
+
+    private func fileUsage(path: String, aggregate: FileAggregate) -> FileUsage {
+        FileUsage(
+            path: path,
+            firstEventAt: aggregate.firstEventAt,
+            lastEventAt: aggregate.lastEventAt,
+            lifetime: aggregate.lifetime,
+            dailyUsage: aggregate.dailyUsage,
+            dailyTotals: aggregate.dailyReportedTotals,
+            hourlyTotals: aggregate.hourlyTotals
+        )
     }
 
     private func apply(
