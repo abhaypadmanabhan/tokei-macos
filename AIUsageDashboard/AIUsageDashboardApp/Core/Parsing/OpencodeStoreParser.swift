@@ -42,6 +42,7 @@ public actor OpencodeStoreParser {
     private let fileManager: FileManager
     private let calendar: Calendar
     private let now: @Sendable () -> Date
+    private var databaseCache: [String: DatabaseCacheEntry] = [:]
 
     public init(
         fileManager: FileManager = .default,
@@ -56,8 +57,15 @@ public actor OpencodeStoreParser {
     public func parse(rootDirectory: URL) async -> AggregateUsage {
         var warnings: [ProviderWarning] = []
         let databaseURL = rootDirectory.appendingPathComponent("opencode.db")
+        let referenceDate = now()
+        let initialStamp = databaseStamp(at: databaseURL, referenceDate: referenceDate)
 
         if fileManager.fileExists(atPath: databaseURL.path) {
+            if let initialStamp,
+               let cached = databaseCache[databaseURL.path],
+               cached.stamp == initialStamp {
+                return cached.aggregate
+            }
             do {
                 let databaseRead = try readDatabase(at: databaseURL)
                 if databaseRead.rowCount > 0 {
@@ -65,18 +73,31 @@ public actor OpencodeStoreParser {
                         count: databaseRead.malformedCount,
                         source: databaseURL.lastPathComponent
                     ))
-                    return aggregate(
+                    let result = aggregate(
                         messages: databaseRead.messages,
                         sourceKind: .sqliteDatabase,
-                        warnings: warnings
+                        warnings: warnings,
+                        referenceDate: referenceDate
                     )
+                    if let initialStamp,
+                       databaseStamp(at: databaseURL, referenceDate: referenceDate) == initialStamp {
+                        databaseCache[databaseURL.path] = DatabaseCacheEntry(
+                            stamp: initialStamp,
+                            aggregate: result
+                        )
+                    }
+                    return result
                 }
+                databaseCache.removeValue(forKey: databaseURL.path)
             } catch {
+                databaseCache.removeValue(forKey: databaseURL.path)
                 warnings.append(ProviderWarning(
                     message: "opencode database could not be read: \(error.localizedDescription)",
                     level: .warning
                 ))
             }
+        } else {
+            databaseCache.removeValue(forKey: databaseURL.path)
         }
 
         do {
@@ -86,13 +107,23 @@ public actor OpencodeStoreParser {
                 source: "opencode JSON message file(s)"
             ))
             let sourceKind: SourceKind = jsonRead.fileCount > 0 ? .jsonFiles : .none
-            return aggregate(messages: jsonRead.messages, sourceKind: sourceKind, warnings: warnings)
+            return aggregate(
+                messages: jsonRead.messages,
+                sourceKind: sourceKind,
+                warnings: warnings,
+                referenceDate: referenceDate
+            )
         } catch {
             warnings.append(ProviderWarning(
                 message: "opencode JSON messages could not be read: \(error.localizedDescription)",
                 level: .warning
             ))
-            return aggregate(messages: [], sourceKind: .none, warnings: warnings)
+            return aggregate(
+                messages: [],
+                sourceKind: .none,
+                warnings: warnings,
+                referenceDate: referenceDate
+            )
         }
     }
 
@@ -109,9 +140,10 @@ public actor OpencodeStoreParser {
     private func aggregate(
         messages: [ParsedMessage],
         sourceKind: SourceKind,
-        warnings: [ProviderWarning]
+        warnings: [ProviderWarning],
+        referenceDate: Date
     ) -> AggregateUsage {
-        var windows = UsageWindows(calendar: calendar, referenceDate: now())
+        var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
         var totalCost = 0.0
 
         for message in messages {
@@ -141,6 +173,47 @@ public actor OpencodeStoreParser {
         )]
     }
 
+    private struct FileStamp: Equatable {
+        let identifier: UInt64?
+        let size: UInt64
+        let modificationDate: Date?
+    }
+
+    private struct DatabaseStamp: Equatable {
+        let main: FileStamp
+        let wal: FileStamp?
+        let calendarDay: Date
+        let timeZoneIdentifier: String
+    }
+
+    private struct DatabaseCacheEntry {
+        let stamp: DatabaseStamp
+        let aggregate: AggregateUsage
+    }
+
+    private func databaseStamp(at databaseURL: URL, referenceDate: Date) -> DatabaseStamp? {
+        guard let main = fileStamp(at: databaseURL) else { return nil }
+        let walURL = URL(fileURLWithPath: databaseURL.path + "-wal")
+        return DatabaseStamp(
+            main: main,
+            wal: fileStamp(at: walURL),
+            calendarDay: calendar.startOfDay(for: referenceDate),
+            timeZoneIdentifier: calendar.timeZone.identifier
+        )
+    }
+
+    private func fileStamp(at url: URL) -> FileStamp? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return FileStamp(
+            identifier: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+            size: size.uint64Value,
+            modificationDate: attributes[.modificationDate] as? Date
+        )
+    }
+
     // MARK: - SQLite
 
     private func readDatabase(at url: URL) throws -> DatabaseRead {
@@ -148,7 +221,7 @@ public actor OpencodeStoreParser {
         defer { try? fileManager.removeItem(at: tempDirectory) }
 
         let databaseCopyURL = tempDirectory.appendingPathComponent(url.lastPathComponent)
-        try copyDatabase(from: url, to: databaseCopyURL)
+        try SQLiteSidecarCopy.copyDatabase(from: url, to: databaseCopyURL, using: fileManager)
         return try readCopiedDatabase(at: databaseCopyURL)
     }
 
@@ -157,7 +230,7 @@ public actor OpencodeStoreParser {
         defer { try? fileManager.removeItem(at: tempDirectory) }
 
         let databaseCopyURL = tempDirectory.appendingPathComponent(url.lastPathComponent)
-        try copyDatabase(from: url, to: databaseCopyURL)
+        try SQLiteSidecarCopy.copyDatabase(from: url, to: databaseCopyURL, using: fileManager)
         return try readRowCount(at: databaseCopyURL)
     }
 
@@ -166,10 +239,6 @@ public actor OpencodeStoreParser {
             .appendingPathComponent("TokeiOpencodeStore-\(UUID().uuidString)", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    private func copyDatabase(from sourceURL: URL, to destinationURL: URL) throws {
-        try SQLiteSidecarCopy.copyDatabase(from: sourceURL, to: destinationURL, using: fileManager)
     }
 
     private func readCopiedDatabase(at url: URL) throws -> DatabaseRead {
@@ -229,19 +298,9 @@ public actor OpencodeStoreParser {
     }
 
     private func openDatabase(at url: URL) throws -> OpaquePointer {
-        // Open the temp copy as `immutable=1` rather than a bare read-only path.
-        // opencode.db is a large, hot WAL database; `SQLiteSidecarCopy` duplicates
-        // the `.db` then its `-wal`/`-shm` in sequence, so if opencode checkpoints
-        // mid-copy the copied sidecars no longer match the `.db` and a plain
-        // read-only open fails with "unable to open database file" (SQLITE_CANTOPEN).
-        // `immutable=1` tells SQLite the file cannot change, so it ignores the
-        // sidecars entirely and reads the committed image — trading at most a few
-        // un-checkpointed frames (negligible for usage counts) for an open that
-        // never races. Requires the URI opener; percent-encode the path.
-        let uri = "file:\(Self.percentEncodedForFileURI(url.path))?immutable=1"
         var database: OpaquePointer?
         let openResult = sqlite3_open_v2(
-            uri, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX, nil
+            url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil
         )
         guard openResult == SQLITE_OK, let database else {
             let message = database.map { sqliteMessage($0) } ?? "unable to open copied opencode database"
@@ -249,15 +308,6 @@ public actor OpencodeStoreParser {
             throw OpencodeSQLiteReadError(message: message)
         }
         return database
-    }
-
-    /// Minimal encoding for a filesystem path embedded in a `file:` SQLite URI —
-    /// the temp-copy path is app-generated (a UUID dir), so only `%`/`?`/`#` and
-    /// spaces realistically need escaping, but encode conservatively.
-    private static func percentEncodedForFileURI(_ path: String) -> String {
-        let allowed = CharacterSet(charactersIn:
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/")
-        return path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
     }
 
     // MARK: - JSON fallback

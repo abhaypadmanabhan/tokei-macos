@@ -149,17 +149,266 @@ final class OpencodeStoreParserTests: XCTestCase {
         XCTAssertEqual(usage.hourlyTotals?.values.reduce(0, +), 30)
     }
 
+    func testF2ThirtyUnchangedRefreshesUseOneDatabaseSnapshot() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("cached", "session-a", 1_769_071_614_083, OpencodeFixtures.assistantWithCost),
+        ])
+        let fileManager = OpencodeCountingFileManager()
+        let parser = makeParser(fileManager: fileManager)
+
+        var last: OpencodeStoreParser.AggregateUsage?
+        for _ in 0..<30 {
+            last = await parser.parse(rootDirectory: root)
+        }
+
+        XCTAssertEqual(last?.lifetime.totalTokens, 24_463)
+        XCTAssertEqual(fileManager.opencodeSnapshotCount, 1)
+    }
+
+    func testF2WALOnlyCommitInvalidatesCacheAndAppearsInNextAggregate() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        let database = try openWALDatabase(at: databaseURL)
+        defer { sqlite3_close(database) }
+        try execute("PRAGMA wal_autocheckpoint=0", database: database)
+        try execute("""
+            CREATE TABLE message(
+              id TEXT PRIMARY KEY,
+              session_id TEXT,
+              time_created INT,
+              time_updated INT,
+              data TEXT
+            )
+            """, database: database)
+        try insert(
+            row: ("base", "session-a", 1_769_071_614_083, OpencodeFixtures.assistant(
+                id: "base", createdMillis: 1_769_071_614_083,
+                input: 10, output: 5, cacheRead: 0, cacheWrite: 0
+            )),
+            database: database
+        )
+        try execute("PRAGMA wal_checkpoint(TRUNCATE)", database: database)
+
+        let parser = makeParser()
+        let before = await parser.parse(rootDirectory: root)
+        XCTAssertEqual(before.lifetime.totalTokens, 15)
+
+        try insert(
+            row: ("wal", "session-a", 1_769_071_615_083, OpencodeFixtures.assistant(
+                id: "wal", createdMillis: 1_769_071_615_083,
+                input: 20, output: 0, cacheRead: 0, cacheWrite: 0
+            )),
+            database: database
+        )
+        let after = await parser.parse(rootDirectory: root)
+
+        XCTAssertEqual(after.lifetime.totalTokens, 35)
+    }
+
+    func testF2UnchangedDatabaseRewindowsAtLocalMidnight() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("today", "session-a", 1_769_071_614_083, OpencodeFixtures.assistant(
+                id: "today", createdMillis: 1_769_071_614_083,
+                input: 10, output: 5, cacheRead: 0, cacheWrite: 0
+            )),
+        ])
+        let clock = MutableTestDate(date("2026-01-22", hour: 12))
+        let fileManager = OpencodeCountingFileManager()
+        let parser = makeParser(fileManager: fileManager, now: { clock.value })
+
+        let beforeMidnight = await parser.parse(rootDirectory: root)
+        XCTAssertEqual(beforeMidnight.today.totalTokens, 15)
+
+        clock.value = date("2026-01-23", hour: 12)
+        let afterMidnight = await parser.parse(rootDirectory: root)
+
+        XCTAssertEqual(afterMidnight.today.totalTokens, 0)
+        XCTAssertEqual(afterMidnight.lifetime.totalTokens, 15)
+        XCTAssertEqual(fileManager.opencodeSnapshotCount, 2)
+    }
+
+    func testR06B01LockedDatabaseAfterMidnightDoesNotServeCachedAggregate() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        let beforeMidnight = date("2026-01-22", hour: 23).addingTimeInterval(59 * 60)
+        let committed = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: millis(beforeMidnight),
+            input: 10, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("msg", "session", millis(beforeMidnight), committed),
+        ])
+
+        let clock = MutableTestDate(beforeMidnight)
+        let parser = makeParser(now: { clock.value })
+        let cached = await parser.parse(rootDirectory: root)
+        XCTAssertEqual(cached.today.totalTokens, 10)
+
+        var database: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_open_v2(
+                databaseURL.path, &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil
+            ),
+            SQLITE_OK
+        )
+        guard let database else { throw XCTSkip("SQLite rollback-journal setup failed") }
+        defer {
+            sqlite3_exec(database, "ROLLBACK", nil, nil, nil)
+            sqlite3_close(database)
+        }
+        try execute("PRAGMA journal_mode=DELETE; PRAGMA cache_size=1", database: database)
+        let uncommitted = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: millis(beforeMidnight),
+            input: 900, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try execute("BEGIN EXCLUSIVE; UPDATE message SET data = '\(uncommitted)' WHERE id = 'msg'", database: database)
+        XCTAssertEqual(sqlite3_db_cacheflush(database), SQLITE_OK)
+
+        clock.value = beforeMidnight.addingTimeInterval(2 * 60)
+        let afterMidnight = await parser.parse(rootDirectory: root)
+
+        XCTAssertEqual(afterMidnight.sourceKind, .none)
+        XCTAssertEqual(afterMidnight.today.totalTokens, 0)
+        XCTAssertEqual(afterMidnight.dailyTotals[calendar.startOfDay(for: clock.value)] ?? 0, 0)
+        XCTAssertEqual(afterMidnight.lifetime.totalTokens, 0)
+        XCTAssertNotEqual(afterMidnight.lifetime.totalTokens, 900)
+        XCTAssertEqual(afterMidnight.warnings.count, 1)
+    }
+
+    func testR06B01DatabaseSchemaFailureFallsBackToJSONWarmAndCold() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        let created = date("2026-01-22", hour: 11)
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("db-msg", "session", millis(created), OpencodeFixtures.assistant(
+                id: "db-msg", createdMillis: millis(created),
+                input: 10, output: 0, cacheRead: 0, cacheWrite: 0
+            )),
+        ])
+        let parser = makeParser()
+        let cached = await parser.parse(rootDirectory: root)
+        XCTAssertEqual(cached.lifetime.totalTokens, 10)
+
+        var database: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_open_v2(
+                databaseURL.path, &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil
+            ),
+            SQLITE_OK
+        )
+        guard let database else { throw XCTSkip("SQLite schema-failure setup failed") }
+        defer { sqlite3_close(database) }
+        try execute("DROP TABLE message", database: database)
+
+        let messageDirectory = root.appendingPathComponent("storage/message/session-json", isDirectory: true)
+        try FileManager.default.createDirectory(at: messageDirectory, withIntermediateDirectories: true)
+        try OpencodeFixtures.assistant(
+            id: "json-msg", createdMillis: millis(created),
+            input: 77, output: 0, cacheRead: 0, cacheWrite: 0
+        ).write(
+            to: messageDirectory.appendingPathComponent("json-msg.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let warm = await parser.parse(rootDirectory: root)
+        let cold = await makeParser().parse(rootDirectory: root)
+
+        XCTAssertEqual(warm.sourceKind, .jsonFiles)
+        XCTAssertEqual(warm.lifetime.totalTokens, 77)
+        XCTAssertEqual(warm.warnings.count, 1)
+        XCTAssertEqual(cold.sourceKind, .jsonFiles)
+        XCTAssertEqual(cold.lifetime.totalTokens, 77)
+        XCTAssertEqual(cold.warnings.count, 1)
+    }
+
+    func testR0602RollbackJournalSpillNeverSurfacesUncommittedPages() async throws {
+        let root = try makeRoot()
+        let databaseURL = root.appendingPathComponent("opencode.db")
+        let committed = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: 1_789_611_000_000,
+            input: 10, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try createOpencodeDatabase(at: databaseURL, rows: [
+            ("msg", "session", 1_789_611_000_000, committed)
+        ])
+
+        let cachedParser = makeParser()
+        let committedUsage = await cachedParser.parse(rootDirectory: root)
+        XCTAssertEqual(committedUsage.lifetime.totalTokens, 10)
+
+        var database: OpaquePointer?
+        XCTAssertEqual(
+            sqlite3_open_v2(
+                databaseURL.path, &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil
+            ),
+            SQLITE_OK
+        )
+        guard let database else { throw XCTSkip("SQLite rollback-journal setup failed") }
+        defer {
+            sqlite3_exec(database, "ROLLBACK", nil, nil, nil)
+            sqlite3_close(database)
+        }
+        try execute("PRAGMA journal_mode=DELETE; PRAGMA cache_size=1", database: database)
+        let uncommitted = OpencodeFixtures.assistant(
+            id: "msg", createdMillis: 1_789_611_000_000,
+            input: 900, output: 0, cacheRead: 0, cacheWrite: 0
+        )
+        try execute("BEGIN EXCLUSIVE; UPDATE message SET data = '\(uncommitted)' WHERE id = 'msg'", database: database)
+        XCTAssertEqual(sqlite3_db_cacheflush(database), SQLITE_OK)
+
+        let uncached = await makeParser().parse(rootDirectory: root)
+        XCTAssertEqual(uncached.sourceKind, .none)
+        XCTAssertEqual(uncached.lifetime.totalTokens, 0)
+        XCTAssertEqual(uncached.warnings.count, 1)
+
+        let cached = await cachedParser.parse(rootDirectory: root)
+        // R06B-01/F2: failed reads invalidate cache so the warm path matches a cold parser.
+        XCTAssertEqual(cached.sourceKind, .none)
+        XCTAssertEqual(cached.lifetime.totalTokens, 0)
+        XCTAssertNotEqual(cached.lifetime.totalTokens, 900)
+        XCTAssertEqual(cached.warnings.count, 1)
+    }
+
     // MARK: - Helpers
 
-    private func makeParser() -> OpencodeStoreParser {
-        let now = calendar.date(from: DateComponents(
+    private func makeParser(
+        fileManager: FileManager = .default,
+        now: (@Sendable () -> Date)? = nil
+    ) -> OpencodeStoreParser {
+        let fixedNow = calendar.date(from: DateComponents(
             timeZone: TimeZone(identifier: "UTC"),
             year: 2026,
             month: 1,
             day: 22,
             hour: 12
         ))!
-        return OpencodeStoreParser(calendar: calendar, now: { now })
+        return OpencodeStoreParser(
+            fileManager: fileManager,
+            calendar: calendar,
+            now: now ?? { fixedNow }
+        )
+    }
+
+    private func openWALDatabase(at url: URL) throws -> OpaquePointer {
+        var database: OpaquePointer?
+        let result = sqlite3_open_v2(
+            url.path,
+            &database,
+            SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+            nil
+        )
+        XCTAssertEqual(result, SQLITE_OK)
+        guard let database else { throw XCTSkip("SQLite WAL setup failed") }
+        try execute("PRAGMA journal_mode=WAL", database: database)
+        return database
     }
 
     private func makeRoot() throws -> URL {
@@ -237,5 +486,43 @@ final class OpencodeStoreParserTests: XCTestCase {
         sqlite3_bind_int64(statement, 4, row.createdMillis + 1000)
         sqlite3_bind_text(statement, 5, row.data, -1, opencodeSQLiteTransient)
         XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+    }
+}
+
+private final class OpencodeCountingFileManager: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshotCount = 0
+
+    var opencodeSnapshotCount: Int {
+        lock.withLock { snapshotCount }
+    }
+
+    override func createDirectory(
+        at url: URL,
+        withIntermediateDirectories createIntermediates: Bool,
+        attributes: [FileAttributeKey: Any]? = nil
+    ) throws {
+        if url.lastPathComponent.hasPrefix("TokeiOpencodeStore-") {
+            lock.withLock { snapshotCount += 1 }
+        }
+        try super.createDirectory(
+            at: url,
+            withIntermediateDirectories: createIntermediates,
+            attributes: attributes
+        )
+    }
+}
+
+private final class MutableTestDate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Date
+
+    init(_ value: Date) {
+        storedValue = value
+    }
+
+    var value: Date {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = newValue } }
     }
 }

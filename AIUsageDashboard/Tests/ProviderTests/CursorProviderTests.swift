@@ -60,7 +60,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(noTokenStatus, .unauthenticated)
     }
 
-    func testFlagOffUsesOfflineOnly() async throws {
+    func testD11FlagOffKeepsAcceptedLinesOutOfTokenHistory() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
 
@@ -75,11 +75,12 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertNil(snapshot.monthUsage)
         XCTAssertNil(snapshot.costUsage)
         XCTAssertEqual(snapshot.warnings.map(\.message), ["Plan: Pro (active)"])
-        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 21)
+        // D11: accepted code lines are not tokens and must never enter token history.
+        XCTAssertNil(snapshot.dailyTotals)
         XCTAssertNil(snapshot.hourlyTotals)
     }
 
-    func testFlagOnFetchesTokensQuotaAndCost() async throws {
+    func testA3FlagOnFetchesTokensQuotaAndCostAtSuccessfulResponseTime() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
@@ -123,6 +124,8 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(quota.confidence, .providerReported)
         XCTAssertEqual(quota.label, "Pro (active)")
         XCTAssertNotNil(quota.resetAt)
+        // A3: provider quota freshness is the successful response time.
+        XCTAssertEqual(quota.observedAt, referenceNow)
     }
 
     func testFlagOnKeepsTokensWhenSummaryFails() async throws {
@@ -141,7 +144,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
     }
 
-    func testFlagOnWithClientFailureFallsBackToOffline() async throws {
+    func testD11FlagOnFailureDoesNotRelabelAcceptedLinesAsTokens() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 1, composerAccepted: 2))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
@@ -151,9 +154,47 @@ final class CursorProviderTests: XCTestCase {
 
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
         assertUnavailable(snapshot.todayUsage)
-        XCTAssertEqual(snapshot.dailyTotals?[day("2026-07-06")], 3)
+        // D11: an online failure leaves token history unavailable, not code-line totals.
+        XCTAssertNil(snapshot.dailyTotals)
         XCTAssertEqual(snapshot.warnings.last?.level, .warning)
         XCTAssertTrue(snapshot.warnings.last?.message.contains("Falling back") == true)
+    }
+
+    func testD11EmptyOnlineCSVProducesEmptyTokenHistory() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 100, composerAccepted: 23))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let client = MockCursorUsageClient(
+            csv: .success("Date,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output,Total Tokens,Cost\n"),
+            summary: .success(Data(CursorFixtures.usageSummary.utf8))
+        )
+
+        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
+
+        XCTAssertNil(snapshot.dailyTotals)
+        XCTAssertEqual(snapshot.todayUsage.totalTokens, 0)
+    }
+
+    func testF5CursorFetchUsesOneTemporaryDatabaseSnapshotAndCleansItUp() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 1, composerAccepted: 2))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let fileManager = CountingFileManager()
+        let client = MockCursorUsageClient(
+            csv: .success(CursorFixtures.usageEventsCSV),
+            summary: .success(Data(CursorFixtures.usageSummary.utf8))
+        )
+
+        _ = try await makeProvider(
+            stateDB: stateDB,
+            client: client,
+            fileManager: fileManager
+        ).fetchSnapshot()
+
+        XCTAssertEqual(fileManager.cursorSnapshotDirectories.count, 1)
+        XCTAssertTrue(fileManager.cursorSnapshotDirectories.allSatisfy {
+            !FileManager.default.fileExists(atPath: $0.path)
+        })
     }
 
     func testFlagOnWithUnresolvableSessionAddsWarning() async throws {
@@ -175,12 +216,14 @@ final class CursorProviderTests: XCTestCase {
 
     private func makeProvider(
         stateDB: URL,
-        client: CursorUsageClient? = nil
+        client: CursorUsageClient? = nil,
+        fileManager: FileManager = .default
     ) -> CursorProvider {
         let fixedNow = referenceNow
         return CursorProvider(
+            fileManager: fileManager,
             stateDatabaseURL: stateDB,
-            parser: CursorStateDBParser(calendar: calendar),
+            parser: CursorStateDBParser(fileManager: fileManager, calendar: calendar),
             usageClient: client,
             calendar: calendar,
             now: { fixedNow },
@@ -255,6 +298,59 @@ final class CursorProviderTests: XCTestCase {
     }
 }
 
+extension CursorProviderTests {
+    func testR0603CursorObservedAtUsesQuotaResponseTimeWhenCSVCompletesLater() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 0, composerAccepted: 0))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let clock = AdvancingCursorClock(referenceNow)
+        let client = DelayedCursorCSVClient(clock: clock)
+        let provider = CursorProvider(
+            stateDatabaseURL: stateDB,
+            usageClient: client,
+            calendar: calendar,
+            now: { clock.value },
+            userDefaults: userDefaults
+        )
+
+        let snapshot = try await provider.fetchSnapshot()
+        let quota = try XCTUnwrap(snapshot.quotaWindows.first)
+        XCTAssertEqual(quota.observedAt, referenceNow)
+        let utilization = Utilization(
+            providerID: .cursor,
+            window: quota.type,
+            usedPercent: quota.used ?? 0,
+            confidence: quota.confidence,
+            observedAt: quota.observedAt
+        )
+        XCTAssertFalse(RouteTargetPolicy.agent.isRoutable(utilization, now: clock.value))
+    }
+}
+
+private final class CountingFileManager: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshotDirectories: [URL] = []
+
+    var cursorSnapshotDirectories: [URL] {
+        lock.withLock { snapshotDirectories }
+    }
+
+    override func createDirectory(
+        at url: URL,
+        withIntermediateDirectories createIntermediates: Bool,
+        attributes: [FileAttributeKey: Any]? = nil
+    ) throws {
+        if url.lastPathComponent.hasPrefix("TokeiCursorStateDB-") {
+            lock.withLock { snapshotDirectories.append(url) }
+        }
+        try super.createDirectory(
+            at: url,
+            withIntermediateDirectories: createIntermediates,
+            attributes: attributes
+        )
+    }
+}
+
 private struct MockCursorUsageClient: CursorUsageClient {
     let csv: Result<String, Error>
     var summary: Result<Data, Error>?
@@ -269,5 +365,36 @@ private struct MockCursorUsageClient: CursorUsageClient {
         case .failure(let error): throw error
         case nil: throw CursorUsageError.unexpectedResponse
         }
+    }
+}
+
+private final class AdvancingCursorClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: Date
+
+    init(_ value: Date) { storedValue = value }
+
+    var value: Date { lock.withLock { storedValue } }
+
+    func advance(by interval: TimeInterval) { lock.withLock { storedValue += interval } }
+}
+
+private actor DelayedCursorCSVClient: CursorUsageClient {
+    private let clock: AdvancingCursorClock
+    private var summaryCompleted = false
+
+    init(clock: AdvancingCursorClock) {
+        self.clock = clock
+    }
+
+    func fetchUsageSummary(cookie: String) async throws -> Data {
+        summaryCompleted = true
+        return Data(CursorFixtures.usageSummary.utf8)
+    }
+    func fetchUsageEventsCSV(cookie: String) async throws -> String {
+        while !summaryCompleted { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(20))
+        clock.advance(by: 3_600)
+        return "Date,Total Tokens\n"
     }
 }
