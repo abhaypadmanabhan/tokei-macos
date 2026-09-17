@@ -70,7 +70,7 @@ public actor AntigravityStateDBParser {
     private func temporaryCopyDirectory() throws -> URL {
         let directory = fileManager.temporaryDirectory
             .appendingPathComponent("TokeiAntigravityStateDB-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try SQLiteSidecarCopy.createPrivateSnapshotDirectory(at: directory, using: fileManager)
         return directory
     }
 

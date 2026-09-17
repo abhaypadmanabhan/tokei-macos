@@ -1,3 +1,4 @@
+import Darwin
 import SQLite3
 import XCTest
 @testable import AIUsageDashboardCore
@@ -100,11 +101,56 @@ final class CursorStateDBParserTests: XCTestCase {
         XCTAssertNil(token)
     }
 
+    func testS04SnapshotUsesPrivatePermissionsUnderPermissiveUmask() throws {
+        let source = tempDirectory.appendingPathComponent("restrictive-source.sqlite")
+        try createStateDatabase(at: source, rows: ["cursorAuth/accessToken": "placeholder"])
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o600)],
+            ofItemAtPath: source.path
+        )
+
+        let snapshotDirectory = tempDirectory.appendingPathComponent("snapshot", isDirectory: true)
+        let destination = snapshotDirectory.appendingPathComponent("state.vscdb")
+        let priorMask = umask(0)
+        defer { umask(priorMask) }
+
+        try SQLiteSidecarCopy.createPrivateSnapshotDirectory(
+            at: snapshotDirectory,
+            using: .default
+        )
+
+        let sentinel = Data("do-not-replace".utf8)
+        try sentinel.write(to: destination)
+        XCTAssertThrowsError(
+            try SQLiteSidecarCopy.copyDatabase(
+                from: source,
+                to: destination,
+                using: .default
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: destination), sentinel)
+        try FileManager.default.removeItem(at: destination)
+
+        try SQLiteSidecarCopy.copyDatabase(
+            from: source,
+            to: destination,
+            using: .default
+        )
+
+        XCTAssertEqual(try permissions(at: snapshotDirectory), 0o700)
+        XCTAssertEqual(try permissions(at: destination), 0o600)
+    }
+
     // MARK: - Helpers
 
     private func date(_ dayString: String) -> Date {
         let parts = dayString.split(separator: "-").compactMap { Int($0) }
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))!
+    }
+
+    private func permissions(at url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return try XCTUnwrap(attributes[.posixPermissions] as? NSNumber).intValue & 0o777
     }
 
     private func createStateDatabase(at url: URL, rows: [String: String]) throws {

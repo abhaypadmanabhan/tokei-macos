@@ -1,5 +1,9 @@
 import Foundation
 
+enum JSONLRecordFraming {
+    static let maximumRecordBytes = 16 * 1024 * 1024
+}
+
 enum LineParseOutcome: Sendable {
     case usage(ClaudeUsageRecord)
     case skipped
@@ -41,6 +45,7 @@ extension ClaudeJSONLParser {
         var recordsByID: [String: ClaudeUsageRecord]
         var unkeyedAggregate: FileAggregate
         var malformedCount: Int
+        var discardingOversizedRecord: Bool
     }
 
     struct CalendarIdentity: Equatable {
@@ -149,7 +154,8 @@ extension ClaudeJSONLParser {
             continuityTail: try continuityTail(at: url, endingAt: result.finalOffset),
             recordsByID: recordsByID,
             unkeyedAggregate: unkeyedAggregate,
-            malformedCount: result.malformedCount
+            malformedCount: result.malformedCount,
+            discardingOversizedRecord: result.discardingOversizedRecord
         )
     }
 
@@ -161,7 +167,11 @@ extension ClaudeJSONLParser {
         fileIdentifier: Data?
     ) async throws -> FileCacheEntry {
         var entry = cached
-        let result = try await parseFile(at: url, startingAtByte: cached.byteOffset) { [self] record in
+        let result = try await parseFile(
+            at: url,
+            startingAtByte: cached.byteOffset,
+            startingInOversizedRecord: cached.discardingOversizedRecord
+        ) { [self] record in
             if let key = record.dedupeKey {
                 self.reconcile(record, for: key, into: &entry.recordsByID)
             } else {
@@ -174,6 +184,7 @@ extension ClaudeJSONLParser {
         entry.fileIdentifier = fileIdentifier
         entry.continuityTail = try continuityTail(at: url, endingAt: result.finalOffset)
         entry.malformedCount += result.malformedCount
+        entry.discardingOversizedRecord = result.discardingOversizedRecord
         return entry
     }
 
@@ -243,11 +254,18 @@ extension ClaudeJSONLParser {
     func parseFile(
         at url: URL,
         startingAtByte byteOffset: UInt64,
+        startingInOversizedRecord: Bool = false,
         onRecord: (ClaudeUsageRecord) -> Void
-    ) async throws -> (malformedCount: Int, finalOffset: UInt64) {
+    ) async throws -> (
+        malformedCount: Int,
+        finalOffset: UInt64,
+        discardingOversizedRecord: Bool
+    ) {
         var malformedCount = 0
         var finalOffset = byteOffset
         var buffer = Data()
+        var alreadyScanned = 0
+        var discardingOversizedRecord = startingInOversizedRecord
         let fileHandle = try FileHandle(forReadingFrom: url)
         defer { fileHandle.closeFile() }
 
@@ -259,32 +277,62 @@ extension ClaudeJSONLParser {
             guard let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
                 return false
             }
-            buffer.append(chunk)
-            var lineStart = buffer.startIndex
 
-            while let newlineIndex = buffer[lineStart...].firstIndex(of: 0x0A) {
-                var line = Data(buffer[lineStart..<newlineIndex])
-                if line.last == 0x0D { line.removeLast() }
-                if !line.isEmpty {
-                    process(line, malformedCount: &malformedCount, onRecord: onRecord)
+            if discardingOversizedRecord {
+                guard let newlineIndex = chunk.firstIndex(of: 0x0A) else {
+                    finalOffset += UInt64(chunk.count)
+                    return true
+                }
+                let nextRecordStart = chunk.index(after: newlineIndex)
+                finalOffset += UInt64(chunk.distance(from: chunk.startIndex, to: nextRecordStart))
+                discardingOversizedRecord = false
+                buffer.append(contentsOf: chunk[nextRecordStart...])
+            } else {
+                buffer.append(chunk)
+            }
+
+            var lineStart = buffer.startIndex
+            var searchStart = buffer.index(buffer.startIndex, offsetBy: alreadyScanned)
+
+            while let newlineIndex = buffer[searchStart...].firstIndex(of: 0x0A) {
+                let recordByteCount = buffer.distance(from: lineStart, to: newlineIndex)
+                if recordByteCount > JSONLRecordFraming.maximumRecordBytes {
+                    malformedCount += 1
+                } else {
+                    var line = Data(buffer[lineStart..<newlineIndex])
+                    if line.last == 0x0D { line.removeLast() }
+                    if !line.isEmpty {
+                        process(line, malformedCount: &malformedCount, onRecord: onRecord)
+                    }
                 }
                 lineStart = buffer.index(after: newlineIndex)
+                searchStart = lineStart
             }
 
             if lineStart > buffer.startIndex {
                 finalOffset += UInt64(buffer.distance(from: buffer.startIndex, to: lineStart))
                 buffer.removeSubrange(buffer.startIndex..<lineStart)
             }
+            alreadyScanned = buffer.count
+            if buffer.count > JSONLRecordFraming.maximumRecordBytes {
+                malformedCount += 1
+                finalOffset += UInt64(buffer.count)
+                buffer.removeAll(keepingCapacity: false)
+                alreadyScanned = 0
+                discardingOversizedRecord = true
+            }
             return true
         }) {}
 
-        processTrailingBuffer(
-            buffer,
-            malformedCount: &malformedCount,
-            finalOffset: &finalOffset,
-            onRecord: onRecord
-        )
-        return (malformedCount, finalOffset)
+        if !discardingOversizedRecord {
+            processTrailingBuffer(
+                buffer,
+                malformedCount: &malformedCount,
+                finalOffset: &finalOffset,
+                onRecord: onRecord
+            )
+        }
+        return (malformedCount, finalOffset, discardingOversizedRecord)
     }
 
     private func processTrailingBuffer(
@@ -348,6 +396,22 @@ extension ClaudeJSONLParser {
         let requestID = json["requestId"] as? String ?? json["request_id"] as? String
         let sessionID = json["sessionId"] as? String ?? json["session_id"] as? String
         let uuid = json["uuid"] as? String
+        guard let inputTokens = CheckedNumericConversion.tokenCount(usage["input_tokens"]),
+              let outputTokens = CheckedNumericConversion.tokenCount(usage["output_tokens"]),
+              let cacheReadInputTokens = CheckedNumericConversion.tokenCount(
+                  usage["cache_read_input_tokens"]
+              ),
+              let cacheCreationInputTokens = CheckedNumericConversion.tokenCount(
+                  usage["cache_creation_input_tokens"]
+              ) else {
+            return .malformed
+        }
+        var totalOverflowed = false
+        _ = TokenArithmetic.sum(
+            [inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens],
+            overflowed: &totalOverflowed
+        )
+        guard !totalOverflowed else { return .malformed }
 
         let record = ClaudeUsageRecord(
             messageID: messageID,
@@ -355,10 +419,10 @@ extension ClaudeJSONLParser {
             sessionID: sessionID,
             uuid: uuid,
             timestamp: JSONLDateParsing.parseTimestamp(from: json),
-            inputTokens: usage["input_tokens"] as? Int ?? 0,
-            outputTokens: usage["output_tokens"] as? Int ?? 0,
-            cacheReadInputTokens: usage["cache_read_input_tokens"] as? Int ?? 0,
-            cacheCreationInputTokens: usage["cache_creation_input_tokens"] as? Int ?? 0
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            cacheReadInputTokens: cacheReadInputTokens,
+            cacheCreationInputTokens: cacheCreationInputTokens
         )
         return .usage(record)
     }

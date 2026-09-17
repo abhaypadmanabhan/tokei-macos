@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SQLite3
 
@@ -8,13 +9,35 @@ import SQLite3
 /// consistent snapshot. Busy/locked sources are retried briefly; a raw main-file copy
 /// is never used because rollback-journal pages may contain uncommitted writes.
 enum SQLiteSidecarCopy {
+    static func createPrivateSnapshotDirectory(
+        at directoryURL: URL,
+        using fileManager: FileManager
+    ) throws {
+        let privatePermissions = NSNumber(value: 0o700)
+        try fileManager.createDirectory(
+            at: directoryURL,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: privatePermissions]
+        )
+        // Enforce the final mode even if a FileManager implementation ignores the
+        // creation attributes or the process umask changes them.
+        try fileManager.setAttributes(
+            [.posixPermissions: privatePermissions],
+            ofItemAtPath: directoryURL.path
+        )
+    }
+
     static func copyDatabase(
         from sourceURL: URL,
         to destinationURL: URL,
         using fileManager: FileManager
     ) throws {
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
+        try createPrivateDestinationFile(at: destinationURL)
+        var shouldRemoveDestination = true
+        defer {
+            if shouldRemoveDestination {
+                try? fileManager.removeItem(at: destinationURL)
+            }
         }
 
         var sourceDatabase: OpaquePointer?
@@ -80,6 +103,7 @@ enum SQLiteSidecarCopy {
             guard journalResult == SQLITE_OK else {
                 throw SQLiteSnapshotError(message: message ?? "could not finalize SQLite snapshot")
             }
+            shouldRemoveDestination = false
             return
         }
 
@@ -88,8 +112,50 @@ enum SQLiteSidecarCopy {
             : sqliteMessage(destinationDatabase)
         sqlite3_close(destinationDatabase)
         sqlite3_close(sourceDatabase)
-        try? fileManager.removeItem(at: destinationURL)
         throw SQLiteSnapshotError(message: message)
+    }
+
+    private static func createPrivateDestinationFile(at destinationURL: URL) throws {
+        let descriptor = destinationURL.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else {
+                errno = EINVAL
+                return -1
+            }
+            return Darwin.open(
+                path,
+                O_CREAT | O_EXCL | O_WRONLY,
+                mode_t(S_IRUSR | S_IWUSR)
+            )
+        }
+        guard descriptor >= 0 else {
+            let errorNumber = errno
+            throw SQLiteSnapshotError(
+                message: "unable to create private SQLite snapshot: \(String(cString: strerror(errorNumber)))"
+            )
+        }
+
+        let chmodResult = Darwin.fchmod(descriptor, mode_t(S_IRUSR | S_IWUSR))
+        let chmodError = errno
+        let closeResult = Darwin.close(descriptor)
+        let closeError = errno
+        guard chmodResult == 0 else {
+            removePrivateDestinationFile(at: destinationURL)
+            throw SQLiteSnapshotError(
+                message: "unable to secure SQLite snapshot: \(String(cString: strerror(chmodError)))"
+            )
+        }
+        guard closeResult == 0 else {
+            removePrivateDestinationFile(at: destinationURL)
+            throw SQLiteSnapshotError(
+                message: "unable to close SQLite snapshot: \(String(cString: strerror(closeError)))"
+            )
+        }
+    }
+
+    private static func removePrivateDestinationFile(at destinationURL: URL) {
+        destinationURL.withUnsafeFileSystemRepresentation { path in
+            if let path { _ = Darwin.unlink(path) }
+        }
     }
 
     private static func sqliteMessage(_ database: OpaquePointer) -> String {

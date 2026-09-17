@@ -91,6 +91,64 @@ final class MCPServerTests: XCTestCase {
     XCTAssertEqual(try capture.object(at: 1)["id"] as? Int, 2)
   }
 
+  func testS03SixteenMiBUnterminatedFrameStopsAccumulatingAtOneMiB() {
+    let exactLimitFrame = Data(repeating: 0x58, count: MCPFrameReader.maximumFrameBytes)
+    var exactLimitInput = exactLimitFrame
+    exactLimitInput.append(0x0A)
+    var exactLimitOffset = 0
+    var exactLimitReader = MCPFrameReader { requestedBytes in
+      guard exactLimitOffset < exactLimitInput.count else { return nil }
+      let end = min(exactLimitOffset + requestedBytes, exactLimitInput.count)
+      defer { exactLimitOffset = end }
+      return exactLimitInput.subdata(in: exactLimitOffset..<end)
+    }
+    XCTAssertEqual(exactLimitReader.nextFrame(), .data(exactLimitFrame))
+
+    let fixture = Data(repeating: 0x58, count: 16 * 1024 * 1024)
+    var offset = 0
+    var reader = MCPFrameReader { requestedBytes in
+      guard offset < fixture.count else { return nil }
+      let end = min(offset + requestedBytes, fixture.count)
+      defer { offset = end }
+      return fixture.subdata(in: offset..<end)
+    }
+
+    XCTAssertEqual(reader.nextFrame(), .oversized)
+    while reader.nextFrame() != nil {}
+
+    XCTAssertEqual(offset, fixture.count)
+    XCTAssertLessThanOrEqual(
+      reader.peakBufferedByteCount,
+      MCPFrameReader.maximumFrameBytes + 1
+    )
+  }
+
+  func testS03OversizedFrameAndIDReturnFixedErrorThenContinue() throws {
+    let (server, capture) = try makeServer()
+    let oversizedID = String(repeating: "i", count: MCPFrameReader.maximumFrameBytes)
+    let input = Data(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"\(oversizedID)\",\"method\":\"ping\"}\n"
+        .appending(#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#)
+        .utf8
+    )
+    var offset = 0
+    var reader = MCPFrameReader { requestedBytes in
+      guard offset < input.count else { return nil }
+      let end = min(offset + requestedBytes, input.count)
+      defer { offset = end }
+      return input.subdata(in: offset..<end)
+    }
+
+    server.run(frameReader: &reader)
+
+    XCTAssertEqual(capture.lines.count, 2)
+    let oversizedResponse = try capture.object(at: 0)
+    let error = try rpcError(oversizedResponse, code: -32600)
+    XCTAssertEqual(error["message"] as? String, MCPServer.oversizedFrameMessage)
+    XCTAssertTrue(oversizedResponse["id"] is NSNull, "oversized ids are never reflected")
+    XCTAssertEqual(try capture.object(at: 1)["id"] as? Int, 7)
+  }
+
   func testResponseEnvelopeCarriesJSONRPCVersionAndEchoesID() throws {
     let (server, capture) = try makeServer()
 
@@ -368,5 +426,27 @@ final class MCPServerTests: XCTestCase {
     XCTAssertEqual(error["code"] as? Int, -32601)
     let message = try XCTUnwrap(error["message"] as? String)
     XCTAssertTrue(message.contains("resources/list"), "name the method so the client can debug it")
+  }
+
+  func testS03OneMiBUnknownNamesProduceBoundedErrors() throws {
+    let longName = String(repeating: "x", count: 1024 * 1024)
+
+    do {
+      let (server, capture) = try makeServer()
+      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\(longName)\"}")
+      let error = try rpcError(capture.onlyObject(), code: -32601)
+      let message = try XCTUnwrap(error["message"] as? String)
+      XCTAssertLessThan(message.utf8.count, 256)
+      XCTAssertTrue(message.hasSuffix(String(repeating: "x", count: 128)))
+    }
+
+    do {
+      let (server, capture) = try makeServer()
+      server.handle(line: "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"\(longName)\"}}")
+      let error = try rpcError(capture.onlyObject(), code: -32602)
+      let message = try XCTUnwrap(error["message"] as? String)
+      XCTAssertLessThan(message.utf8.count, 256)
+      XCTAssertTrue(message.hasSuffix(String(repeating: "x", count: 128)))
+    }
   }
 }

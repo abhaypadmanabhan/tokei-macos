@@ -11,6 +11,87 @@ import CoreFoundation
 import AIUsageDashboardCore
 #endif
 
+/// Bounded newline framing for the stdio transport. Once a frame exceeds the cap,
+/// bytes are discarded directly from the input until the next delimiter instead of
+/// being accumulated in memory.
+struct MCPFrameReader {
+    static let maximumFrameBytes = 1024 * 1024
+    private static let readChunkBytes = 64 * 1024
+
+    enum Frame: Equatable {
+        case data(Data)
+        case oversized
+    }
+
+    private let readChunk: (Int) -> Data?
+    private var buffer = Data()
+    private var discardingOversizedFrame = false
+    private(set) var peakBufferedByteCount = 0
+
+    init(readChunk: @escaping (Int) -> Data?) {
+        self.readChunk = readChunk
+    }
+
+    init(fileHandle: FileHandle) {
+        self.init { requestedBytes in
+            guard let data = try? fileHandle.read(upToCount: requestedBytes),
+                  !data.isEmpty
+            else {
+                return nil
+            }
+            return data
+        }
+    }
+
+    mutating func nextFrame() -> Frame? {
+        while true {
+            if discardingOversizedFrame {
+                guard let chunk = readChunk(Self.readChunkBytes), !chunk.isEmpty else {
+                    discardingOversizedFrame = false
+                    return nil
+                }
+                guard let delimiter = chunk.firstIndex(of: 0x0A) else { continue }
+
+                discardingOversizedFrame = false
+                let suffixStart = chunk.index(after: delimiter)
+                if suffixStart < chunk.endIndex {
+                    buffer.append(contentsOf: chunk[suffixStart...])
+                    recordPeak()
+                }
+                continue
+            }
+
+            if let delimiter = buffer.firstIndex(of: 0x0A) {
+                let frameByteCount = buffer.distance(from: buffer.startIndex, to: delimiter)
+                let frame = Data(buffer[..<delimiter])
+                buffer.removeSubrange(buffer.startIndex...delimiter)
+                return frameByteCount <= Self.maximumFrameBytes ? .data(frame) : .oversized
+            }
+
+            if buffer.count > Self.maximumFrameBytes {
+                buffer.removeAll(keepingCapacity: false)
+                discardingOversizedFrame = true
+                return .oversized
+            }
+
+            let remainingCapacity = Self.maximumFrameBytes + 1 - buffer.count
+            let requestedBytes = min(Self.readChunkBytes, remainingCapacity)
+            guard let chunk = readChunk(requestedBytes), !chunk.isEmpty else {
+                guard !buffer.isEmpty else { return nil }
+                let frame = buffer
+                buffer.removeAll(keepingCapacity: false)
+                return .data(frame)
+            }
+            buffer.append(chunk)
+            recordPeak()
+        }
+    }
+
+    private mutating func recordPeak() {
+        peakBufferedByteCount = max(peakBufferedByteCount, buffer.count)
+    }
+}
+
 /// Minimal stdio MCP server (issue #57). Speaks newline-delimited JSON-RPC 2.0 over
 /// stdin/stdout — the stdio transport every major client supports without caveats.
 ///
@@ -25,6 +106,8 @@ import AIUsageDashboardCore
 struct MCPServer {
     static let protocolVersion = "2024-11-05"
     static let serverName = "tokei"
+    static let oversizedFrameMessage = "Invalid Request: frame exceeds 1048576 bytes."
+    private static let maximumDiagnosticNameCharacters = 128
 
     private enum ToolName: String {
         case usage = "get_usage"
@@ -49,13 +132,34 @@ struct MCPServer {
         self.output = output
     }
 
-    /// - Parameter nextLine: the transport. Defaults to stdin; injected in tests so the
-    ///   read loop itself (blank-line skipping, one frame per message) is covered.
-    func run(nextLine: () -> String? = { readLine(strippingNewline: true) }) {
+    /// Runs the bounded production transport over stdin.
+    func run() {
+        var frameReader = MCPFrameReader(fileHandle: .standardInput)
+        run(frameReader: &frameReader)
+    }
+
+    /// Injected line transport retained for focused protocol-loop tests.
+    func run(nextLine: () -> String?) {
         while let line = nextLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
             handle(line: trimmed)
+        }
+    }
+
+    func run(frameReader: inout MCPFrameReader) {
+        while let frame = frameReader.nextFrame() {
+            switch frame {
+            case let .data(data):
+                guard let line = String(data: data, encoding: .utf8) else {
+                    send(errorResponse(id: nil, code: -32700, message: "Parse error"))
+                    continue
+                }
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { handle(line: trimmed) }
+            case .oversized:
+                send(errorResponse(id: nil, code: -32600, message: Self.oversizedFrameMessage))
+            }
         }
     }
 
@@ -142,9 +246,17 @@ struct MCPServer {
             }
         default:
             if !request.isNotification {
-                send(errorResponse(id: request.id, code: -32601, message: "Method not found: \(request.method)"))
+                send(errorResponse(
+                    id: request.id,
+                    code: -32601,
+                    message: "Method not found: \(Self.boundedDiagnosticName(request.method))"
+                ))
             }
         }
+    }
+
+    private static func boundedDiagnosticName(_ name: String) -> String {
+        String(name.prefix(maximumDiagnosticNameCharacters))
     }
 
     private static func isValidID(_ value: Any?) -> Bool {
@@ -280,11 +392,13 @@ struct MCPServer {
             return .invalid("Missing tool name.")
         }
         guard let tool = ToolName(rawValue: name) else {
-            return .invalid("Unknown tool: \(name)")
+            return .invalid("Unknown tool: \(Self.boundedDiagnosticName(name))")
         }
         if let value = params["arguments"] {
             guard let arguments = value as? [String: Any], arguments.isEmpty else {
-                return .invalid("Invalid arguments for \(name): expected an empty object.")
+                return .invalid(
+                    "Invalid arguments for \(Self.boundedDiagnosticName(name)): expected an empty object."
+                )
             }
         }
         return .valid(tool)

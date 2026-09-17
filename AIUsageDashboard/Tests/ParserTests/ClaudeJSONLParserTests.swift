@@ -25,6 +25,22 @@ final class ClaudeJSONLParserTests: XCTestCase {
         return url
     }
 
+    private func writeFixture(_ data: Data, named: String) throws -> URL {
+        let url = tempDirectory.appendingPathComponent(named)
+        try data.write(to: url)
+        return url
+    }
+
+    private func ignoredRecord(byteCount: Int) -> Data {
+        let prefix = Data(#"{"ignored":""#.utf8)
+        let suffix = Data(#""}"#.utf8)
+        precondition(byteCount >= prefix.count + suffix.count)
+        var record = prefix
+        record.append(Data(repeating: 0x78, count: byteCount - prefix.count - suffix.count))
+        record.append(suffix)
+        return record
+    }
+
   private func makeSource(url: URL, sessionID: String = "test-session") -> LogSource {
     LogSource(providerID: .claudeCode, url: url, sessionID: sessionID)
   }
@@ -188,6 +204,66 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(usage.warnings.count, 1)
     XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
     XCTAssertEqual(usage.warnings[0].level, .warning)
+  }
+
+  func testS02ClaudeOverflowFixtureIsRejectedAsMalformedInsteadOfTrapping() async {
+    let fixture = #"{"usage":{"input_tokens":9223372036854775807,"output_tokens":1}}"#
+    let url = writeFixture(fixture, named: "s02-claude-overflow.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.totalTokens, 0)
+    XCTAssertEqual(usage.warnings.count, 1)
+    XCTAssertTrue(usage.warnings[0].message.contains("malformed"))
+  }
+
+  func testS02ClaudeCrossRecordOverflowSaturatesWithWarning() async {
+    let fixture = [
+      #"{"message":{"id":"first","usage":{"input_tokens":9223372036854775806}}}"#,
+      #"{"message":{"id":"second","usage":{"input_tokens":2}}}"#
+    ].joined(separator: "\n")
+    let url = writeFixture(fixture, named: "s02-claude-cross-record-overflow.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertEqual(usage.lifetime.totalTokens, .max)
+    XCTAssertTrue(usage.warnings.contains { $0.message.contains("integer range") })
+  }
+
+  func testS01ClaudeAcceptsRecordsThroughSixteenMiBAtChunkBoundaries() async throws {
+    for mebibytes in [1, 4, 16] {
+      var fixture = ignoredRecord(byteCount: mebibytes * 1024 * 1024)
+      fixture.append(0x0A)
+      let url = try writeFixture(fixture, named: "s01-claude-\(mebibytes)-mib.jsonl")
+
+      let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+      XCTAssertEqual(usage.lifetime.totalTokens, 0)
+      XCTAssertTrue(usage.warnings.isEmpty, "\(mebibytes) MiB should be accepted")
+    }
+  }
+
+  func testS01ClaudeSkipsOversizedIncompleteRecordOnceAndResumesAfterDelimiter() async throws {
+    let url = try writeFixture(
+      ignoredRecord(byteCount: 17 * 1024 * 1024),
+      named: "s01-claude-oversized.jsonl"
+    )
+    let parser = makeParser()
+
+    let incomplete = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(incomplete.lifetime.totalTokens, 0)
+    XCTAssertEqual(incomplete.warnings.count, 1)
+    XCTAssertLessThan(try XCTUnwrap(incomplete.warnings.first).message.utf8.count, 256)
+
+    let valid = ClaudeFixtures.usageLine(id: "s01-after-oversized", output: 7)
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("\n\(valid)".utf8))
+    try handle.close()
+
+    let resumed = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
+    XCTAssertEqual(resumed.lifetime.totalTokens, 7)
+    XCTAssertEqual(resumed.warnings.count, 1, "one oversized record emits one warning")
   }
 
   func testWindowBucketing() async {

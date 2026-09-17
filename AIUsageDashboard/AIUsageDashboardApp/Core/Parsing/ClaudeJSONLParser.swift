@@ -80,7 +80,11 @@ public actor ClaudeJSONLParser {
 
         let byAccountID = Dictionary(uniqueKeysWithValues: prepared.map { account in
             let aggregate = allocation.byAccountID[account.id] ?? .empty
-            return (account.id, makeAggregate(from: aggregate, warnings: account.warnings))
+            var warnings = account.warnings
+            if aggregate.arithmeticOverflowed {
+                warnings.append(arithmeticOverflowWarning())
+            }
+            return (account.id, makeAggregate(from: aggregate, warnings: warnings))
         })
 
         stats.emit(
@@ -219,12 +223,14 @@ public actor ClaudeJSONLParser {
         var lifetime: TokenUsage
         var dailyUsage: [Date: TokenUsage]
         var hourlyTotals: [Date: Int]
+        var arithmeticOverflowed: Bool
 
         static var empty: FileAggregate {
             FileAggregate(
                 lifetime: TokenUsage(confidence: .localParsed),
                 dailyUsage: [:],
-                hourlyTotals: [:]
+                hourlyTotals: [:],
+                arithmeticOverflowed: false
             )
         }
     }
@@ -234,7 +240,12 @@ public actor ClaudeJSONLParser {
         record: ClaudeUsageRecord,
         multiplier: Int = 1
     ) {
-        let usage = adjusted(aggregate.lifetime, by: record, multiplier: multiplier)
+        let usage = adjusted(
+            aggregate.lifetime,
+            by: record,
+            multiplier: multiplier,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
         aggregate.lifetime = usage
 
         guard let timestamp = record.timestamp else { return }
@@ -242,7 +253,8 @@ public actor ClaudeJSONLParser {
         let adjustedDay = adjusted(
             aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed),
             by: record,
-            multiplier: multiplier
+            multiplier: multiplier,
+            overflowed: &aggregate.arithmeticOverflowed
         )
         if adjustedDay.totalTokens == 0 {
             aggregate.dailyUsage.removeValue(forKey: day)
@@ -252,35 +264,61 @@ public actor ClaudeJSONLParser {
 
         guard let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar),
               record.totalTokens > 0 else { return }
-        aggregate.hourlyTotals[hour, default: 0] += record.totalTokens * multiplier
+        let contribution = TokenArithmetic.multiplied(
+            record.totalTokens,
+            by: multiplier,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+        aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
+            aggregate.hourlyTotals[hour, default: 0],
+            contribution,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
         if aggregate.hourlyTotals[hour] == 0 { aggregate.hourlyTotals.removeValue(forKey: hour) }
     }
 
     private func adjusted(
         _ usage: TokenUsage,
         by record: ClaudeUsageRecord,
-        multiplier: Int
+        multiplier: Int,
+        overflowed: inout Bool
     ) -> TokenUsage {
-        TokenUsage(
-            inputTokens: (usage.inputTokens ?? 0) + record.inputTokens * multiplier,
-            outputTokens: (usage.outputTokens ?? 0) + record.outputTokens * multiplier,
-            cacheReadTokens: (usage.cacheReadTokens ?? 0) + record.cacheReadInputTokens * multiplier,
-            cacheCreationTokens: (usage.cacheCreationTokens ?? 0)
-                + record.cacheCreationInputTokens * multiplier,
+        func adjustedComponent(_ current: Int, _ value: Int) -> Int {
+            let contribution = TokenArithmetic.multiplied(value, by: multiplier, overflowed: &overflowed)
+            return TokenArithmetic.adding(current, contribution, overflowed: &overflowed)
+        }
+
+        return TokenUsage(
+            inputTokens: adjustedComponent(usage.inputTokens ?? 0, record.inputTokens),
+            outputTokens: adjustedComponent(usage.outputTokens ?? 0, record.outputTokens),
+            cacheReadTokens: adjustedComponent(usage.cacheReadTokens ?? 0, record.cacheReadInputTokens),
+            cacheCreationTokens: adjustedComponent(
+                usage.cacheCreationTokens ?? 0,
+                record.cacheCreationInputTokens
+            ),
             reasoningTokens: usage.reasoningTokens ?? 0,
             confidence: .localParsed
         )
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
-        aggregate.lifetime = aggregate.lifetime.merging(incremental.lifetime)
+        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed
+            || incremental.arithmeticOverflowed
+        aggregate.lifetime = aggregate.lifetime.merging(
+            incremental.lifetime,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
         for (day, usage) in incremental.dailyUsage {
             aggregate.dailyUsage[day] = (
                 aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
-            ).merging(usage)
+            ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
         for (hour, total) in incremental.hourlyTotals {
-            aggregate.hourlyTotals[hour, default: 0] += total
+            aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
+                aggregate.hourlyTotals[hour, default: 0],
+                total,
+                overflowed: &aggregate.arithmeticOverflowed
+            )
         }
     }
 
@@ -300,7 +338,7 @@ public actor ClaudeJSONLParser {
         }
         for (hour, total) in aggregate.hourlyTotals {
             guard hour >= windows.hourlyStartDate, hour < windows.nextDayStartDate else { continue }
-            hourlyTotals[hour, default: 0] += total
+            hourlyTotals[hour] = TokenArithmetic.adding(hourlyTotals[hour, default: 0], total)
         }
     }
 
@@ -381,6 +419,13 @@ public actor ClaudeJSONLParser {
     private func malformedWarning(count: Int, url: URL) -> ProviderWarning {
         ProviderWarning(
             message: "\(url.lastPathComponent): \(count) malformed line(s) skipped",
+            level: .warning
+        )
+    }
+
+    private func arithmeticOverflowWarning() -> ProviderWarning {
+        ProviderWarning(
+            message: "Claude token totals exceeded the supported integer range and were clamped.",
             level: .warning
         )
     }
