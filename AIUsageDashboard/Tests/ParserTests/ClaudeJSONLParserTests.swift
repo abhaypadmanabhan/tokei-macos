@@ -372,6 +372,41 @@ final class ClaudeJSONLParserTests: XCTestCase {
     XCTAssertEqual(warm.lifetime.totalTokens, 900)
   }
 
+  /// R05B-1: a read failure must invalidate both the file and allocation caches.
+  func testR05B1_readFailureEvictsAllocation() async throws {
+    let parser = makeParser()
+    let initial = ClaudeFixtures.usageLine(id: "msg_before_failure", output: 100)
+    let appended = ClaudeFixtures.usageLine(id: "msg_after_failure", output: 50)
+    let url = writeFixture(initial, named: "r05b-1-read-failure.jsonl")
+    let heldURL = tempDirectory.appendingPathComponent("r05b-1-held.jsonl")
+
+    let before = await parser.parse(logSources: [try makeSourceWithDiscoveryMetadata(url: url)])
+    XCTAssertEqual(before.lifetime.totalTokens, 100)
+
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("\n\(appended)".utf8))
+    try handle.close()
+    let changedSource = try makeSourceWithDiscoveryMetadata(url: url)
+
+    try FileManager.default.moveItem(at: url, to: heldURL)
+    defer {
+      if FileManager.default.fileExists(atPath: heldURL.path) {
+        try? FileManager.default.moveItem(at: heldURL, to: url)
+      }
+    }
+
+    let warmMissing = await parser.parse(logSources: [changedSource])
+    let coldMissing = await makeParser().parse(logSources: [changedSource])
+    XCTAssertEqual(warmMissing.lifetime.totalTokens, 0)
+    XCTAssertEqual(warmMissing.lifetime.totalTokens, coldMissing.lifetime.totalTokens)
+    XCTAssertEqual(warmMissing.warnings.count, 1)
+
+    try FileManager.default.moveItem(at: heldURL, to: url)
+    let recovered = await parser.parse(logSources: [try makeSourceWithDiscoveryMetadata(url: url)])
+    XCTAssertEqual(recovered.lifetime.totalTokens, 150)
+  }
+
   /// R05 tie policy: equal usage on another day belongs to the later timestamp.
   func testR05_equalUsageTieMovesContributionToLaterTimestampDay() async throws {
     let earlier = ClaudeFixtures.usageLine(

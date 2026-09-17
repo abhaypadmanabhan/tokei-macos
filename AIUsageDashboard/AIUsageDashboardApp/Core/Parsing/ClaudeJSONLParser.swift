@@ -107,6 +107,8 @@ public actor ClaudeJSONLParser {
                         warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
                     }
                 } catch {
+                    fileCache.removeValue(forKey: source.url.path)
+                    didMutateFileCache()
                     warnings.append(ProviderWarning(
                         message: "Failed to parse \(source.url.lastPathComponent)",
                         level: .warning
