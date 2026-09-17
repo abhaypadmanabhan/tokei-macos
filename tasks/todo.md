@@ -1,59 +1,46 @@
-# Tokei — stale-quota routing bug + multi-account Claude tracking
+# Tokei 0.9.0 — accurate multi-account stats, CPU/RAM diet, account-aware MCP, UI declutter
 
-Source diagnosis: `/tmp/tokei-diagnosis.md` (2026-07-27).
-Approach: TDD per patch — RED (watch it fail) → GREEN (minimal) → REFACTOR.
-Test gate: `./.claude/gates/test.sh` (scheme `AIUsageDashboardCore`).
+Herd run: `~/.herd/runs/20260917-0209-eb/` (briefs in `briefs/`, results in `tasks/`).
+Orchestrator: this session (cc1). Finding + planning: Codex Astra. Implementation: Codex Sol +
+Cursor auto. Review: a different seat than the author, always.
+Previous todo (0.8.0 multi-account, DONE 2026-07-29) archived — see git history.
 
-Previous todo (herdr dispatch, DONE 2026-07-24) archived — see git history.
+Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, pid 13882):
+- `claude_code.accounts[default]` = `tokensToday 0`, `windows []`, no warning — signed-in Max account
+- `claude_code.accounts[account-1]` = 534,780,586 tokens today, weekly 80% — is that number right?
+- Tokei RSS **731 MB**, CPU spikes 32%, 15 min uptime
+- `herd budget --route` cannot tell the two Claude accounts apart (both map to `claude_code`)
 
-## P1 — gate routing on trust  (root cause of the reported bug)
-- [x] RED: stale/`local_estimate` 0% must NOT win `routeTo` over an official 75%
-- [x] RED: `avoid` still lists an untrusted provider at/over threshold (asymmetric)
-- [x] RED: `routeTo` nil when fewer than 2 *trusted* readings; reason names the exclusion
-- [x] GREEN: `routableConfidences` gate in `AgentRecommendationEngine.recommend`
-- [x] Existing `AgentRecommendationEngineTests` still green
+## Phase 1 — research (read-only, parallel)
+- [x] t01 Astra — stats accuracy audit → `tasks/t01.result.md`
+- [x] t02 Astra — CPU/RAM audit → `tasks/t02.result.md`
+- [x] t03 Astra — MCP / snapshot / multi-account model → `tasks/t03.result.md`
+- [x] t04 Cursor — UI clutter audit → `tasks/t04.result.md`
 
-## P2 — make staleness structural
-- [x] RED: stale serve stamps `observedAt` from the cache's `fetchedAt`; live stamps now
-- [x] RED: `AgentWindow.observedAt` emitted; additive, schemaVersion stays 1
-- [x] GREEN: `observedAt` on `QuotaWindow` → `Utilization` → `AgentWindow` (+ Codable, back-compat)
-- [x] GREEN: `maxRoutableAge` (30m) backstop for official-but-old readings
+## Phase 2 — triage + Patch Bible
+- [ ] Read all four results; rank `user_impact × release_value ÷ risk`
+- [ ] Write `tasks/patch-bibles/2026-09-17.md`: ≤4 work packages, disjoint file scopes, merge order
+- [ ] Worktrees from `dev` under `../tokei-worktrees/2026-09-17-<slug>` with the pre-commit hook
 
-## P3 — stop the tight-window decay
-- [x] RED: partially-expired cache must report nothing, not the loosest window
-- [x] GREEN: `cachedWindows` refuses a partial set outright
-- [x] GREEN: `maxStaleInterval` 7 days → 2 hours
+## Phase 3 — implement (Sol / Cursor, worktree isolation)
+- [ ] WP-UI also: **animated live numbers** — every figure that refreshes (menu bar total, Overview totals, gauges, per-account rows, drill-in) transitions smoothly (SwiftUI `contentTransition(.numericText())` / interpolated rolling) instead of snapping; honours `accessibilityReduceMotion`; read `$UIUX_VAULT/Motion and Micro-interactions.md` first
+- [ ] WP per Bible; each ends with a result file + commits, tests green in its worktree
+- [ ] Reviewer on a different seat per WP (Astra reviews Sol; Sol reviews Cursor)
 
-## P4 — honour Retry-After + observability
-- [x] RED: `Retry-After: 3537` makes exactly ONE request, no 30s-sleep retries
-- [x] GREEN: break the retry loop when `retryAfter > maxRetrySleepInterval`
-- [x] GREEN: `Logger` on 429 / 401 / non-2xx (fetch path previously logged nothing)
-- [x] Updated the existing test whose assertions encoded the old retry-storm
+## Phase 4 — integrate (`/agents-done` steps, inline)
+- [ ] Quarantine gate, diff review, targeted tests, `--no-ff` merge in Bible order
+- [ ] `bash .claude/gates/run-all.sh full` on `dev`
+- [ ] Debug build; before/after RSS + CPU on the same corpus; before/after `tokei status --json`
 
-## P5 — multi-account Claude (`~/.claude`, `-account-1`, `-account-2`)
-- [x] RED+GREEN: `ClaudeAccount` — keychain service = `sha256(path)[0:8]`, default unsuffixed
-- [x] RED+GREEN: discovery finds sibling `~/.claude-*` dirs holding `projects/`
-      (correctly skips `~/.claude-worktrees`)
-- [x] RED+GREEN: per-account credentials reader; per-account cache/cooldown files
-- [x] RED+GREEN: `ClaudeCodeProvider(accounts:usageClientFactory:)` — tokens SUM,
-      headline quota = account with MOST HEADROOM, per-account detail preserved
-- [x] RED+GREEN: `ProviderAccountUsage` + `AgentAccount` in the public schema (additive)
-- [x] GREEN: `ProviderRegistry` + `FileWatcher` use `ClaudeAccount.discover()`
-- [x] GREEN: Accounts section in the app's provider drill-in
+## Phase 5 — release (`/dev-approved`, inline)
+- [ ] `/security-review` on `main...dev`, triage every finding
+- [ ] `/simplify` pass, re-run build + test
+- [ ] Bump `MARKETING_VERSION` → 0.9.0, CHANGELOG, `docs/08` schema doc
+- [ ] `scripts/release.sh` (sign, notarize, staple, DMG, appcast) — **ask before the outward steps**
+- [ ] Website `website/lib/site.ts` version + download URL + highlights; deploy only when told
 
-## Verify
-- [x] `./.claude/gates/test.sh` green
-- [x] `./.claude/gates/build.sh` green
-- [x] Real artifact: `recommendation` went from `routeTo: claude_code` (stale 0%) to `null`
-- [x] Real artifact: all 3 accounts tracked with separate token totals
-- [x] Real artifact: per-account warnings correctly attribute cooldown vs expired creds
-- [x] Real artifact: live quota window returns after the default account's cooldown (05:42Z)
-      — verified 2026-07-28: both accounts reported `confidence: official`,
-      `observedAt 2026-07-29T06:12Z`, session 1%/2%, weekly 22%/23%
-
-## Known real-world state (not defects)
-- `account-1` / `account-2` OAuth access tokens are **expired** (03:56Z / yesterday 19:14Z).
-  Tokei reads but never refreshes them — refreshing would race the Claude CLI's own
-  rotation. Run `CLAUDE_CONFIG_DIR=~/.claude-account-N claude` once to rotate.
-- Release-config `dist/Tokei.app` fails to launch: framework signed Developer ID, app
-  binary a different Team ID. Pre-existing; unrelated to this work. Debug build is fine.
+## Verify (real artifact)
+- [ ] Both Claude accounts show correct, independently recomputed totals in the app and CLI
+- [ ] `tokei status --json` + MCP expose per-account headroom a consumer can route on
+- [ ] RSS/CPU measured before vs after on this machine's corpus (numbers in the Bible)
+- [ ] Notarized DMG launches; Sparkle appcast valid; website shows 0.9.0
