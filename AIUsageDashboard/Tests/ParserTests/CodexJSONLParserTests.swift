@@ -364,7 +364,8 @@ final class CodexJSONLParserTests: XCTestCase {
             ("null", "null"),
             ("unrecognized", #"{"future_token_field":999}"#)
         ] {
-            let prefix = #"{"timestamp":"2026-07-06T12:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":"#
+            let prefix = #"{"timestamp":"2026-07-06T12:00:00.000Z","type":"event_msg","payload":{"type":"token_count","#
+                + #""info":{"total_token_usage":"#
             let lastUsagePrefix = #","last_token_usage":{"input_tokens":"#
             let lines = [100, 50].map { delta in
                 prefix + cumulative + lastUsagePrefix + String(delta)

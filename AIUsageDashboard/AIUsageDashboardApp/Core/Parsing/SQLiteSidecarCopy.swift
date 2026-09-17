@@ -58,10 +58,10 @@ enum SQLiteSidecarCopy {
             throw SQLiteSnapshotError(message: message)
         }
         var stepResult = SQLITE_OK
-        for attempt in 0..<5 {
+        for _ in 0..<5 {
             stepResult = sqlite3_backup_step(backup, -1)
             guard stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED else { break }
-            if attempt < 4 { sqlite3_sleep(50) }
+            sqlite3_sleep(50)
         }
         let finishResult = sqlite3_backup_finish(backup)
         if stepResult == SQLITE_DONE, finishResult == SQLITE_OK {

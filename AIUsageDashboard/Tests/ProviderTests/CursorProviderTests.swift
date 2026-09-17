@@ -391,7 +391,6 @@ private actor DelayedCursorCSVClient: CursorUsageClient {
         summaryCompleted = true
         return Data(CursorFixtures.usageSummary.utf8)
     }
-
     func fetchUsageEventsCSV(cookie: String) async throws -> String {
         while !summaryCompleted { await Task.yield() }
         try await Task.sleep(for: .milliseconds(20))
