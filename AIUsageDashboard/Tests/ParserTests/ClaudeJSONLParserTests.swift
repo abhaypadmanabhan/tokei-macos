@@ -41,6 +41,28 @@ final class ClaudeJSONLParserTests: XCTestCase {
     )
   }
 
+  private func makeSourceWithDiscoveryMetadata(
+    url: URL,
+    sessionID: String = "test-session"
+  ) throws -> LogSource {
+    // Discovery produces fresh URL values on each walk. Recreate the URL here so Foundation
+    // cannot serve resource metadata cached on the pre-replacement URL instance.
+    let discoveredURL = URL(fileURLWithPath: url.path)
+    let values = try discoveredURL.resourceValues(forKeys: [
+      .contentModificationDateKey,
+      .fileSizeKey,
+      .fileResourceIdentifierKey
+    ])
+    return LogSource(
+      providerID: .claudeCode,
+      url: discoveredURL,
+      sessionID: sessionID,
+      lastModified: values.contentModificationDate,
+      fileSize: values.fileSize.map(UInt64.init),
+      fileIdentifier: values.fileResourceIdentifier as? Data
+    )
+  }
+
   private func referenceNow() -> Date {
     var comps = DateComponents()
     comps.year = 2026
@@ -69,17 +91,6 @@ final class ClaudeJSONLParserTests: XCTestCase {
     return String(format: "%04d-%02d-%02dT%02d:%02d:%02d.000Z",
                   comps.year!, comps.month!, comps.day!,
                   comps.hour!, comps.minute!, comps.second!)
-  }
-
-  private func usageLine(
-    id: String,
-    input: Int,
-    output: Int,
-    cacheRead: Int,
-    cacheCreation: Int,
-    timestamp: String = "2026-07-06T10:00:00.000Z"
-  ) -> String {
-    #"{"message":{"id":"\#(id)","usage":{"input_tokens":\#(input),"output_tokens":\#(output),"cache_read_input_tokens":\#(cacheRead),"cache_creation_input_tokens":\#(cacheCreation)}},"type":"assistant","timestamp":"\#(timestamp)"}"#
   }
 
   private func makeParser(now: Date? = nil) -> ClaudeJSONLParser {
@@ -249,19 +260,17 @@ final class ClaudeJSONLParserTests: XCTestCase {
 
   /// D2: repeated Claude usage rows are updates to one message, not independent usage.
   func testD2_updatedUsageRecordReplacesEarlierContribution() async {
-    let initial = usageLine(
+    let initial = ClaudeFixtures.usageLine(
       id: "msg_updated",
       input: 10,
       output: 1,
-      cacheRead: 100,
-      cacheCreation: 0
+      cache: (read: 100, creation: 0)
     )
-    let final = usageLine(
+    let final = ClaudeFixtures.usageLine(
       id: "msg_updated",
       input: 10,
       output: 25,
-      cacheRead: 100,
-      cacheCreation: 0
+      cache: (read: 100, creation: 0)
     )
     let url = writeFixture(initial, named: "d2-updated.jsonl")
     let parser = makeParser()
@@ -289,12 +298,11 @@ final class ClaudeJSONLParserTests: XCTestCase {
   /// D3: an unfinished final JSON object must remain unread until its suffix arrives.
   func testD3_splitRecordAppendMatchesColdParseWithoutMalformedWarning() async throws {
     let parser = makeParser()
-    let line = usageLine(
+    let line = ClaudeFixtures.usageLine(
       id: "msg_split",
       input: 10,
       output: 25,
-      cacheRead: 100,
-      cacheCreation: 0
+      cache: (read: 100, creation: 0)
     )
     let split = line.index(line.startIndex, offsetBy: line.count / 2)
     let prefix = String(line[..<split])
@@ -334,6 +342,55 @@ final class ClaudeJSONLParserTests: XCTestCase {
 
     let rewritten = await parser.parse(logSources: [makeSourceWithModificationDate(url: url)])
     XCTAssertEqual(rewritten.lifetime.totalTokens, 900)
+  }
+
+  /// R05-3: discovery metadata must not hide an atomic replacement whose mtime and size match.
+  func testR05_3_inodeValidatedFastHitRejectsMtimePreservingReplacement() async throws {
+    let parser = makeParser()
+    let original = ClaudeFixtures.usageLine(id: "msg_inode", output: 100)
+    let replacement = ClaudeFixtures.usageLine(id: "msg_inode", output: 900)
+    XCTAssertEqual(original.utf8.count, replacement.utf8.count)
+    let url = writeFixture(original, named: "r05-3-inode.jsonl")
+    let originalSource = try makeSourceWithDiscoveryMetadata(url: url)
+    let originalAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+
+    let first = await parser.parse(logSources: [originalSource])
+    XCTAssertEqual(first.lifetime.totalTokens, 100)
+
+    try Data(replacement.utf8).write(to: url, options: .atomic)
+    try FileManager.default.setAttributes(
+      [.modificationDate: try XCTUnwrap(originalSource.lastModified)],
+      ofItemAtPath: url.path
+    )
+    let replacementAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    XCTAssertNotEqual(
+      (originalAttributes[.systemFileNumber] as? NSNumber)?.uint64Value,
+      (replacementAttributes[.systemFileNumber] as? NSNumber)?.uint64Value
+    )
+
+    let warm = await parser.parse(logSources: [try makeSourceWithDiscoveryMetadata(url: url)])
+    XCTAssertEqual(warm.lifetime.totalTokens, 900)
+  }
+
+  /// R05 tie policy: equal usage on another day belongs to the later timestamp.
+  func testR05_equalUsageTieMovesContributionToLaterTimestampDay() async throws {
+    let earlier = ClaudeFixtures.usageLine(
+      id: "msg_tie",
+      output: 50,
+      timestamp: "2026-07-05T10:00:00.000Z"
+    )
+    let later = ClaudeFixtures.usageLine(
+      id: "msg_tie",
+      output: 50,
+      timestamp: "2026-07-06T10:00:00.000Z"
+    )
+    let url = writeFixture([earlier, later].joined(separator: "\n"), named: "r05-tie.jsonl")
+
+    let usage = await makeParser().parse(logSources: [makeSource(url: url)])
+
+    XCTAssertNil(usage.dailyTotals[date("2026-07-05", hour: 0)])
+    XCTAssertEqual(usage.dailyTotals[date("2026-07-06", hour: 0)], 50)
+    XCTAssertEqual(usage.lifetime.totalTokens, 50)
   }
 
   /// D6-core: the month fallback is the same trailing 30 calendar dates as the 30D chart.

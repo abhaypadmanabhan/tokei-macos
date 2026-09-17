@@ -136,13 +136,21 @@ final class ClaudeMultiAccountProviderTests: XCTestCase {
         let snapshot = try await firstProvider.fetchSnapshot()
         let accounts = try XCTUnwrap(snapshot.accounts)
         let accountTotal = accounts.compactMap(\.todayUsage.totalTokens).reduce(0, +)
+        let byLabel = Dictionary(uniqueKeysWithValues: accounts.map { ($0.label, $0) })
 
         XCTAssertEqual(snapshot.todayUsage.totalTokens, 352, "shared 50 is counted once")
         XCTAssertEqual(accountTotal, snapshot.todayUsage.totalTokens, "account allocations are disjoint")
-        XCTAssertTrue(snapshot.warnings.contains {
+        XCTAssertEqual(byLabel["default"]?.todayUsage.totalTokens, 151)
+        XCTAssertEqual(byLabel["account-1"]?.todayUsage.totalTokens, 201)
+        let ambiguityWarning = try XCTUnwrap(snapshot.warnings.first {
             $0.message.localizedCaseInsensitiveContains("multiple accounts")
-                && $0.message.localizedCaseInsensitiveContains("counted once")
         })
+        XCTAssertEqual(
+            ambiguityWarning.message,
+            "Claude history appeared in multiple accounts; 1 shared message was counted once "
+                + "under .claude because its account path sorts first."
+        )
+        XCTAssertLessThanOrEqual(ambiguityWarning.message.count, 180)
 
         let warm = try await firstProvider.fetchSnapshot()
         XCTAssertEqual(warm.todayUsage.totalTokens, 352)

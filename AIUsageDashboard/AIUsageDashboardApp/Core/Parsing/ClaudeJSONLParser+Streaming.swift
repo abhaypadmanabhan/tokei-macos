@@ -34,7 +34,7 @@ extension ClaudeJSONLParser {
         var modificationDate: Date?
         var byteOffset: UInt64
         var observedSize: UInt64
-        var fileIdentifier: UInt64?
+        var fileIdentifier: Data?
         var continuityTail: Data
         /// Latest/highest complete record for each message in this file. Retaining the
         /// record, rather than only its key, lets a later copy reconcile output updates.
@@ -61,7 +61,7 @@ extension ClaudeJSONLParser {
 
     private struct FileMetadata {
         let size: UInt64
-        let identifier: UInt64?
+        let identifier: Data?
         let modificationDate: Date?
     }
 
@@ -69,8 +69,10 @@ extension ClaudeJSONLParser {
         let path = source.url.path
         if let cached = fileCache[path],
            let discoveredSize = source.fileSize,
+           let discoveredIdentifier = source.fileIdentifier,
            cached.modificationDate == source.lastModified,
-           cached.observedSize == discoveredSize {
+           cached.observedSize == discoveredSize,
+           cached.fileIdentifier == discoveredIdentifier {
             stats.hits += 1
             return cached
         }
@@ -81,9 +83,11 @@ extension ClaudeJSONLParser {
         // the raw attribute only serves callers that did not provide discovery metadata.
         let currentModificationDate = source.lastModified ?? metadata.modificationDate
         if let cached = fileCache[path],
+           let cachedIdentifier = cached.fileIdentifier,
+           let currentIdentifier = metadata.identifier,
            cached.modificationDate == currentModificationDate,
            cached.observedSize == currentSize,
-           cached.fileIdentifier == metadata.identifier {
+           cachedIdentifier == currentIdentifier {
             stats.hits += 1
             return cached
         }
@@ -92,9 +96,11 @@ extension ClaudeJSONLParser {
         if let cached = fileCache[path],
            let cachedModificationDate = cached.modificationDate,
            let currentModificationDate,
+           let cachedIdentifier = cached.fileIdentifier,
+           let currentIdentifier = metadata.identifier,
            currentModificationDate >= cachedModificationDate,
            cached.observedSize < currentSize,
-           cached.fileIdentifier == metadata.identifier,
+           cachedIdentifier == currentIdentifier,
            try continuityTail(at: source.url, endingAt: cached.byteOffset) == cached.continuityTail {
             stats.appends += 1
             stats.bytesRead += currentSize - cached.byteOffset
@@ -116,6 +122,7 @@ extension ClaudeJSONLParser {
             )
         }
         fileCache[path] = entry
+        didMutateFileCache()
         return entry
     }
 
@@ -123,7 +130,7 @@ extension ClaudeJSONLParser {
         for url: URL,
         modifiedAt: Date?,
         observedSize: UInt64,
-        fileIdentifier: UInt64?
+        fileIdentifier: Data?
     ) async throws -> FileCacheEntry {
         var recordsByID: [String: ClaudeUsageRecord] = [:]
         var unkeyedAggregate = FileAggregate.empty
@@ -151,7 +158,7 @@ extension ClaudeJSONLParser {
         at url: URL,
         modifiedAt: Date?,
         observedSize: UInt64,
-        fileIdentifier: UInt64?
+        fileIdentifier: Data?
     ) async throws -> FileCacheEntry {
         var entry = cached
         let result = try await parseFile(at: url, startingAtByte: cached.byteOffset) { [self] record in
@@ -213,14 +220,20 @@ extension ClaudeJSONLParser {
     }
 
     private func fileMetadata(of url: URL) -> FileMetadata {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attributes[.size] as? NSNumber else {
+        // A URL instance can cache resource values across an append or atomic replacement.
+        // Recreate it from the path so this fallback observes current filesystem metadata.
+        let currentURL = URL(fileURLWithPath: url.path)
+        guard let values = try? currentURL.resourceValues(forKeys: [
+            .contentModificationDateKey,
+            .fileResourceIdentifierKey,
+            .fileSizeKey
+        ]), let size = values.fileSize else {
             return FileMetadata(size: 0, identifier: nil, modificationDate: nil)
         }
         return FileMetadata(
-            size: size.uint64Value,
-            identifier: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
-            modificationDate: attributes[.modificationDate] as? Date
+            size: UInt64(size),
+            identifier: values.fileResourceIdentifier as? Data,
+            modificationDate: values.contentModificationDate
         )
     }
 
@@ -242,7 +255,10 @@ extension ClaudeJSONLParser {
             try fileHandle.seek(toOffset: byteOffset)
         }
 
-        while let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+        while try autoreleasepool(invoking: {
+            guard let chunk = try fileHandle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+                return false
+            }
             buffer.append(chunk)
             var lineStart = buffer.startIndex
 
@@ -259,7 +275,8 @@ extension ClaudeJSONLParser {
                 finalOffset += UInt64(buffer.distance(from: buffer.startIndex, to: lineStart))
                 buffer.removeSubrange(buffer.startIndex..<lineStart)
             }
-        }
+            return true
+        }) {}
 
         processTrailingBuffer(
             buffer,

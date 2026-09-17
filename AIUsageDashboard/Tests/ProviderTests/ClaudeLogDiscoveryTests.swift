@@ -103,13 +103,14 @@ final class ClaudeLogDiscoveryTests: XCTestCase {
         XCTAssertEqual(usage.lifetime.totalTokens, 150, "the copied top-level record counts once")
     }
 
-    /// F3: discovery already has file metadata; the parser must not stat size again on warm reads.
+    /// F3/R05-3: discovery carries size and identity for the inode-validated warm fast path.
     func testF3_discoveryCarriesFileSizeMetadata() async throws {
         let account = try makeAccount(".claude", sessions: ["sized"])
 
         let sources = try await provider([account]).discoverLogSources()
         let source = try XCTUnwrap(sources.first)
         XCTAssertEqual(source.fileSize, 3)
+        XCTAssertNotNil(source.fileIdentifier)
     }
 
     // MARK: - Fixtures

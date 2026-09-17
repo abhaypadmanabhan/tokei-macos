@@ -20,6 +20,8 @@ public actor ClaudeJSONLParser {
     /// The key is the file path; entries are invalidated when the modification date
     /// or file size changes.
     var fileCache: [String: FileCacheEntry] = [:]
+    private var fileCacheGeneration: UInt64 = 0
+    private var allocationCache: AllocationCache?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -54,19 +56,26 @@ public actor ClaudeJSONLParser {
         let prepared = await prepare(accountLogSources, stats: &stats)
 
         let activePaths = Set(accountLogSources.flatMap(\.logSources).map(\.url.path))
-        fileCache = fileCache.filter { path, _ in
+        let retainedFileCache = fileCache.filter { path, _ in
             activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
         }
+        if retainedFileCache.count != fileCache.count {
+            fileCache = retainedFileCache
+            didMutateFileCache()
+        }
 
-        let allocation = allocate(prepared, stats: &stats)
+        let allocationKey = makeAllocationCacheKey(for: accountLogSources)
+        let allocation: AllocationResult
+        if let cached = allocationCache, cached.key == allocationKey {
+            allocation = cached.result
+        } else {
+            allocation = allocate(prepared, stats: &stats)
+            allocationCache = AllocationCache(key: allocationKey, result: allocation)
+        }
 
         var globalWarnings: [ProviderWarning] = []
         if allocation.ambiguousKeys > 0 {
-            globalWarnings.append(ProviderWarning(
-                message: "Claude history appeared in multiple accounts; "
-                    + "\(allocation.ambiguousKeys) message(s) counted once with deterministic account ownership.",
-                level: .warning
-            ))
+            globalWarnings.append(ambiguityWarning(for: allocation))
         }
 
         let byAccountID = Dictionary(uniqueKeysWithValues: prepared.map { account in
@@ -118,6 +127,7 @@ public actor ClaudeJSONLParser {
         )
         var claims: [String: ClaimedRecord] = [:]
         var ambiguousKeys = 0
+        var ambiguousOwnerIDs: Set<String> = []
 
         for account in accounts {
             for entry in account.entries {
@@ -133,6 +143,7 @@ public actor ClaudeJSONLParser {
                     if claimed.ownerID != account.id, !claimed.ambiguous {
                         claimed.ambiguous = true
                         ambiguousKeys += 1
+                        ambiguousOwnerIDs.insert(claimed.ownerID)
                     }
                     if shouldReplace(claimed.record, with: record) {
                         stats.corrections += 1
@@ -154,6 +165,7 @@ public actor ClaudeJSONLParser {
         return AllocationResult(
             byAccountID: allocations,
             ambiguousKeys: ambiguousKeys,
+            ambiguousOwnerIDs: ambiguousOwnerIDs,
             claimCount: claims.count
         )
     }
@@ -164,6 +176,7 @@ public actor ClaudeJSONLParser {
         self.calendar = calendar
         calendarIdentity = CalendarIdentity(calendar)
         fileCache.removeAll(keepingCapacity: true)
+        didMutateFileCache()
     }
 
     private struct PreparedAccount {
@@ -181,7 +194,23 @@ public actor ClaudeJSONLParser {
     private struct AllocationResult {
         let byAccountID: [String: FileAggregate]
         let ambiguousKeys: Int
+        let ambiguousOwnerIDs: Set<String>
         let claimCount: Int
+    }
+
+    private struct AllocationAccountMembership: Equatable {
+        let id: String
+        let paths: [String]
+    }
+
+    private struct AllocationCacheKey: Equatable {
+        let generation: UInt64
+        let accounts: [AllocationAccountMembership]
+    }
+
+    private struct AllocationCache {
+        let key: AllocationCacheKey
+        let result: AllocationResult
     }
 
     struct FileAggregate: Sendable {
@@ -296,11 +325,55 @@ public actor ClaudeJSONLParser {
         makeAggregate(from: .empty, warnings: warnings)
     }
 
+    private func makeAllocationCacheKey(
+        for accounts: [AccountLogSources]
+    ) -> AllocationCacheKey {
+        AllocationCacheKey(
+            generation: fileCacheGeneration,
+            accounts: accounts.sorted(by: { $0.accountID < $1.accountID }).map { account in
+                AllocationAccountMembership(
+                    id: account.accountID,
+                    paths: account.logSources.map(\.url.path).sorted()
+                )
+            }
+        )
+    }
+
+    func didMutateFileCache() {
+        fileCacheGeneration &+= 1
+        allocationCache = nil
+    }
+
+    private func ambiguityWarning(for allocation: AllocationResult) -> ProviderWarning {
+        let owners = allocation.ambiguousOwnerIDs.sorted().map(Self.boundedAccountName)
+        let ownerDescription: String
+        if owners.count <= 2 {
+            ownerDescription = owners.joined(separator: " and ")
+        } else {
+            ownerDescription = owners.prefix(2).joined(separator: ", ")
+                + ", and \(owners.count - 2) other accounts"
+        }
+        let messageNoun = allocation.ambiguousKeys == 1 ? "message was" : "messages were"
+        let pathNoun = owners.count == 1 ? "its account path sorts" : "their account paths sort"
+        return ProviderWarning(
+            message: "Claude history appeared in multiple accounts; \(allocation.ambiguousKeys) shared "
+                + "\(messageNoun) counted once under \(ownerDescription) because \(pathNoun) first.",
+            level: .warning
+        )
+    }
+
+    private static func boundedAccountName(_ accountID: String) -> String {
+        let name = URL(fileURLWithPath: accountID).lastPathComponent
+        guard name.count > 32 else { return name }
+        return String(name.prefix(31)) + "…"
+    }
+
     private func invalidateCacheIfEffectiveCalendarChanged() {
         let effectiveIdentity = CalendarIdentity(calendar)
         guard effectiveIdentity != calendarIdentity else { return }
         calendarIdentity = effectiveIdentity
         fileCache.removeAll(keepingCapacity: true)
+        didMutateFileCache()
     }
 
     private func malformedWarning(count: Int, url: URL) -> ProviderWarning {

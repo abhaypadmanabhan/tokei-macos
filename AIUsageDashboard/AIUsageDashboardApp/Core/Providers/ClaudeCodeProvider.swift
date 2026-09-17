@@ -459,7 +459,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         let keys: Set<URLResourceKey> = [
             .isRegularFileKey,
             .contentModificationDateKey,
-            .fileSizeKey
+            .fileSizeKey,
+            .fileResourceIdentifierKey
         ]
         // Validate the root first. `enumerator(at:)` returns nil for both an absent path and
         // a non-directory, but discovery must preserve the contract's absent-vs-broken error.
@@ -489,7 +490,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
                 url: file,
                 sessionID: file.deletingPathExtension().lastPathComponent,
                 lastModified: values.contentModificationDate,
-                fileSize: values.fileSize.map(UInt64.init)
+                fileSize: values.fileSize.map(UInt64.init),
+                fileIdentifier: values.fileResourceIdentifier as? Data
             ))
         }
         if let enumerationError { throw enumerationError }
