@@ -2,6 +2,18 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class ProviderAccountDiscoveryTests: XCTestCase {
+    private struct SingleAccountTestDiscoverer: AccountDiscovering {
+        let providerID: ProviderID
+        let root: URL
+
+        func discover(context: DiscoveryContext) throws -> [ProviderAccount] {
+            ProviderAccountNormalizer.normalize(
+                providerID: providerID,
+                candidates: [.init(root: root, label: "default", quotaIdentity: nil, selector: nil)]
+            )
+        }
+    }
+
     private var home: URL!
 
     override func setUp() {
@@ -73,7 +85,7 @@ final class ProviderAccountDiscoveryTests: XCTestCase {
     }
 
     func testA6_otherProvidersUseTheSameProtocolWithoutInventingASelector() throws {
-        let discoverer: any AccountDiscovering = SingleAccountDiscoverer(
+        let discoverer: any AccountDiscovering = SingleAccountTestDiscoverer(
             providerID: .cursor,
             root: home
         )
