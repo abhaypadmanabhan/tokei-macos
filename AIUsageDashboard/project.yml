@@ -107,6 +107,9 @@ targets:
       # token/logic files with no app-target dependencies.
       - path: AIUsageDashboardApp/UI/Charts/AccountSeriesStyle.swift
       - path: AIUsageDashboardApp/UI/Components/PadzyTheme.swift
+      # F6 tick gate lives with the status strip, not the theme. Compiled here so
+      # CoreTests can prove it without a public view-model counter.
+      - path: AIUsageDashboardApp/UI/Dashboard/StatusStripTickGate.swift
       # Same mechanism, for the `tokei` CLI/MCP surface (issue #59). Those files ship in
       # the standalone `tokei` tool target, which does not link Core — so compile the
       # PURE-LOGIC ones in here to get them under `-scheme AIUsageDashboardCore test`.

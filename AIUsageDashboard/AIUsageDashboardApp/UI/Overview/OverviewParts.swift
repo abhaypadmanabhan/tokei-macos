@@ -69,50 +69,6 @@ struct DottedUnderline: View {
     }
 }
 
-/// Average tokens per weekday (Mon→Sun). The busiest bar takes the single accent;
-/// the rest are dim `ink5`. Bars grow in from the baseline on appear — a static
-/// full-height render under Reduce Motion.
-struct WeekdayBars: View {
-    /// Seven entries, Monday first. `value` is the average tokens for that weekday.
-    let bars: [(label: String, value: Int)]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var grown = false
-
-    private let maxHeight: CGFloat = 92
-    private var peak: Int { max(bars.map(\.value).max() ?? 0, 1) }
-    private var busiestValue: Int { bars.map(\.value).max() ?? 0 }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: PadzySpace.s) {
-            ForEach(bars.indices, id: \.self) { index in
-                let bar = bars[index]
-                let isBusiest = bar.value == busiestValue && bar.value > 0
-                let target = CGFloat(bar.value) / CGFloat(peak) * maxHeight
-                let shown = (reduceMotion || grown) ? max(target, bar.value > 0 ? 3 : 0) : 0
-
-                VStack(spacing: 6) {
-                    ZStack(alignment: .bottom) {
-                        Color.clear.frame(height: maxHeight)
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(isBusiest ? PadzyTheme.accent : PadzyTheme.ink5.opacity(0.55))
-                            .frame(height: shown)
-                    }
-                    .frame(maxWidth: .infinity)
-                    Text(bar.label)
-                        .font(.mono(size: 9))
-                        .foregroundColor(isBusiest ? PadzyTheme.ink3 : PadzyTheme.ink5)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(bar.label), \(TokenFormatter.format(bar.value)) average tokens")
-            }
-        }
-        .onAppear {
-            guard !reduceMotion else { grown = true; return }
-            withAnimation(PadzyMotion.settle) { grown = true }
-        }
-    }
-}
-
 /// Per-provider quota presentation state for the Quota lens. A provider the user
 /// enabled live quota for must NEVER silently vanish just because its live fetch is
 /// transiently down (cooldown / 429 / auth / empty) — the 2026-07-21 re-QA "Claude &
@@ -176,7 +132,7 @@ struct AgentQuotaBars: View {
             }
             .onAppear {
                 if reduceMotion { filled = true }
-                else { withAnimation(PadzyMotion.settle) { filled = true } }
+                else { withAnimation(PadzyMotion.numberRoll) { filled = true } }
             }
         }
     }
@@ -222,13 +178,14 @@ struct AgentQuotaBars: View {
         switch state {
         case .live(let util):
             Text("\(Int(round(util.usedPercent)))%")
-                .font(.mono(size: 12, weight: .semibold))
+                .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(PadzyTheme.quotaColor(util.usedPercent))
+                .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(util.usedPercent, reduceMotion: reduceMotion)
         case .fetching:
             Text("FETCHING…").font(.mono(size: 10)).foregroundColor(PadzyTheme.ink5)
         case .connect:
-            Text("ENABLE →").font(.mono(size: 10)).foregroundColor(PadzyTheme.accent)
+            Text("ENABLE →").font(.mono(size: 13.5)).foregroundColor(PadzyTheme.ink)
         case .localOnly:
             Text("LOCAL LOGS").font(.mono(size: 10)).foregroundColor(PadzyTheme.ink5)
         }
@@ -247,6 +204,7 @@ struct AgentQuotaBars: View {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(PadzyTheme.quotaColor(util.usedPercent))
                         .frame(width: geo.size.width * CGFloat(clamped / 100) * (filled ? 1 : 0))
+                        .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 }
             }
         }

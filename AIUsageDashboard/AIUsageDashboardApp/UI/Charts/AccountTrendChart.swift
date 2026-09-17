@@ -39,6 +39,7 @@ struct AccountTrendChart: View {
 
     /// The day under the pointer, snapped to a real bucket.
     @State private var hoveredDay: Date?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Every day any account recorded, ascending — the x domain and the hover buckets.
     private var days: [Date] {
@@ -121,6 +122,7 @@ struct AccountTrendChart: View {
                         Text(TokenFormatter.format(tokens))
                             .font(.mono(size: 13.5))
                             .foregroundStyle(PadzyTheme.ink5)
+                            .rollingNumber(Double(tokens), reduceMotion: reduceMotion)
                     }
                 }
             }
@@ -181,6 +183,7 @@ struct AccountTrendChart: View {
                         .font(.mono(size: 13.5, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(Double(row.tokens), reduceMotion: reduceMotion)
                 }
             }
         }

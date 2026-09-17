@@ -42,9 +42,6 @@ struct AddAgentDrawer: View {
     private var detectedSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(PadzyTheme.good)
-                    .frame(width: 6, height: 6)
                 Text("Detected on this Mac \u{00B7} \(detected.count)")
                     .font(.mono(size: 10))
                     .tracking(10 * 0.14)
@@ -64,7 +61,7 @@ struct AddAgentDrawer: View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
             SectionLabel("All agents")
             VStack(spacing: PadzySpace.s) {
-                ForEach(ProviderID.allCases, id: \.self) { id in
+                ForEach(ProviderID.allCases.filter { !detected.contains($0) }, id: \.self) { id in
                     agentRow(id)
                 }
             }

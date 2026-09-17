@@ -25,26 +25,3 @@ enum ProviderVisibility {
         snapshots.filter { !isHidden($0.providerID, defaults: defaults) }
     }
 }
-
-/// Settings row: a "SHOW <PROVIDER>" switch. One `@AppStorage` instance per row,
-/// keyed dynamically at init so a single reusable view covers all providers.
-struct ProviderVisibilityToggleRow: View {
-    let providerID: ProviderID
-    let displayName: String
-    @AppStorage private var isHidden: Bool
-
-    init(providerID: ProviderID, displayName: String) {
-        self.providerID = providerID
-        self.displayName = displayName
-        _isHidden = AppStorage(wrappedValue: false, ProviderVisibility.key(for: providerID))
-    }
-
-    var body: some View {
-        Toggle(isOn: Binding(get: { !isHidden }, set: { isHidden = !$0 })) {
-            Text("SHOW \(displayName.uppercased())")
-                .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.ink)
-        }
-        .toggleStyle(.padzy)
-    }
-}

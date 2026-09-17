@@ -54,8 +54,8 @@ struct MenuBarView: View {
     }
 
     /// The constraining live window across every provider — the tightest-quota row.
-    private var tightest: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization)
+    private var tightest: AccountPressureReading? {
+        viewModel.tightestAccountPressure
     }
 
     private func providerName(_ id: ProviderID) -> String {
@@ -159,17 +159,12 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("TOKENS · TODAY")
-                    .font(.mono(size: 9.5))
-                    .tracking(9.5 * 0.14)
+                    .font(.mono(size: 13.5))
                     .foregroundColor(PadzyTheme.ink5)
                 Spacer(minLength: 8)
-                if let delta = viewModel.overviewDelta {
-                    DeltaLabel(delta: delta)
-                } else {
-                    Text("—")
-                        .font(.mono(size: 11))
-                        .foregroundColor(PadzyTheme.ink3)
-                }
+                Text("incl. cache")
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink5)
             }
 
             Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
@@ -178,6 +173,7 @@ struct MenuBarView: View {
                 .foregroundColor(PadzyTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
+                .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -197,9 +193,10 @@ struct MenuBarView: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
                     Text(MaxxerMath.formatMultiple(card.totalValueMultiple))
-                        .font(.mono(size: 13, weight: .semibold))
+                        .font(.mono(size: 13.5, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(card.totalValueMultiple, reduceMotion: reduceMotion)
                     if let tier = card.tier {
                         Text(tier.displayName)
                             .font(.mono(size: 9))
@@ -222,15 +219,13 @@ struct MenuBarView: View {
                 Spacer(minLength: 8)
                 if let tightest {
                     HStack(spacing: 8) {
-                        Circle()
-                            .fill(PadzyTheme.quotaColor(tightest.usedPercent))
-                            .frame(width: 6, height: 6)
                         Text("\(Int(tightest.usedPercent.rounded()))%")
-                            .font(.mono(size: 13, weight: .semibold))
+                            .font(.mono(size: 13.5, weight: .semibold))
                             .monospacedDigit()
                             .foregroundColor(PadzyTheme.ink)
-                        Text(providerName(tightest.providerID))
-                            .font(.sans(size: 11))
+                            .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
+                        Text(tightest.accountLabel)
+                            .font(.sans(size: 15))
                             .foregroundColor(PadzyTheme.ink4)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -310,9 +305,10 @@ struct MenuBarView: View {
                 .truncationMode(.tail)
             Spacer(minLength: 8)
             Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
-                .font(.mono(size: 12.5))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
@@ -486,6 +482,7 @@ private struct MenuQuotaBar: View {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(fillColor)
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0) * (filled ? 1 : 0), height: 6)
+                    .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 if let baseline {
                     let x = geo.size.width * CGFloat(max(0, min(100, baseline)) / 100.0)
                     Rectangle()

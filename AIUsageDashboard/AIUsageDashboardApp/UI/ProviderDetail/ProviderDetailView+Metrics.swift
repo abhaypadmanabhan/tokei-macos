@@ -58,6 +58,7 @@ extension ProviderDetailView {
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
                 .frame(width: 44, alignment: .trailing)
+                .rollingNumber(known, reduceMotion: reduceMotion)
 
             Text(verdict?.word ?? "\u{2014}")
                 .font(.sans(size: 10.5, weight: .semibold))
@@ -84,6 +85,7 @@ extension ProviderDetailView {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(PadzyTheme.quotaColor(pct))
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
+                    .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 if let elapsedFraction {
                     let notchX = geo.size.width * CGFloat(elapsedFraction)
                     Rectangle()
@@ -125,7 +127,7 @@ extension ProviderDetailView {
 
     var dailyHistorySection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Daily history · 30d")
+            SectionLabel(UsageAnalytics.dailyHistoryTitle(for: historyRange))
             if trend.count >= 2 {
                 LineTrendChart(points: trend, tint: AgentTint.color(snapshot.providerID))
                     .frame(height: 150)
@@ -172,6 +174,10 @@ extension ProviderDetailView {
                             Rectangle()
                                 .fill(segment.shade)
                                 .frame(width: geo.size.width * CGFloat(Double(segment.value) / Double(total)))
+                                .animation(
+                                    LiveNumberMotion.animation(reduceMotion: reduceMotion),
+                                    value: Double(segment.value) / Double(total)
+                                )
                         }
                     }
                 }
@@ -206,13 +212,15 @@ extension ProviderDetailView {
                 .font(.sans(size: 12.5))
                 .foregroundColor(PadzyTheme.ink3)
             Text(TokenFormatter.format(segment.value))
-                .font(.mono(size: 12.5))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(Double(segment.value), reduceMotion: reduceMotion)
             Text(String(format: "%.1f%%", Double(segment.value) / Double(total) * 100))
-                .font(.mono(size: 11))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink5)
+                .rollingNumber(Double(segment.value) / Double(total) * 100, reduceMotion: reduceMotion)
         }
         .fixedSize()
     }
