@@ -96,22 +96,15 @@ final class WP4LabelMotionTests: XCTestCase {
         XCTAssertEqual(vm.tightestAccountPressure?.providerID, .codex)
     }
 
-    /// F6: 60 hidden ticks mutate nothing; a visible tick resumes immediately.
+    /// F6: 60 hidden ticks apply nothing; a visible tick returns the same date.
     func testF6_hiddenStatusStripDoesNotMutate() {
-        let vm = DashboardViewModel()
-        vm.dashboardWindowVisible = false
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         for offset in 0..<60 {
-            vm.noteStatusStripTick(at: start.addingTimeInterval(TimeInterval(offset)))
+            let date = start.addingTimeInterval(TimeInterval(offset))
+            XCTAssertNil(StatusStripTickGate.appliedDate(date, dashboardVisible: false))
         }
-        XCTAssertEqual(vm.statusTickMutations, 0)
-        XCTAssertNil(vm.statusClock)
-
-        vm.dashboardWindowVisible = true
         let visible = start.addingTimeInterval(60)
-        vm.noteStatusStripTick(at: visible)
-        XCTAssertEqual(vm.statusTickMutations, 1)
-        XCTAssertEqual(vm.statusClock, visible)
+        XCTAssertEqual(StatusStripTickGate.appliedDate(visible, dashboardVisible: true), visible)
     }
 
     /// D9: the view-model calendar hook adopts the new zone. Parser rebuild is WP-1.

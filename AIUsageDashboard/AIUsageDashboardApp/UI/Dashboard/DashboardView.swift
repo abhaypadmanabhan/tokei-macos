@@ -74,11 +74,6 @@ struct DashboardView: View {
         // Slide/fade the drawers in and out; static under Reduce Motion.
         .animation(reduceMotion ? nil : PadzyMotion.quick, value: viewModel.showingSettings)
         .animation(reduceMotion ? nil : PadzyMotion.quick, value: showingAddAgent)
-        .onAppear { viewModel.dashboardWindowVisible = dashboardVisible }
-        .onChange(of: dashboardVisible) { _, visible in
-            viewModel.dashboardWindowVisible = visible
-            if visible { viewModel.noteStatusStripTick(at: Date()) }
-        }
     }
 
     /// The dashboard shell — tab bar, routed content, and the status strip.

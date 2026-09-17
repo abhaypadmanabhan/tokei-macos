@@ -28,9 +28,8 @@ struct DashboardStatusStrip: View {
     }
 
     private func applyTick(_ date: Date) {
-        guard dashboardVisible else { return }
-        countdownTick = date
-        viewModel.noteStatusStripTick(at: date)
+        guard let applied = StatusStripTickGate.appliedDate(date, dashboardVisible: dashboardVisible) else { return }
+        countdownTick = applied
     }
 
     private var statusRow: some View {

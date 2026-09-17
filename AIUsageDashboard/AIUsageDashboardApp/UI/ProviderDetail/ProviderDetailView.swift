@@ -37,6 +37,8 @@ struct ProviderDetailView: View {
     var onEnableOnline: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    /// Warning messages stay collapsed; the count above is the only always-visible line.
+    @State private var warningsExpanded = false
 
     /// Full content width (incl. horizontal padding) — drives the ≥720pt two-column
     /// split. Compared against `720 + horizontal padding` so the breakpoint tracks
@@ -94,11 +96,7 @@ struct ProviderDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xxl) {
                 header
-                if let warningCount = warningCountLine {
-                    Text(warningCount)
-                        .font(.sans(size: 15))
-                        .foregroundColor(PadzyTheme.ink4)
-                }
+                warningDisclosure
                 metaGrid
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
@@ -252,9 +250,10 @@ struct ProviderDetailView: View {
                 .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink3)
             Text(sentence)
-                .font(.sans(size: 13))
+                .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.ink2)
                 .fixedSize(horizontal: false, vertical: true)
+                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init) ?? snapshot.weekUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 16)
@@ -283,10 +282,38 @@ struct ProviderDetailView: View {
         }
     }
 
-    private var warningCountLine: String? {
-        let warnings = snapshot.warnings.filter { $0.level != .info }
-        guard !warnings.isEmpty else { return nil }
-        return warnings.count == 1 ? "1 warning" : "\(warnings.count) warnings"
+    private var nonInfoWarnings: [ProviderWarning] {
+        snapshot.warnings.filter { $0.level != .info }
+    }
+
+    /// Count stays visible. Messages (including an account's expired-credentials
+    /// reason) sit in a collapsed disclosure — no dots, no badges.
+    @ViewBuilder
+    private var warningDisclosure: some View {
+        let warnings = nonInfoWarnings
+        if !warnings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(warnings.count == 1 ? "1 warning" : "\(warnings.count) warnings")
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink4)
+                DisclosureGroup(isExpanded: $warningsExpanded) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
+                            Text(warning.message)
+                                .font(.mono(size: 13.5))
+                                .foregroundColor(PadzyTheme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, 2)
+                } label: {
+                    Text(warningsExpanded ? "Hide" : "Show")
+                        .font(.mono(size: 13.5))
+                        .foregroundColor(PadzyTheme.ink)
+                }
+                .tint(PadzyTheme.ink)
+            }
+        }
     }
 
     private var statsFlow: some View {
@@ -295,12 +322,14 @@ struct ProviderDetailView: View {
                       value: TokenFormatter.format(todayTotal),
                       sub: todayTokenSub,
                       known: todayTotal != nil,
-                      numeric: todayTotal.map(Double.init))
+                      numeric: todayTotal.map(Double.init),
+                      subNumeric: todayDeltaNumeric)
             statBlock(kicker: UsageAnalytics.rollingSevenDayLabel,
                       value: TokenFormatter.format(weekTokens),
                       sub: weekDeltaSub,
                       known: weekTokens != nil,
-                      numeric: weekTokens.map(Double.init))
+                      numeric: weekTokens.map(Double.init),
+                      subNumeric: weekDeltaNumeric)
             statBlock(kicker: "Peak hour",
                       value: peakHour.map { AnalyticsFormat.hourLabel($0.hour) } ?? "\u{2014}",
                       sub: peakHour == nil ? "" : "most active",
@@ -310,7 +339,8 @@ struct ProviderDetailView: View {
                       value: MaxxerMath.formatMultiple(value?.valueMultiple),
                       sub: planValueSub,
                       known: value?.valueMultiple != nil,
-                      numeric: value?.valueMultiple)
+                      numeric: value?.valueMultiple,
+                      subNumeric: value?.planMonthlyUSD == nil ? nil : value?.apiEquivalentUSD)
         }
     }
 
@@ -325,7 +355,8 @@ struct ProviderDetailView: View {
         value: String,
         sub: String,
         known: Bool,
-        numeric: Double? = nil
+        numeric: Double? = nil,
+        subNumeric: Double? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(kicker.uppercased())
@@ -340,18 +371,28 @@ struct ProviderDetailView: View {
                 .rollingNumber(numeric, reduceMotion: reduceMotion)
             if !sub.isEmpty {
                 Text(sub)
-                    .font(.sans(size: 11))
+                    .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink5)
                     .lineLimit(1)
+                    .rollingNumber(subNumeric, reduceMotion: reduceMotion)
             }
         }
         .fixedSize()
     }
 
     /// ▲/▼ vs the provider's own trailing-7-day average, when derivable.
+    private var todayDeltaRatio: Double? {
+        guard let today = todayTotal, let avg = ownWeekAvg, avg > 0 else { return nil }
+        return Double(today) / Double(avg)
+    }
+
+    private var todayDeltaNumeric: Double? {
+        guard let ratio = todayDeltaRatio else { return nil }
+        return ratio >= 1.8 ? ratio : abs(ratio - 1) * 100
+    }
+
     private var todayDeltaSub: String {
-        guard let today = todayTotal, let avg = ownWeekAvg, avg > 0 else { return "" }
-        let ratio = Double(today) / Double(avg)
+        guard let ratio = todayDeltaRatio else { return "" }
         let arrow = ratio >= 1 ? "\u{25B2}" : "\u{25BC}"
         let magnitude = ratio >= 1.8
             ? String(format: "%.1f\u{00D7} its avg", ratio)
@@ -360,12 +401,16 @@ struct ProviderDetailView: View {
     }
 
     /// Week-over-week delta, when there's ≥14 days of trend to compare.
-    private var weekDeltaSub: String {
-        guard trend.count >= 14 else { return "" }
+    private var weekDeltaNumeric: Double? {
+        guard trend.count >= 14 else { return nil }
         let last7 = trend.suffix(7).reduce(0) { $0 + $1.tokens }
         let prev7 = trend.dropLast(7).suffix(7).reduce(0) { $0 + $1.tokens }
-        guard prev7 > 0 else { return "" }
-        let pct = Double(last7 - prev7) / Double(prev7) * 100
+        guard prev7 > 0 else { return nil }
+        return Double(last7 - prev7) / Double(prev7) * 100
+    }
+
+    private var weekDeltaSub: String {
+        guard let pct = weekDeltaNumeric else { return "" }
         let arrow = pct >= 0 ? "\u{25B2}" : "\u{25BC}"
         return "\(arrow) \(Int(abs(pct).rounded()))% vs prev week"
     }

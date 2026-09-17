@@ -188,6 +188,7 @@ extension ProviderDetailView {
                     .font(.mono(size: 13.5))
                     .monospacedDigit()
                     .foregroundColor(PadzyTheme.ink5)
+                    .rollingNumber(row.share.map { $0 * 100 }, reduceMotion: reduceMotion)
                     .frame(width: 48, alignment: .trailing)
             }
 

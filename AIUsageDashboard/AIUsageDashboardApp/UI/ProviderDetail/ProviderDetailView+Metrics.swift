@@ -174,6 +174,10 @@ extension ProviderDetailView {
                             Rectangle()
                                 .fill(segment.shade)
                                 .frame(width: geo.size.width * CGFloat(Double(segment.value) / Double(total)))
+                                .animation(
+                                    LiveNumberMotion.animation(reduceMotion: reduceMotion),
+                                    value: segment.value
+                                )
                         }
                     }
                 }
@@ -208,13 +212,15 @@ extension ProviderDetailView {
                 .font(.sans(size: 12.5))
                 .foregroundColor(PadzyTheme.ink3)
             Text(TokenFormatter.format(segment.value))
-                .font(.mono(size: 12.5))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(Double(segment.value), reduceMotion: reduceMotion)
             Text(String(format: "%.1f%%", Double(segment.value) / Double(total) * 100))
-                .font(.mono(size: 11))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink5)
+                .rollingNumber(Double(segment.value) / Double(total) * 100, reduceMotion: reduceMotion)
         }
         .fixedSize()
     }

@@ -209,6 +209,7 @@ struct ValueView: View {
         .font(.sans(size: 15))
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: 560, alignment: .leading)
+        .rollingNumber(scorecard.totalAPIEquivalentUSD, reduceMotion: reduceMotion)
     }
 
     // MARK: Rows
@@ -239,10 +240,11 @@ struct ValueView: View {
         let text = footnoteText
         if !text.isEmpty {
             Text(text)
-                .font(.mono(size: 10))
+                .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 620, alignment: .leading)
+                .rollingNumber(lifetime.map { Double($0.tokens) }, reduceMotion: reduceMotion)
         }
     }
 
@@ -328,6 +330,7 @@ struct ValueView: View {
                             .foregroundColor(PadzyTheme.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.4)
+                            .rollingNumber(Double(lifetime.tokens), reduceMotion: reduceMotion)
                         Text("TOKENS ALL-TIME")
                             .font(.mono(size: 11))
                             .tracking(11 * 0.08)

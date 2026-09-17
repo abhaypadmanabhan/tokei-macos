@@ -25,19 +25,24 @@ extension ProviderDetailView {
                             RoundedRectangle(cornerRadius: 3, style: .continuous)
                                 .fill(PadzyTheme.quotaColor(display.fraction * 100))
                                 .frame(width: geo.size.width * CGFloat(display.fraction))
+                                .animation(
+                                    LiveNumberMotion.animation(reduceMotion: reduceMotion),
+                                    value: display.fraction
+                                )
                         }
                     }
                     .frame(height: 6)
                     .frame(minWidth: 140, maxWidth: .infinity)
                     Text(display.readout)
-                        .font(.mono(size: 13))
+                        .font(.mono(size: 13.5))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(credits.used ?? display.fraction * 100, reduceMotion: reduceMotion)
                 }
 
                 FlowLayout(hSpacing: 40, vSpacing: 20) {
                     ForEach(display.stats, id: \.kicker) { stat in
-                        planStatBlock(kicker: stat.kicker, value: stat.value)
+                        planStatBlock(kicker: stat.kicker, value: stat.value, numeric: stat.numeric)
                     }
                 }
             }
@@ -80,11 +85,10 @@ extension ProviderDetailView {
         snapshot.providerID == .cursor ? "Enable online in Settings" : "Enable online sync \u{2192}"
     }
 
-    private func planStatBlock(kicker: String, value: String) -> some View {
+    private func planStatBlock(kicker: String, value: String, numeric: Double? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(kicker.uppercased())
-                .font(.mono(size: 9.5))
-                .tracking(1.0)
+                .font(.mono(size: 13.5))
                 .foregroundColor(PadzyTheme.ink5)
             Text(value)
                 .font(.mono(size: 22, weight: .semibold))
@@ -92,6 +96,7 @@ extension ProviderDetailView {
                 .foregroundColor(PadzyTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .rollingNumber(numeric, reduceMotion: reduceMotion)
         }
         .fixedSize()
     }
@@ -100,7 +105,7 @@ extension ProviderDetailView {
         let barLabel: String
         let readout: String
         let fraction: Double
-        let stats: [(kicker: String, value: String)]
+        let stats: [(kicker: String, value: String, numeric: Double?)]
     }
 
     /// Preserves the capabilityPane "used" vs "left" nuance: a window reporting
@@ -115,15 +120,15 @@ extension ProviderDetailView {
                     barLabel: "Credits used",
                     readout: "\(fmt(used)) / \(fmt(limit))",
                     fraction: min(1, max(0, used / limit)),
-                    stats: [("Credits left", fmt(max(0, limit - used))),
-                            ("Credits total", fmt(limit))]
+                    stats: [("Credits left", fmt(max(0, limit - used)), max(0, limit - used)),
+                            ("Credits total", fmt(limit), limit)]
                 )
             }
             return CreditsDisplay(
                 barLabel: "Credits used",
                 readout: fmt(used),
                 fraction: min(1, max(0, used / 100)),
-                stats: [("Credits used", fmt(used))]
+                stats: [("Credits used", fmt(used), used)]
             )
         }
 
@@ -134,15 +139,15 @@ extension ProviderDetailView {
                     barLabel: "Credits used",
                     readout: "\(fmt(used)) / \(fmt(limit))",
                     fraction: min(1, max(0, used / limit)),
-                    stats: [("Credits left", fmt(remaining)),
-                            ("Credits total", fmt(limit))]
+                    stats: [("Credits left", fmt(remaining), remaining),
+                            ("Credits total", fmt(limit), limit)]
                 )
             }
             return CreditsDisplay(
                 barLabel: "Credits left",
                 readout: fmt(remaining),
                 fraction: 0,
-                stats: [("Credits left", fmt(remaining))]
+                stats: [("Credits left", fmt(remaining), remaining)]
             )
         }
 

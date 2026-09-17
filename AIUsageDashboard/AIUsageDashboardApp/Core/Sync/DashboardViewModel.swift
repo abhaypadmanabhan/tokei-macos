@@ -121,28 +121,17 @@ public final class DashboardViewModel: ObservableObject {
         }.reduce(0, +)
     }
 
-    public var visibleSnapshots: [ProviderSnapshot] {
+    private var visibleSnapshots: [ProviderSnapshot] {
         snapshots.filter { !hiddenProviders.contains($0.providerID) }
-    }
-
-    /// F6: status-strip ticks are dropped while the dashboard window is hidden.
-    public var dashboardWindowVisible = true
-    public private(set) var statusTickMutations = 0
-    public private(set) var statusClock: Date?
-
-    public func noteStatusStripTick(at date: Date) {
-        guard dashboardWindowVisible else { return }
-        statusClock = date
-        statusTickMutations += 1
     }
 
     /// D9: adopt the effective calendar when the timezone changes. Parser-cache
     /// rebuild stays with the parsers (WP-1); this hook is what the view model owns.
-    public private(set) var calendarGeneration = 0
+    private(set) var calendarGeneration = 0
 
-    public var analyticsTimeZone: TimeZone { calendar.timeZone }
+    var analyticsTimeZone: TimeZone { calendar.timeZone }
 
-    public func noteEffectiveTimezoneChange(_ calendar: Calendar) {
+    func noteEffectiveTimezoneChange(_ calendar: Calendar) {
         self.calendar = calendar
         calendarGeneration += 1
     }

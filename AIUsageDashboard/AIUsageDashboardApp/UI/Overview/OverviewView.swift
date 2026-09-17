@@ -91,12 +91,16 @@ struct OverviewView: View {
 
     private func deltaLine(_ delta: Double) -> some View {
         HStack(spacing: 6) {
-            Text("\(delta >= 0 ? "▲" : "▼") \(String(format: "%.1f", abs(delta)))%")
-                .font(.mono(size: 12.5, weight: .semibold))
-                .monospacedDigit()
+            Text(delta >= 0 ? "▲" : "▼")
+                .font(.sans(size: 15))
                 .foregroundColor(delta >= 0 ? PadzyChartPalette.deltaUp : PadzyChartPalette.deltaDown)
+            Text("\(String(format: "%.1f", abs(delta)))%")
+                .font(.mono(size: 13.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(abs(delta), reduceMotion: reduceMotion)
             Text(AnalyticsFormat.deltaCaption(viewModel.range))
-                .font(.sans(size: 12.5))
+                .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.ink5)
         }
         .accessibilityElement(children: .ignore)
@@ -180,4 +184,3 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
-

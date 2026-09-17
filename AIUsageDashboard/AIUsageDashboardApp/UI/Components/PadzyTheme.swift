@@ -117,6 +117,15 @@ public enum LiveNumberMotion {
     }
 }
 
+/// F6: a status-strip tick records a date only while the dashboard window is visible.
+/// Lives in this file because the Core test bundle already compiles it, so the gate
+/// can be proven without a public view-model counter.
+enum StatusStripTickGate {
+    static func appliedDate(_ date: Date, dashboardVisible: Bool) -> Date? {
+        dashboardVisible ? date : nil
+    }
+}
+
 extension View {
     /// Rolls a live figure. Reduce Motion snaps. Duration is `PadzyMotion.numberRollDuration`.
     @ViewBuilder

@@ -105,6 +105,7 @@ struct MenuBarLabel: View {
                     // "1.2B"-shaped string, so the item's width stays fixed.
                     Text(TokenFormatter.format(lifetimeTotal.tokens))
                         .monospacedDigit()
+                        .rollingNumber(Double(lifetimeTotal.tokens), reduceMotion: reduceMotion)
                 } else {
                     // No provider reports a lifetime figure or keeps daily logs.
                     Text("—")

@@ -193,9 +193,10 @@ struct MenuBarView: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 8) {
                     Text(MaxxerMath.formatMultiple(card.totalValueMultiple))
-                        .font(.mono(size: 13, weight: .semibold))
+                        .font(.mono(size: 13.5, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(card.totalValueMultiple, reduceMotion: reduceMotion)
                     if let tier = card.tier {
                         Text(tier.displayName)
                             .font(.mono(size: 9))
@@ -304,9 +305,10 @@ struct MenuBarView: View {
                 .truncationMode(.tail)
             Spacer(minLength: 8)
             Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
-                .font(.mono(size: 12.5))
+                .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
+                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
@@ -480,6 +482,7 @@ private struct MenuQuotaBar: View {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(fillColor)
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0) * (filled ? 1 : 0), height: 6)
+                    .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 if let baseline {
                     let x = geo.size.width * CGFloat(max(0, min(100, baseline)) / 100.0)
                     Rectangle()
