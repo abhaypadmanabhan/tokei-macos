@@ -3,6 +3,8 @@ import XCTest
 
 final class AntigravityRealLogsSmokeTests: XCTestCase {
     func testLiveStateDatabaseParsesPlanAndCreditsWhenPresent() async throws {
+        try requireRealLogsOptIn()
+
         let stateDB = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/state.vscdb")
         guard FileManager.default.fileExists(atPath: stateDB.path) else {

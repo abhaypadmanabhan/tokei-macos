@@ -10,6 +10,7 @@ log "xcodegen generate"
 xcodegen generate >/dev/null || fail "xcodegen generate failed"
 
 log "xcodebuild test ($TEST_SCHEME)"
+# Live-corpus smoke suites stay skipped unless a manual run sets TOKEI_REAL_LOGS=1.
 set -o pipefail
 out="$(xcodebuild -project "$XCODEPROJ" -scheme "$TEST_SCHEME" -destination "$DEST" \
   -quiet test 2>&1)" || { printf '%s\n' "$out" | tail -60 >&2; fail "tests failed ($TEST_SCHEME)"; }
