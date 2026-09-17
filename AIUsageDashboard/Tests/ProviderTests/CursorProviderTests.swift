@@ -80,7 +80,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertNil(snapshot.hourlyTotals)
     }
 
-    func testFlagOnFetchesTokensQuotaAndCost() async throws {
+    func testA3FlagOnFetchesTokensQuotaAndCostAtSuccessfulResponseTime() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 3, composerAccepted: 18))
         userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
@@ -124,6 +124,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(quota.confidence, .providerReported)
         XCTAssertEqual(quota.label, "Pro (active)")
         XCTAssertNotNil(quota.resetAt)
+        // A3: provider quota freshness is the successful response time.
         XCTAssertEqual(quota.observedAt, referenceNow)
     }
 
