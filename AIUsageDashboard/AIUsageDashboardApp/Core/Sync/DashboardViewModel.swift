@@ -323,7 +323,10 @@ public final class DashboardViewModel: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.noteEffectiveTimezoneChange(.current)
-                Task { await self.refresh() }
+                Task {
+                    await self.syncEngine.updateCalendar(.current)
+                    await self.refresh()
+                }
             }
         }
     }

@@ -524,3 +524,5 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         ]
     }
 }
+
+extension ClaudeCodeProvider: CalendarAwareProvider {}
