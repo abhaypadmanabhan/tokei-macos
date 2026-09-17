@@ -28,9 +28,9 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 - [x] Reviewer on a different seat per WP — r07 MERGE; r05/r06/r08 BLOCK → fix rounds → r06b/r08b MERGE-WITH-FIXES (applied, diff-verified); r05b in flight
 
 ## Phase 4 — integrate (`/agents-done` steps, inline)
-- [~] Quarantine gate, diff review, targeted tests, `--no-ff` merge — WP-3 `96ac609`, WP-2 `26dbdf4`, WP-4 `c8b192d` merged; WP-1 after r05b
-- [ ] `bash .claude/gates/run-all.sh full` on `dev`
-- [ ] Debug build; before/after RSS + CPU on the same corpus; before/after `tokei status --json`
+- [x] Quarantine gate, diff review, targeted tests, `--no-ff` merge — WP-3 `96ac609`, WP-2 `26dbdf4`, WP-4 `c8b192d`, WP-1 `75861c2`, D9 glue `4bf2a04`
+- [x] `bash .claude/gates/run-all.sh full` on `dev` — build PASS, 558 tests / 0 failures; lint strict 380→360 (pre-existing debt)
+- [x] Debug build; before/after on the same corpus: peak footprint 7,683 MB → 645 MB, RSS 3.0 GB → 0.3 GB, cold CPU 6:20 → 3:31, steady CPU 16.6 % → 12.1 % (Debug vs Release) — Bible §8
 
 ## Phase 5 — release (`/dev-approved`, inline)
 - [ ] `/security-review` on `main...dev`, triage every finding
