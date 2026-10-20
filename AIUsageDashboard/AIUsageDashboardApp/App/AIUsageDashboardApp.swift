@@ -5,7 +5,6 @@ import Sparkle
 @main
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var viewModel = DashboardViewModel()
     @StateObject private var windowVisibility = WindowVisibilityMonitor()
 
     init() {
@@ -15,7 +14,7 @@ struct AIUsageDashboardApp: App {
     var body: some Scene {
         Window("Tokei", id: "dashboard-window") {
             DashboardView()
-                .environmentObject(viewModel)
+                .environmentObject(appDelegate.viewModel)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         }
         .windowStyle(.titleBar)
@@ -32,11 +31,11 @@ struct AIUsageDashboardApp: App {
 
         MenuBarExtra {
             MenuBarView()
-                .environmentObject(viewModel)
+                .environmentObject(appDelegate.viewModel)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         } label: {
             MenuBarLabel()
-                .environmentObject(viewModel)
+                .environmentObject(appDelegate.viewModel)
         }
         .menuBarExtraStyle(.window)
         // Settings live in-app (dashboard right pane via the sidebar SETTINGS entry),
@@ -44,8 +43,14 @@ struct AIUsageDashboardApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: AppDelegate?
+
+    /// Owned here, not by a view: syncing starts when the app finishes launching, even
+    /// when neither the dashboard window nor the menu-bar popover is ever shown (a hidden
+    /// launch, e.g. `open -j` or a login item set to hide). Views only read it.
+    let viewModel = DashboardViewModel()
 
     // Feed URL + EdDSA key live in Info.plist (SUFeedURL/SUPublicEDKey); checks
     // are background-only unless an update exists or checkForUpdates() is called.
@@ -60,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
+        // and the first sync writes that store.
+        AddAgentModel.seedOnFirstLaunchIfNeeded()
+        viewModel.beginAutoSync()
+        Task { await viewModel.refresh() }
     }
 
     func checkForUpdates() {
