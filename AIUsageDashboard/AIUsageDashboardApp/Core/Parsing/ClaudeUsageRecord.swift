@@ -7,6 +7,7 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
     public let sessionID: String?
     public let uuid: String?
     public let timestamp: Date?
+    public let model: String
     public let inputTokens: Int
     public let outputTokens: Int
     public let cacheReadInputTokens: Int
@@ -21,8 +22,10 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
         inputTokens: Int,
         outputTokens: Int,
         cacheReadInputTokens: Int,
-        cacheCreationInputTokens: Int
+        cacheCreationInputTokens: Int,
+        model: String = "unknown"
     ) {
+        self.model = model
         self.messageID = messageID
         self.requestID = requestID
         self.sessionID = sessionID

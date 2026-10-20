@@ -7,6 +7,7 @@ public actor ClaudeJSONLParser {
         public let month: TokenUsage
         public let lifetime: TokenUsage
         /// Total tokens per calendar day (start-of-day key) for records with timestamps.
+        public let dailyModelUsage: [Date: [String: TokenUsage]]
         public let dailyTotals: [Date: Int]
         public let hourlyTotals: [Date: Int]?
         public let warnings: [ProviderWarning]
@@ -22,6 +23,7 @@ public actor ClaudeJSONLParser {
     var fileCache: [String: FileCacheEntry] = [:]
     private var fileCacheGeneration: UInt64 = 0
     private var allocationCache: AllocationCache?
+    private var modelUsageMonth: DateInterval?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -52,6 +54,12 @@ public actor ClaudeJSONLParser {
     /// was billed, so ownership is deterministic: the lexicographically first account id.
     func parse(accountLogSources: [AccountLogSources]) async -> AccountParseResult {
         invalidateCacheIfEffectiveCalendarChanged()
+        let month = calendar.dateInterval(of: .month, for: now())
+        if month != modelUsageMonth {
+            modelUsageMonth = month
+            fileCache.removeAll(keepingCapacity: true)
+            didMutateFileCache()
+        }
         var stats = ParseStats()
         let prepared = await prepare(accountLogSources, stats: &stats)
 
@@ -212,6 +220,23 @@ public actor ClaudeJSONLParser {
             aggregate.dailyUsage[day] = adjustedDay
         }
 
+        if modelUsageMonth?.contains(day) == true {
+            let modelUsage = adjusted(
+                aggregate.dailyModelUsage[day]?[record.model] ?? UsageWindows.emptyUsage(.localParsed),
+                by: record,
+                multiplier: multiplier,
+                overflowed: &aggregate.arithmeticOverflowed
+            )
+            if modelUsage.totalTokens == 0 {
+                aggregate.dailyModelUsage[day]?.removeValue(forKey: record.model)
+                if aggregate.dailyModelUsage[day]?.isEmpty == true {
+                    aggregate.dailyModelUsage.removeValue(forKey: day)
+                }
+            } else {
+                aggregate.dailyModelUsage[day, default: [:]][record.model] = modelUsage
+            }
+        }
+
         guard let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar),
               record.totalTokens > 0 else { return }
         let contribution = TokenArithmetic.multiplied(
@@ -265,6 +290,14 @@ public actor ClaudeJSONLParser {
                 aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
             ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
+        for (day, models) in incremental.dailyModelUsage {
+            for (model, usage) in models {
+                let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
+                aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
+                    usage, overflowed: &aggregate.arithmeticOverflowed
+                )
+            }
+        }
         for (hour, total) in incremental.hourlyTotals {
             aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
                 aggregate.hourlyTotals[hour, default: 0],
@@ -307,6 +340,7 @@ public actor ClaudeJSONLParser {
             week: snapshot.week,
             month: snapshot.month,
             lifetime: snapshot.lifetime,
+            dailyModelUsage: aggregate.dailyModelUsage,
             dailyTotals: snapshot.dailyTotals,
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             warnings: warnings

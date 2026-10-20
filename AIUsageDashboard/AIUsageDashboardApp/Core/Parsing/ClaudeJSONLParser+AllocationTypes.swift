@@ -38,6 +38,7 @@ extension ClaudeJSONLParser {
     struct FileAggregate: Sendable {
         var lifetime: TokenUsage
         var dailyUsage: [Date: TokenUsage]
+        var dailyModelUsage: [Date: [String: TokenUsage]]
         var hourlyTotals: [Date: Int]
         var arithmeticOverflowed: Bool
 
@@ -45,6 +46,7 @@ extension ClaudeJSONLParser {
             FileAggregate(
                 lifetime: TokenUsage(confidence: .localParsed),
                 dailyUsage: [:],
+                dailyModelUsage: [:],
                 hourlyTotals: [:],
                 arithmeticOverflowed: false
             )
