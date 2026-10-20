@@ -16,7 +16,6 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private struct AccountCollection {
         var profiles: [CodexIdentityAttribution.Profile] = []
         var aggregates: [CodexJSONLParser.AggregateUsage] = []
-        var logs: [LogSource] = []
         var warnings: [ProviderWarning] = []
     }
 
@@ -83,7 +82,8 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             now: fetchedAt
         )
         let lifetime = UsageAggregation.sum(collected.aggregates.map(\.lifetime))
-        let costUsage = await costUsage(for: lifetime, logs: collected.logs)
+        let modelUsage = UsageAggregation.sumModels(collected.aggregates.map(\.lifetimeModelUsage))
+        let cost = await costUsage(for: modelUsage)
 
         return ProviderSnapshot(
             providerID: id,
@@ -94,11 +94,12 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             weekUsage: UsageAggregation.sum(collected.aggregates.map(\.week)),
             monthUsage: UsageAggregation.sum(collected.aggregates.map(\.month)),
             lifetimeUsage: lifetime,
-            costUsage: costUsage,
-            warnings: collected.warnings,
+            costUsage: cost.usage,
+            warnings: collected.warnings + cost.warnings,
             lastSyncedAt: fetchedAt,
             dailyTotals: UsageAggregation.merge(collected.aggregates.map(\.dailyTotals)),
             hourlyTotals: UsageAggregation.merge(collected.aggregates.compactMap(\.hourlyTotals)),
+            dailyModelUsage: UsageAggregation.mergeModels(collected.aggregates.map(\.dailyModelUsage)),
             accounts: attributedUsages.isEmpty ? nil : attributedUsages,
             headlineAccountID: headline?.account.id
         )
@@ -111,7 +112,6 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             for profile in account.profiles {
                 let logs = try discoverLogSources(in: profile.root)
                 accountHasLogs = accountHasLogs || !logs.isEmpty
-                result.logs.append(contentsOf: logs)
                 let aggregate = await parser.parse(logSources: logs)
                 result.profiles.append(CodexIdentityAttribution.Profile(
                     account: account,
@@ -137,15 +137,25 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         return result
     }
 
-    private func costUsage(for lifetime: TokenUsage, logs: [LogSource]) async -> CostUsage {
-        guard let model = await parser.detectLatestModel(logSources: logs) else {
-            return CostUsage(confidence: .unavailable)
-        }
+    private func costUsage(for models: [String: TokenUsage]) async -> (usage: CostUsage, warnings: [ProviderWarning]) {
         Task { [pricing] in await pricing.refreshIfStale() }
-        guard let amount = await pricing.cost(model: model, tokens: lifetime) else {
-            return CostUsage(confidence: .unavailable)
+        var amounts: [Double] = []
+        var hasUnpricedTokens = false
+        for (model, tokens) in models where (tokens.totalTokens ?? 0) > 0 {
+            if let amount = await pricing.cost(model: model, tokens: tokens) {
+                amounts.append(amount)
+            } else {
+                hasUnpricedTokens = true
+            }
         }
-        return CostUsage(amount: amount, currency: "USD", confidence: .estimated)
+        let warnings = hasUnpricedTokens ? [ProviderWarning(
+            message: "Some Codex models have no public rate; estimated cost covers priced models only.",
+            level: .info
+        )] : []
+        let usage = amounts.isEmpty
+            ? CostUsage(confidence: .unavailable)
+            : CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)
+        return (usage, warnings)
     }
 
     public func discoverLogSources() async throws -> [LogSource] {

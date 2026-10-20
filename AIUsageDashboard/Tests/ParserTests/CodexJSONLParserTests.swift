@@ -483,36 +483,6 @@ final class CodexJSONLParserTests: XCTestCase {
         }
     }
 
-    func testF4UnchangedModelDetectionCachesBothModelAndNilFiles() async throws {
-        let older = writeFixture(
-            CodexFixtures.sessionWithModel(model: "gpt-5.5"),
-            named: "model-older.jsonl"
-        )
-        let newest = writeFixture(CodexFixtures.ignoredEvent, named: "model-newest.jsonl")
-        let parser = makeParser()
-        let sources = [makeSource(url: older), makeSource(url: newest)]
-
-        let firstModel = await parser.detectLatestModel(logSources: sources)
-        let firstReadCount = await parser.modelDetectionFileReadCountForTesting()
-        XCTAssertEqual(firstModel, "gpt-5.5")
-        XCTAssertEqual(firstReadCount, 2)
-        let cachedModel = await parser.detectLatestModel(logSources: sources)
-        let cachedReadCount = await parser.modelDetectionFileReadCountForTesting()
-        XCTAssertEqual(cachedModel, "gpt-5.5")
-        XCTAssertEqual(cachedReadCount, 2)
-
-        try appendLine(
-            """
-            {"timestamp":"2026-07-06T12:00:00.000Z","type":"turn_context","payload":{"model":"gpt-6-ultra"}}
-            """,
-            to: newest
-        )
-        let appendedModel = await parser.detectLatestModel(logSources: sources)
-        let appendedReadCount = await parser.modelDetectionFileReadCountForTesting()
-        XCTAssertEqual(appendedModel, "gpt-6-ultra")
-        XCTAssertEqual(appendedReadCount, 3)
-    }
-
     func testNullRateLimitFieldsDoNotCrash() async {
         let url = writeFixture(CodexFixtures.nullRateLimitFields(), named: "nulls.jsonl")
         let usage = await makeParser().parse(logSources: [makeSource(url: url)])

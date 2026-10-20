@@ -240,6 +240,40 @@ final class PricingServiceTests: XCTestCase {
         XCTAssertNotNil(known)
     }
 
+}
+
+extension PricingServiceTests {
+    func testIncompleteLiteLLMRateStaysUnpricedAndMissingCacheRatesUseInput() throws {
+        let data = Data("""
+        {"half":{"input_cost_per_token":0.000002},\
+        "full":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}
+        """.utf8)
+        let rates = PricingService.parseLiteLLM(data)
+        XCTAssertNil(rates["half"])
+        let full = try XCTUnwrap(rates["full"])
+        XCTAssertEqual(full.cachedInputPerMillion, 2)
+        XCTAssertEqual(full.cacheCreationInputPerMillion, 2)
+    }
+
+    func testSynchronousTableTracksCacheReplacementAndUsesSeedOverrides() throws {
+        let url = cacheURL()
+        func write(_ input: Double) throws {
+            try writeCache([
+                "live-model": LiteLLMRate(inputCostPerToken: input, outputCostPerToken: 0.00001,
+                                          cacheReadInputTokenCost: nil, cacheCreationInputTokenCost: nil),
+                "gpt-6-sol": LiteLLMRate(inputCostPerToken: 0.99, outputCostPerToken: 0.99,
+                                        cacheReadInputTokenCost: nil, cacheCreationInputTokenCost: nil)
+            ], mtime: Self.fixedNow, to: url)
+        }
+        try write(0.000002)
+        let first = PricingService.cachedTable(at: url)
+        XCTAssertEqual(first.resolveRate(for: "live-model")?.inputPerMillion, 2)
+        XCTAssertEqual(first.resolveRate(for: "gpt-6-sol")?.inputPerMillion, 2)
+        try write(0.000003)
+        let replaced = PricingService.cachedTable(at: url)
+        XCTAssertEqual(replaced.resolveRate(for: "live-model")?.inputPerMillion, 3)
+    }
+
     // MARK: - Clock-injected cache freshness boundary
 
     func testCacheFreshnessBoundaryUsesInjectedClock() async {
@@ -294,7 +328,7 @@ final class PricingServiceTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(viaService), try XCTUnwrap(viaLegacy), accuracy: 0.000_001)
         XCTAssertEqual(try XCTUnwrap(viaService), 6.90, accuracy: 0.000_001)
 
-        // Newer minor still prices under the base family; a truly-unknown family is nil.
+        // Explicit current rows resolve; models without a published row remain unpriced.
         let newerMinor = await service.cost(model: "gpt-5.5", tokens: codexTokens)
         let unknownFamily = await service.cost(model: "gpt-6-ultra", tokens: codexTokens)
         XCTAssertNotNil(newerMinor)

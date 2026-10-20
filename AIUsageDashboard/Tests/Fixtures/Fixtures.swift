@@ -253,7 +253,7 @@ enum CodexFixtures {
   }
 
   /// A `turn_context` model-configuration line (as emitted once per turn by the Codex
-  /// CLI) followed by `twoTokenCountEvents()`, so `detectLatestModel` finds `model`.
+  /// CLI) followed by `twoTokenCountEvents()`, so the usage is carried under `model`.
   static func sessionWithModel(model: String) -> String {
     """
     {"timestamp":"2026-07-06T09:00:00.000Z","type":"turn_context","payload":{"turn_id":"turn-1","model":"\(model)"}}

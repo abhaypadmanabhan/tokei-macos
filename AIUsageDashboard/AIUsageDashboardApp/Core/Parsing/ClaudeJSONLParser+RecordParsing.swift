@@ -163,6 +163,8 @@ extension ClaudeJSONLParser {
         guard let usage = extractUsage(from: json) else { return .skipped }
 
         let message = json["message"] as? [String: Any]
+        let model = message?["model"] as? String ?? "unknown"
+        guard model != "<synthetic>" else { return .skipped }
         let messageID = message?["id"] as? String ?? json["message_id"] as? String
         let requestID = json["requestId"] as? String ?? json["request_id"] as? String
         let sessionID = json["sessionId"] as? String ?? json["session_id"] as? String
@@ -193,7 +195,8 @@ extension ClaudeJSONLParser {
             inputTokens: inputTokens,
             outputTokens: outputTokens,
             cacheReadInputTokens: cacheReadInputTokens,
-            cacheCreationInputTokens: cacheCreationInputTokens
+            cacheCreationInputTokens: cacheCreationInputTokens,
+            model: model
         ))
     }
 

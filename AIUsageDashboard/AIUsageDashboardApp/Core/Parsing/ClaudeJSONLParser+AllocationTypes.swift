@@ -38,6 +38,7 @@ extension ClaudeJSONLParser {
     struct FileAggregate: Sendable {
         var lifetime: TokenUsage
         var dailyUsage: [Date: TokenUsage]
+        var dailyModelUsage: [Date: [String: TokenUsage]]
         var hourlyTotals: [Date: Int]
         var arithmeticOverflowed: Bool
 
@@ -45,9 +46,45 @@ extension ClaudeJSONLParser {
             FileAggregate(
                 lifetime: TokenUsage(confidence: .localParsed),
                 dailyUsage: [:],
+                dailyModelUsage: [:],
                 hourlyTotals: [:],
                 arithmeticOverflowed: false
             )
+        }
+    }
+
+    func accumulateModelUsage(
+        _ record: ClaudeUsageRecord,
+        day: Date,
+        multiplier: Int,
+        into aggregate: inout FileAggregate
+    ) {
+        if let month = modelUsageMonth, day >= month.start, day < month.end {
+            let modelUsage = adjusted(
+                aggregate.dailyModelUsage[day]?[record.model] ?? UsageWindows.emptyUsage(.localParsed),
+                by: record,
+                multiplier: multiplier,
+                overflowed: &aggregate.arithmeticOverflowed
+            )
+            if modelUsage.totalTokens == 0 {
+                aggregate.dailyModelUsage[day]?.removeValue(forKey: record.model)
+                if aggregate.dailyModelUsage[day]?.isEmpty == true {
+                    aggregate.dailyModelUsage.removeValue(forKey: day)
+                }
+            } else {
+                aggregate.dailyModelUsage[day, default: [:]][record.model] = modelUsage
+            }
+        }
+    }
+
+    func mergeModelUsage(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
+        for (day, models) in incremental.dailyModelUsage {
+            for (model, usage) in models {
+                let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
+                aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
+                    usage, overflowed: &aggregate.arithmeticOverflowed
+                )
+            }
         }
     }
 }

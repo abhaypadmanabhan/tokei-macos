@@ -4,9 +4,9 @@ public enum MaxxerValueEngine {
     public static func scorecard(
         snapshots: [ProviderSnapshot],
         planCosts: MaxxerPlanCostStore,
-        now: Date
+        now: Date,
+        pricing: PricingEngine = PricingEngine(table: PricingService.cachedTable())
     ) -> MaxxerScorecard {
-        let pricing = PricingEngine()
         let providers = snapshots.map { snapshot in
             providerValue(for: snapshot, planCosts: planCosts, pricing: pricing, now: now)
         }
@@ -40,7 +40,10 @@ public enum MaxxerValueEngine {
     ) -> MaxxerProviderValue {
         let providerID = snapshot.providerID.rawValue
         let planMonthlyUSD = planCosts.monthlyUSD(for: providerID)
-        let cost = apiEquivalentCost(for: snapshot, pricing: pricing, now: now)
+        let models = modelValues(for: snapshot, pricing: pricing, now: now)
+        let cost = snapshot.dailyModelUsage == nil
+            ? apiEquivalentCost(for: snapshot, pricing: pricing, now: now)
+            : modelCost(models)
         let valueMultiple = cost.amountUSD.flatMap { amount in
             planMonthlyUSD.map { amount / $0 }
         }
@@ -52,7 +55,40 @@ public enum MaxxerValueEngine {
             valueMultiple: valueMultiple,
             confidence: cost.confidence,
             hasUnpricedTokens: cost.hasUnpricedTokens,
-            models: []
+            models: models
+        )
+    }
+
+    private static func modelValues(
+        for snapshot: ProviderSnapshot,
+        pricing: PricingEngine,
+        now: Date
+    ) -> [MaxxerModelValue] {
+        guard let days = snapshot.dailyModelUsage,
+              let month = Calendar.current.dateInterval(of: .month, for: now) else { return [] }
+        let models = UsageAggregation.sumModels(days.compactMap { day, models in
+            day >= month.start && day <= now ? models : nil
+        })
+        return models.compactMap { model, tokens in
+            guard let total = tokens.totalTokens, total > 0 else { return nil }
+            return MaxxerModelValue(model: model, totalTokens: total,
+                                    apiEquivalentUSD: pricing.cost(model: model, tokens: tokens))
+        }.sorted { lhs, rhs in
+            switch (lhs.apiEquivalentUSD, rhs.apiEquivalentUSD) {
+            case let (left?, right?) where left != right: return left > right
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return lhs.model < rhs.model
+            }
+        }
+    }
+
+    private static func modelCost(_ models: [MaxxerModelValue]) -> APIEquivalentCost {
+        let priced = models.compactMap(\.apiEquivalentUSD)
+        return APIEquivalentCost(
+            amountUSD: models.isEmpty ? 0 : sumOrNil(priced),
+            confidence: !models.isEmpty && priced.isEmpty ? .unavailable : .estimated,
+            hasUnpricedTokens: models.contains { $0.apiEquivalentUSD == nil }
         )
     }
 
@@ -119,9 +155,8 @@ public enum MaxxerValueEngine {
     }
 
     private static func referenceModel(for providerID: ProviderID) -> String? {
-        // Provider snapshots do not retain model slugs. Use the product's
-        // reference subscription models only where PricingSeed has an explicit
-        // provider baseline; heterogeneous providers remain visibly unpriced.
+        // Legacy snapshots and providers without model detail keep their existing
+        // reference baseline; heterogeneous providers remain visibly unpriced.
         switch providerID {
         case .claudeCode:
             return "claude-sonnet-4-6"
