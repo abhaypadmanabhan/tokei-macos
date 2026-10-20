@@ -19,7 +19,8 @@ public final class DashboardViewModel: ObservableObject {
 
     private let syncEngine: SyncEngine
     private var calendar: Calendar
-    private let now: @Sendable () -> Date
+    /// Injected clock; internal so the pace extension reads the same "now".
+    let now: @Sendable () -> Date
     private var updatesTask: Task<Void, Never>?
     private var timeZoneObserver: NSObjectProtocol?
 
@@ -121,7 +122,7 @@ public final class DashboardViewModel: ObservableObject {
         }.reduce(0, +)
     }
 
-    private var visibleSnapshots: [ProviderSnapshot] {
+    var visibleSnapshots: [ProviderSnapshot] {
         snapshots.filter { !hiddenProviders.contains($0.providerID) }
     }
 
@@ -214,15 +215,7 @@ public final class DashboardViewModel: ObservableObject {
 
     /// Highest computable account window among visible providers. Surfaces called "tightest" use this (D8/D13).
     public var tightestAccountPressure: AccountPressureReading? {
-        var best: AccountPressureReading?
-        for snapshot in visibleSnapshots {
-            for reading in accountPressures(in: snapshot) {
-                if best == nil || reading.usedPercent > best!.usedPercent {
-                    best = reading
-                }
-            }
-        }
-        return best
+        tightestAccountPeak?.reading
     }
 
     public var streak: (current: Int, longest: Int) {
@@ -349,31 +342,6 @@ public final class DashboardViewModel: ObservableObject {
             accountLabel: snapshot.displayName,
             usedPercent: peak
         )
-    }
-
-    private func accountPressures(in snapshot: ProviderSnapshot) -> [AccountPressureReading] {
-        if let accounts = snapshot.accounts, !accounts.isEmpty {
-            return accounts.compactMap { account in
-                let windows = account.quotaWindows.filter { $0.type != .credits }
-                guard let peak = windows.compactMap(usedPercent(of:)).max() else { return nil }
-                return AccountPressureReading(
-                    providerID: snapshot.providerID,
-                    accountID: account.id,
-                    accountLabel: account.label,
-                    usedPercent: peak
-                )
-            }
-        }
-        let windows = snapshot.quotaWindows.filter { $0.type != .credits }
-        guard let peak = windows.compactMap(usedPercent(of:)).max() else { return [] }
-        return [
-            AccountPressureReading(
-                providerID: snapshot.providerID,
-                accountID: snapshot.providerID.rawValue,
-                accountLabel: snapshot.displayName,
-                usedPercent: peak
-            ),
-        ]
     }
 
     private func usedPercent(of window: QuotaWindow) -> Double? {

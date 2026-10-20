@@ -219,17 +219,17 @@ struct ProviderDetailView: View {
         }
 
         // 3 — pace against the tightest window (only when a linear pace is defined).
-        if let tightest = tightestWindow, let pct = usedPercent(tightest),
-           let verdict = paceVerdict(tightest) {
+        if let tightest = tightestWindow, let pace = pace(tightest) {
             let name = insightWindowName(tightest)
-            let rounded = Int(pct.rounded())
-            switch verdict {
+            let lead = "Your \(name) is at \(Int(pace.usedPercent.rounded()))% "
+                + "with \(Int(pace.elapsedPercent.rounded()))% of it gone"
+            switch pace.state {
             case .ahead:
-                return "Your \(name) is at \(rounded)% and burning ahead of a steady pace — ease off or expect a throttle."
-            case .headroom:
-                return "Only \(rounded)% of the \(name) is used — plenty of headroom, a good place to route more work."
+                return "\(lead) — burning faster than the clock, so it runs out before the reset at this rate."
+            case .behind:
+                return "\(lead) — room to use before the reset, a good place to route more work."
             case .onPace:
-                return "Your \(name) is tracking on pace at \(rounded)% — no action needed."
+                return "\(lead) — on pace with the clock."
             }
         }
 
