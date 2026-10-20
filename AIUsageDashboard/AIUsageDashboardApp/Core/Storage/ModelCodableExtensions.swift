@@ -29,6 +29,7 @@ extension ProviderSnapshot: Codable {
         case lastSyncedAt
         case dailyTotals
         case hourlyTotals
+        case dailyModelUsage
         case accounts
         case headlineAccountID
     }
@@ -48,6 +49,10 @@ extension ProviderSnapshot: Codable {
         lastSyncedAt = try container.decodeIfPresent(Date.self, forKey: .lastSyncedAt)
         dailyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .dailyTotals)
         hourlyTotals = try container.decodeIfPresent([Date: Int].self, forKey: .hourlyTotals)
+        dailyModelUsage = try container.decodeIfPresent(
+            [Date: [String: TokenUsage]].self,
+            forKey: .dailyModelUsage
+        )
         // Absent in snapshots written before multi-account support — decodes as nil.
         accounts = try container.decodeIfPresent([ProviderAccountUsage].self, forKey: .accounts)
         headlineAccountID = try container.decodeIfPresent(String.self, forKey: .headlineAccountID)
@@ -68,6 +73,7 @@ extension ProviderSnapshot: Codable {
         try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
         try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
         try container.encodeIfPresent(hourlyTotals, forKey: .hourlyTotals)
+        try container.encodeIfPresent(dailyModelUsage, forKey: .dailyModelUsage)
         try container.encodeIfPresent(accounts, forKey: .accounts)
         try container.encodeIfPresent(headlineAccountID, forKey: .headlineAccountID)
     }
@@ -192,6 +198,7 @@ extension QuotaWindow: Codable {
         case label
         case bucketKey
         case observedAt
+        case windowDuration
     }
 
     public init(from decoder: Decoder) throws {
@@ -209,6 +216,7 @@ extension QuotaWindow: Codable {
         // Absent in caches written before this field existed — decodes as nil, which the
         // routing gate treats as "unknown age", not "stale". Old cache files stay readable.
         observedAt = try container.decodeIfPresent(Date.self, forKey: .observedAt)
+        windowDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .windowDuration)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -224,6 +232,7 @@ extension QuotaWindow: Codable {
         try container.encodeIfPresent(label, forKey: .label)
         try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
         try container.encodeIfPresent(observedAt, forKey: .observedAt)
+        try container.encodeIfPresent(windowDuration, forKey: .windowDuration)
     }
 }
 

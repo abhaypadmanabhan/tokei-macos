@@ -17,6 +17,10 @@ public struct ProviderSnapshot: Sendable, Identifiable {
     public let dailyTotals: [Date: Int]?
     /// Total tokens per calendar hour (hour-truncated key), when timestamped records are available.
     public let hourlyTotals: [Date: Int]?
+    /// Tokens per calendar day (start-of-day key) split by the model that served them, for
+    /// providers whose logs name the model. Keys are the raw model slugs from the logs.
+    /// `nil` when the provider cannot attribute tokens to a model.
+    public let dailyModelUsage: [Date: [String: TokenUsage]]?
     /// Per-account breakdown for providers that support several signed-in accounts.
     /// `nil` for single-account providers. The top-level fields stay the aggregate.
     public let accounts: [ProviderAccountUsage]?
@@ -42,6 +46,7 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         lastSyncedAt: Date? = nil,
         dailyTotals: [Date: Int]? = nil,
         hourlyTotals: [Date: Int]? = nil,
+        dailyModelUsage: [Date: [String: TokenUsage]]? = nil,
         accounts: [ProviderAccountUsage]? = nil,
         headlineAccountID: String? = nil
     ) {
@@ -58,6 +63,7 @@ public struct ProviderSnapshot: Sendable, Identifiable {
         self.lastSyncedAt = lastSyncedAt
         self.dailyTotals = dailyTotals
         self.hourlyTotals = hourlyTotals
+        self.dailyModelUsage = dailyModelUsage
         self.accounts = accounts
         self.headlineAccountID = headlineAccountID
     }

@@ -549,7 +549,8 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             bucketKey: window.bucketKey,
             // Preserved deliberately: the `(stale)` suffix is now cosmetic, and
             // `observedAt` is the field consumers should reason about.
-            observedAt: window.observedAt
+            observedAt: window.observedAt,
+            windowDuration: window.windowDuration
         )
     }
 

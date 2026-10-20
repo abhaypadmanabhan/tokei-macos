@@ -21,6 +21,9 @@ public struct QuotaWindow: Sendable, Identifiable {
     /// (when the budget refills) and from `AgentSnapshot.generatedAt` (when the app last
     /// wrote the file — a snapshot can be seconds old and still contain hour-old readings).
     public let observedAt: Date?
+    /// Full length of the window (e.g. 5h, 7d) when the provider reports it or the window
+    /// type implies it. `nil` when unknown. Pace (used % vs elapsed %) needs it.
+    public let windowDuration: TimeInterval?
 
     public init(
         providerID: ProviderID,
@@ -33,7 +36,8 @@ public struct QuotaWindow: Sendable, Identifiable {
         source: String,
         label: String? = nil,
         bucketKey: String? = nil,
-        observedAt: Date? = nil
+        observedAt: Date? = nil,
+        windowDuration: TimeInterval? = nil
     ) {
         self.providerID = providerID
         self.type = type
@@ -46,6 +50,7 @@ public struct QuotaWindow: Sendable, Identifiable {
         self.label = label
         self.bucketKey = bucketKey
         self.observedAt = observedAt
+        self.windowDuration = windowDuration
     }
 
     /// A copy stamped with when the reading was taken. Used by clients that learn the
@@ -63,7 +68,8 @@ public struct QuotaWindow: Sendable, Identifiable {
             source: source,
             label: label,
             bucketKey: bucketKey,
-            observedAt: date
+            observedAt: date,
+            windowDuration: windowDuration
         )
     }
 }

@@ -77,6 +77,42 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.hourlyTotals?[hour], 42)
     }
 
+    /// Per-model usage feeds model-priced value, and window length feeds pace. Both must
+    /// survive persistence or a dashboard hydrated from disk prices and paces nothing.
+    func testRoundTripPreservesModelUsageAndWindowDuration() async {
+        let day = Date(timeIntervalSince1970: 1_792_454_400)
+        let snapshot = ProviderSnapshot(
+            providerID: .claudeCode,
+            displayName: "Claude Code",
+            authStatus: .authenticated,
+            quotaWindows: [QuotaWindow(
+                providerID: .claudeCode,
+                type: .weekly,
+                used: 12,
+                limit: 100,
+                confidence: .providerReported,
+                source: "test",
+                windowDuration: 7 * 24 * 3600
+            )],
+            todayUsage: TokenUsage(inputTokens: 7, confidence: .localParsed),
+            weekUsage: TokenUsage(inputTokens: 7, confidence: .localParsed),
+            dailyModelUsage: [day: ["claude-opus-5-5": TokenUsage(
+                inputTokens: 5,
+                outputTokens: 2,
+                cacheReadTokens: 100,
+                confidence: .localParsed
+            )]]
+        )
+
+        let store1 = UsageStore(directory: tempDirectory)
+        await store1.save(snapshot: snapshot)
+
+        let store2 = UsageStore(directory: tempDirectory)
+        let loaded = await store2.snapshot(providerID: .claudeCode)
+        XCTAssertEqual(loaded?.dailyModelUsage?[day]?["claude-opus-5-5"]?.cacheReadTokens, 100)
+        XCTAssertEqual(loaded?.quotaWindows.first?.windowDuration, 7 * 24 * 3600)
+    }
+
     /// The per-account series and D7 quota status must survive persistence, or a dashboard
     /// hydrated from disk would lose the reason one account has no computable windows.
     func testRoundTripPreservesPerAccountHistory() async {
