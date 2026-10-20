@@ -9,73 +9,76 @@ extension ProviderDetailView {
     // MARK: 6 · Quota windows
 
     var quotaWindowsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // One clock for every row, so two windows never disagree about "now" mid-render.
+        let now = Date()
+        let rows = nonCreditsWindows.map { (window: $0, pace: pace($0, now: now)) }
+        return VStack(alignment: .leading, spacing: 8) {
             SectionLabel("Quota windows")
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(nonCreditsWindows.enumerated()), id: \.offset) { _, window in
-                    quotaRow(window)
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    quotaRow(row.window, pace: row.pace)
                 }
             }
-            HStack(spacing: 8) {
-                Rectangle()
-                    .fill(PadzyTheme.ink4)
-                    .frame(width: 2, height: 11)
-                Text("marker = where a steady, linear burn would sit right now")
-                    .font(.sans(size: 10.5))
-                    .foregroundColor(PadzyTheme.ink5)
+            if rows.contains(where: { $0.pace != nil }) {
+                HStack(spacing: 8) {
+                    Rectangle()
+                        .fill(PadzyTheme.ink2)
+                        .frame(width: 1.5, height: 14)
+                    Text("Tick marks how much of the window has passed")
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink4)
+                }
+                .padding(.top, 6)
             }
-            .padding(.top, 6)
         }
     }
 
-    private func quotaRow(_ window: QuotaWindow) -> some View {
+    private func quotaRow(_ window: QuotaWindow, pace: QuotaPace?) -> some View {
         // A window can be present and still carry no `used` — `nonCreditsWindows` filters on
         // confidence, not on having a number. Rendering `?? 0` printed a confident "0%" over
         // an empty bar, which reads as measured headroom; every other unmeasured value on
         // this surface shows an em dash.
         let known = usedPercent(window)
         let pct = known ?? 0
-        let pace = known.flatMap {
-            MaxxerMath.pace(usedPercent: $0, windowType: window.type,
-                            resetAt: window.resetAt, now: Date())
-        }
-        let verdict = pace.map { PaceVerdict(pct: pct, elapsed: $0.elapsedFraction) }
 
-        return HStack(spacing: 14) {
+        return HStack(alignment: .top, spacing: 14) {
             Text(windowDisplayName(window))
                 .font(.sans(size: 12.5))
                 .foregroundColor(PadzyTheme.ink3)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(minWidth: 88, maxWidth: 140, alignment: .leading)
+                .frame(height: 18)
 
-            quotaFillBar(pct: known ?? 0, elapsedFraction: pace?.elapsedFraction,
-                         ahead: verdict == .ahead)
-                .frame(minWidth: 120, maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 8) {
+                quotaFillBar(pct: pct, elapsedPercent: pace?.elapsedPercent)
+                    .frame(height: 18)
+                if let pace { PaceLine(pace: pace) }
+            }
+            .frame(minWidth: 120, maxWidth: .infinity)
 
             Text(known.map { "\(Int($0.rounded()))%" } ?? "\u{2014}")
                 .font(.mono(size: 14, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: 44, height: 18, alignment: .trailing)
                 .rollingNumber(known, reduceMotion: reduceMotion)
 
-            Text(verdict?.word ?? "\u{2014}")
-                .font(.sans(size: 10.5, weight: .semibold))
-                .foregroundColor(verdict?.color ?? PadzyTheme.ink5)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(width: 64, alignment: .trailing)
-
             resetCountdown(window.resetAt)
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: 92, height: 18, alignment: .trailing)
         }
         .padding(.vertical, 9)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(windowDisplayName(window)) \(Int(pct.rounded())) percent used")
+        .accessibilityLabel(quotaRowAccessibilityLabel(window, pct: pct, pace: pace))
     }
 
-    private func quotaFillBar(pct: Double, elapsedFraction: Double?, ahead: Bool) -> some View {
+    private func quotaRowAccessibilityLabel(_ window: QuotaWindow, pct: Double, pace: QuotaPace?) -> String {
+        let base = "\(windowDisplayName(window)) \(Int(pct.rounded())) percent used"
+        guard let pace else { return base }
+        return "\(base). \(PaceCopy.accessibility(pace))"
+    }
+
+    private func quotaFillBar(pct: Double, elapsedPercent: Double?) -> some View {
         let clamped = max(0, min(100, pct))
         return GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -86,18 +89,12 @@ extension ProviderDetailView {
                     .fill(PadzyTheme.quotaColor(pct))
                     .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 6)
                     .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
-                if let elapsedFraction {
-                    let notchX = geo.size.width * CGFloat(elapsedFraction)
-                    Rectangle()
-                        .fill(ahead ? PadzyTheme.accent : PadzyTheme.ink.opacity(0.7))
-                        .frame(width: 2, height: 10)
-                        .offset(x: min(max(0, notchX - 1), geo.size.width - 2))
-                        .accessibilityHidden(true)
+                if let elapsedPercent {
+                    ElapsedTick(elapsedPercent: elapsedPercent, width: geo.size.width, height: 14)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 10)
     }
 
     @ViewBuilder

@@ -1,7 +1,7 @@
 import Foundation
 import AIUsageDashboardCore
 
-/// Pure math for the Token-Maxxer surface — pace against a linear burn, the
+/// Pure math for the Token-Maxxer surface — the previous-period span, the
 /// single tightest window across providers, lifetime token totals (#41), and the
 /// value-surface number formatting (#23). No I/O, no clock, no SwiftUI: every
 /// value is derived from arguments so the same inputs always yield the same
@@ -18,44 +18,14 @@ import AIUsageDashboardCore
 /// only Foundation + `AIUsageDashboardCore` — never another app-target type.
 public enum MaxxerMath {
 
-    // MARK: - Linear-pace verdict
+    // MARK: - Previous-period span
 
-    /// How actual consumption compares to a perfectly linear burn of the window.
-    /// Positive-framed on purpose (token-maxxer voice: room to use, not scolding):
-    /// - `.ahead`    — spent more than the elapsed fraction; burning fast.
-    /// - `.onPace`   — within the tolerance band of linear pace.
-    /// - `.headroom` — spent less than elapsed; budget to spare.
-    public enum PaceVerdict: String, Sendable, Equatable {
-        case ahead
-        case onPace
-        case headroom
-    }
-
-    /// The result of a pace computation for one quota window.
-    public struct QuotaPace: Sendable, Equatable {
-        /// Fraction of the window elapsed, 0…1 — where the expected-pace notch sits.
-        public let elapsedFraction: Double
-        /// Expected utilization at linear pace, 0…100 (`elapsedFraction * 100`).
-        public let expectedPercent: Double
-        /// `usedPercent - expectedPercent`, positive = ahead of linear.
-        public let delta: Double
-        public let verdict: PaceVerdict
-
-        public init(elapsedFraction: Double, expectedPercent: Double, delta: Double, verdict: PaceVerdict) {
-            self.elapsedFraction = elapsedFraction
-            self.expectedPercent = expectedPercent
-            self.delta = delta
-            self.verdict = verdict
-        }
-    }
-
-    /// The canonical span of a rolling quota window, used to place the elapsed-pace
-    /// notch. `nil` for window types with no fixed linear span (a session, a credit
-    /// balance, a per-model or lifetime total) — those degrade to "no pace" rather
-    /// than inventing a denominator.
+    /// The span of a rolling quota window, used by the menu bar to find "the same point
+    /// last period" in the quota series. `nil` for window types with no fixed span (a
+    /// session, a credit balance, a per-model or lifetime total).
     ///
-    /// Monthly is treated as 30 days: `resetAt` gives the window's END, and without
-    /// the exact anchor a 30-day span is the honest linear approximation for a notch.
+    /// Monthly is treated as 30 days: close enough to find last period's sample. Pace
+    /// is stricter and does not guess a month — see `QuotaPace.duration(for:reported:)`.
     public static func canonicalWindowDuration(for type: QuotaWindowType) -> TimeInterval? {
         switch type {
         case .fiveHour: return 5 * 3_600
@@ -65,52 +35,6 @@ public enum MaxxerMath {
         case .session, .credits, .perModel, .lifetime:
             return nil
         }
-    }
-
-    /// Compute pace for a window against a linear burn.
-    ///
-    /// Returns `nil` (→ the UI shows "—", never crashes) when the window has no
-    /// canonical span or no `resetAt` — i.e. when an expected-pace position is
-    /// undefined. `elapsedFraction` is clamped to 0…1 so a reset just in the past
-    /// or a clock skew can't push the notch off the bar.
-    ///
-    /// - Parameters:
-    ///   - usedPercent: actual utilization 0…100 (already `used / limit`).
-    ///   - windowType: the quota window type (drives the canonical span).
-    ///   - resetAt: when the window refills; its span is `[resetAt - duration, resetAt]`.
-    ///   - now: current instant (injected — no wall clock here).
-    ///   - tolerance: half-width of the on-pace band in percentage points (default 5).
-    public static func pace(
-        usedPercent: Double,
-        windowType: QuotaWindowType,
-        resetAt: Date?,
-        now: Date,
-        tolerance: Double = 5
-    ) -> QuotaPace? {
-        guard let duration = canonicalWindowDuration(for: windowType), duration > 0,
-              let resetAt else { return nil }
-
-        let remaining = resetAt.timeIntervalSince(now)
-        let elapsed = duration - remaining
-        let elapsedFraction = min(1, max(0, elapsed / duration))
-        let expectedPercent = elapsedFraction * 100
-        let delta = usedPercent - expectedPercent
-
-        let verdict: PaceVerdict
-        if delta > tolerance {
-            verdict = .ahead
-        } else if delta < -tolerance {
-            verdict = .headroom
-        } else {
-            verdict = .onPace
-        }
-
-        return QuotaPace(
-            elapsedFraction: elapsedFraction,
-            expectedPercent: expectedPercent,
-            delta: delta,
-            verdict: verdict
-        )
     }
 
     // MARK: - Tightest window selection

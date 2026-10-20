@@ -236,6 +236,13 @@ struct MenuBarView: View {
                         .foregroundColor(PadzyTheme.ink3)
                 }
             }
+
+            if let pace = viewModel.tightestAccountPace {
+                HStack {
+                    Spacer(minLength: 8)
+                    PaceLine(pace: pace, compact: true)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -323,15 +330,18 @@ struct MenuBarView: View {
     private func quotaRow(_ snapshot: ProviderSnapshot) -> some View {
         let util = tightestUtil(snapshot.providerID)
         let pct = util?.usedPercent ?? 0
+        let pace = util.flatMap { viewModel.pace(for: $0) }
         return HStack(spacing: 10) {
             ProviderBrandMark.tinted(snapshot.providerID, size: 18)
             MenuQuotaBar(
                 pct: pct,
                 fillColor: quotaBarColor(pct, tint: AgentTint.color(snapshot.providerID)),
                 baseline: baseline(for: util),
+                elapsedPercent: pace?.elapsedPercent,
                 reduceMotion: reduceMotion
             )
             .frame(maxWidth: .infinity)
+            PaceMark(pace: pace)
             Text(resetText(util?.resetAt))
                 .font(.mono(size: 10.5))
                 .monospacedDigit()
@@ -339,11 +349,15 @@ struct MenuBarView: View {
                 .frame(width: 66, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(quotaRowAccessibilityLabel(snapshot, util: util, pct: pct))
+        .accessibilityLabel(quotaRowAccessibilityLabel(snapshot, util: util, pct: pct, pace: pace))
     }
 
-    private func quotaRowAccessibilityLabel(_ snapshot: ProviderSnapshot, util: Utilization?, pct: Double) -> String {
-        let base = "\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent, resets in \(resetText(util?.resetAt))"
+    private func quotaRowAccessibilityLabel(
+        _ snapshot: ProviderSnapshot, util: Utilization?, pct: Double, pace: QuotaPace?
+    ) -> String {
+        var base = "\(snapshot.displayName), tightest quota \(Int(pct.rounded())) percent, "
+            + "resets in \(resetText(util?.resetAt))"
+        if let pace { base += ". \(PaceCopy.accessibility(pace))" }
         guard let prior = baseline(for: util) else { return base }
         let delta = pct - prior
         let direction = abs(delta) < 1 ? "about the same as" : (delta > 0 ? "ahead of" : "behind")
@@ -468,6 +482,8 @@ private struct MenuQuotaBar: View {
     let fillColor: Color
     /// Previous-period used% (0…100); `nil` = no baseline → no notch.
     let baseline: Double?
+    /// Share of the window that has passed (0…100); `nil` = no honest pace → no tick.
+    let elapsedPercent: Double?
     let reduceMotion: Bool
 
     @State private var filled = false
@@ -492,10 +508,13 @@ private struct MenuQuotaBar: View {
                         .help("Last period: \(Int(baseline.rounded()))%")
                         .accessibilityHidden(true)
                 }
+                if let elapsedPercent {
+                    ElapsedTick(elapsedPercent: elapsedPercent, width: geo.size.width, height: 14)
+                }
             }
             .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 10)
+        .frame(height: elapsedPercent == nil ? 10 : 14)
         .onAppear {
             if reduceMotion { filled = true }
             else { withAnimation(PadzyMotion.settle) { filled = true } }

@@ -27,6 +27,8 @@ struct ProviderDetailView: View {
     /// This provider's value-scorecard entry (api-equivalent $, plan $, multiple,
     /// confidence). `nil` when the provider isn't priceable — drives the "—".
     var value: MaxxerProviderValue? = nil
+    /// Month-to-date value per model, largest first. Empty hides the section.
+    var modelValues: [ModelValueRow] = []
     /// True when this is the emptiest quota-bearing provider — earns the green
     /// "◆ Route work here" chip.
     var isRouteTarget: Bool = false
@@ -88,7 +90,7 @@ struct ProviderDetailView: View {
     private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
+    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts || !modelValues.isEmpty }
 
     // MARK: - Body
 
@@ -219,17 +221,17 @@ struct ProviderDetailView: View {
         }
 
         // 3 — pace against the tightest window (only when a linear pace is defined).
-        if let tightest = tightestWindow, let pct = usedPercent(tightest),
-           let verdict = paceVerdict(tightest) {
+        if let tightest = tightestWindow, let pace = pace(tightest) {
             let name = insightWindowName(tightest)
-            let rounded = Int(pct.rounded())
-            switch verdict {
+            let lead = "Your \(name) is at \(Int(pace.usedPercent.rounded()))% "
+                + "with \(Int(pace.elapsedPercent.rounded()))% of it gone"
+            switch pace.state {
             case .ahead:
-                return "Your \(name) is at \(rounded)% and burning ahead of a steady pace — ease off or expect a throttle."
-            case .headroom:
-                return "Only \(rounded)% of the \(name) is used — plenty of headroom, a good place to route more work."
+                return "\(lead) — burning faster than the clock, so it runs out before the reset at this rate."
+            case .behind:
+                return "\(lead) — room to use before the reset, a good place to route more work."
             case .onPace:
-                return "Your \(name) is tracking on pace at \(rounded)% — no action needed."
+                return "\(lead) — on pace with the clock."
             }
         }
 
@@ -470,6 +472,7 @@ struct ProviderDetailView: View {
             }
             if showHistory { dailyHistorySection }
             if showSplitSection { tokenSplitSection }
+            if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
         }
     }
 

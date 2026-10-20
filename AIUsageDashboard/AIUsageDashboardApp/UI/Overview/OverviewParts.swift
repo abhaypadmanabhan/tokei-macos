@@ -87,6 +87,8 @@ struct AgentQuotaRow: Identifiable {
     let id: ProviderID
     let name: String
     let state: ProviderQuotaState
+    /// Pace of the live window; `nil` for non-live rows or when the window has no honest pace.
+    var pace: QuotaPace?
 
     /// The tightest window's used%, or 0 for non-live states (used only to sort).
     var usedPercent: Double {
@@ -163,7 +165,11 @@ struct AgentQuotaBars: View {
                 Spacer(minLength: 8)
                 trailing(row.state)
             }
-            track(row.state)
+            track(row.state, pace: row.pace)
+            if let pace = row.pace {
+                PaceLine(pace: pace)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture { if case .connect = row.state { onConnect(row.id) } }
@@ -192,29 +198,37 @@ struct AgentQuotaBars: View {
     }
 
     /// The 6pt track: a threshold fill for live rows (animated 0→value), a faint
-    /// hairline track alone for the non-live states.
+    /// hairline track alone for the non-live states. A live row with a pace also gets
+    /// the elapsed tick, which stands proud of the track.
     @ViewBuilder
-    private func track(_ state: ProviderQuotaState) -> some View {
+    private func track(_ state: ProviderQuotaState, pace: QuotaPace?) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .fill(PadzyTheme.hairline)
+                    .frame(height: 6)
                 if case .live(let util) = state {
                     let clamped = max(0, min(100, util.usedPercent))
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(PadzyTheme.quotaColor(util.usedPercent))
-                        .frame(width: geo.size.width * CGFloat(clamped / 100) * (filled ? 1 : 0))
+                        .frame(width: geo.size.width * CGFloat(clamped / 100) * (filled ? 1 : 0), height: 6)
                         .animation(LiveNumberMotion.animation(reduceMotion: reduceMotion), value: clamped)
                 }
+                if let pace {
+                    ElapsedTick(elapsedPercent: pace.elapsedPercent, width: geo.size.width)
+                }
             }
+            .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 6)
+        .frame(height: pace == nil ? 6 : 12)
     }
 
     private func accessibilityLabel(_ row: AgentQuotaRow) -> String {
         switch row.state {
         case .live(let util):
-            return "\(row.name), \(Int(round(util.usedPercent))) percent of quota used"
+            let base = "\(row.name), \(Int(round(util.usedPercent))) percent of quota used"
+            guard let pace = row.pace else { return base }
+            return "\(base). \(PaceCopy.accessibility(pace))"
         case .fetching:
             return "\(row.name), live quota enabled, fetching"
         case .connect:
