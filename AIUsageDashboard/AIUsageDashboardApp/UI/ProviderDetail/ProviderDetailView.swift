@@ -27,6 +27,8 @@ struct ProviderDetailView: View {
     /// This provider's value-scorecard entry (api-equivalent $, plan $, multiple,
     /// confidence). `nil` when the provider isn't priceable — drives the "—".
     var value: MaxxerProviderValue? = nil
+    /// Month-to-date value per model, largest first. Empty hides the section.
+    var modelValues: [ModelValueRow] = []
     /// True when this is the emptiest quota-bearing provider — earns the green
     /// "◆ Route work here" chip.
     var isRouteTarget: Bool = false
@@ -88,7 +90,7 @@ struct ProviderDetailView: View {
     private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts }
+    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts || !modelValues.isEmpty }
 
     // MARK: - Body
 
@@ -470,6 +472,7 @@ struct ProviderDetailView: View {
             }
             if showHistory { dailyHistorySection }
             if showSplitSection { tokenSplitSection }
+            if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
         }
     }
 

@@ -49,6 +49,43 @@ private func previewSnapshot() -> ProviderSnapshot {
     .frame(width: 900, height: 1200)
 }
 
+/// Month-to-date value per model, as WP-1's engine will fill it: largest first, the
+/// unpriced row last with its tokens still counted.
+private let previewClaudeModels = [
+    ModelValueRow(model: "claude-opus-5-5", tokens: 1_412_000_000, apiEquivalentUSD: 1_184.20),
+    ModelValueRow(model: "claude-sonnet-5-5", tokens: 318_000_000, apiEquivalentUSD: 212.65),
+    ModelValueRow(model: "claude-haiku-5-5", tokens: 41_000_000, apiEquivalentUSD: 9.80),
+    ModelValueRow(model: "claude-internal-preview", tokens: 2_300_000, apiEquivalentUSD: nil)
+]
+
+private let previewCodexModels = [
+    ModelValueRow(model: "gpt-6.1-sol", tokens: 402_000_000, apiEquivalentUSD: 241.12),
+    ModelValueRow(model: "gpt-6-astra", tokens: 61_000_000, apiEquivalentUSD: 38.40),
+    ModelValueRow(model: "codex-auto-review", tokens: 18_000_000, apiEquivalentUSD: nil)
+]
+
+#Preview("Value by model · Claude") {
+    ProviderDetailView(
+        snapshot: previewSnapshot(),
+        trend: previewTrend(days: 14),
+        peakHour: (hour: 15, tokens: 6_800_000),
+        lastSyncedAt: Date(),
+        modelValues: previewClaudeModels,
+        planLabel: "$200/mo · 2× Max accounts"
+    )
+    .frame(width: 900, height: 1400)
+}
+
+#Preview("Value by model · section only") {
+    VStack(alignment: .leading, spacing: 40) {
+        ModelValueSection(rows: previewClaudeModels)
+        ModelValueSection(rows: previewCodexModels)
+    }
+    .padding(28)
+    .frame(width: 460)
+    .background(PadzyTheme.ground)
+}
+
 #Preview("Plan-only · credits") {
     ProviderDetailView(
         snapshot: ProviderSnapshot(

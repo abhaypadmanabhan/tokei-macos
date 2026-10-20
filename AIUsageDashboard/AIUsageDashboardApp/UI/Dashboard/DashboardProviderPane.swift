@@ -43,17 +43,19 @@ struct DashboardProviderPane: View {
             // providers — the plan-only branch now falls through here too. Analytics
             // from the frozen §4 DashboardViewModel surface; value/route/plan from
             // the Maxxer scorecard + provider metadata.
+            let value = MaxxerValueEngine.scorecard(
+                snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
+                planCosts: MaxxerPlanCostStore(),
+                now: Date()
+            ).providers.first { $0.providerID == snapshot.providerID.rawValue }
             ProviderDetailView(
                 snapshot: snapshot,
                 trend: viewModel.trend(for: snapshot.providerID),
                 peakHour: viewModel.peakHour(for: snapshot.providerID),
                 lastSyncedAt: viewModel.lastSyncedAt,
                 historyRange: viewModel.range,
-                value: MaxxerValueEngine.scorecard(
-                    snapshots: viewModel.snapshots.filter { !ProviderVisibility.isHidden($0.providerID) },
-                    planCosts: MaxxerPlanCostStore(),
-                    now: Date()
-                ).providers.first { $0.providerID == snapshot.providerID.rawValue },
+                value: value,
+                modelValues: value?.models.map(ModelValueRow.init) ?? [],
                 isRouteTarget: routeTargetProviderID == snapshot.providerID,
                 planLabel: ProviderMetadata.planText(from: snapshot.warnings),
                 onEnableOnline: onEnableOnline
