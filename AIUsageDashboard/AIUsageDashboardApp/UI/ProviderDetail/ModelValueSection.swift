@@ -44,7 +44,7 @@ struct ModelValueSection: View {
             if rows.contains(where: { $0.apiEquivalentUSD == nil }) {
                 Text("No public rate: those tokens are counted, never priced with a guess.")
                     .font(.sans(size: 15))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(PadzyTheme.ink3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -73,7 +73,7 @@ struct ModelValueSection: View {
                 } else {
                     Text("no public rate")
                         .font(.sans(size: 15))
-                        .foregroundColor(PadzyTheme.ink4)
+                        .foregroundColor(PadzyTheme.ink3)
                 }
             }
             .frame(minWidth: 104, alignment: .trailing)

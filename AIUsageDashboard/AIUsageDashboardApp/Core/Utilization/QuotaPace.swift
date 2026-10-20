@@ -45,12 +45,15 @@ public struct QuotaPace: Sendable, Equatable {
     }
 
     /// Pace for a quota window. `nil` unless the window is a percentage gauge (a
-    /// positive `limit` with a `used` or `remaining` reading, and not a credit balance)
-    /// with a known length and reset time.
+    /// positive `limit` with a reported `used`, and not a credit balance) with a known
+    /// length and reset time. A `remaining`-only window gets no pace: the drill-in
+    /// gauge shows its usage as unknown, and pace must not claim more than the gauge.
     public init?(window: QuotaWindow, now: Date) {
-        guard window.type != .credits else { return nil }
+        guard window.type != .credits,
+              let used = window.used,
+              let limit = window.limit, limit > 0 else { return nil }
         self.init(
-            usedPercent: UtilizationEngine.usedPercent(from: window),
+            usedPercent: used / limit * 100,
             windowType: window.type,
             windowDuration: window.windowDuration,
             resetAt: window.resetAt,

@@ -109,11 +109,10 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertEqual(behind.delta, -18, accuracy: 1e-9)
     }
 
-    func testRemainingOnlyWindowIsPercentShaped() throws {
-        // limit 100, remaining 70 → 30% used, 20 points behind a half-gone week.
-        let pace = try XCTUnwrap(QuotaPace(window: window(used: nil, remaining: 70), now: now))
-        XCTAssertEqual(pace.usedPercent, 30, accuracy: 1e-9)
-        XCTAssertEqual(pace.state, .behind)
+    func testNilWhenOnlyRemainingIsReported() {
+        // The drill-in gauge shows a remaining-only window's usage as unknown, so pace
+        // must not derive a used share from `limit - remaining` and claim "room to use".
+        XCTAssertNil(QuotaPace(window: window(used: nil, remaining: 70), now: now))
     }
 
     // MARK: - No honest pace → nil
