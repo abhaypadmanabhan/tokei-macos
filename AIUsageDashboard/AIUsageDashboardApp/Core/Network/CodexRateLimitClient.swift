@@ -109,7 +109,11 @@ public struct CodexRateLimitClient: Sendable {
         _ = try reader.response(id: 1)
         try send(["jsonrpc": "2.0", "method": "initialized"])
         try send(["jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": NSNull()])
-        return try JSONSerialization.data(withJSONObject: reader.response(id: 2))
+        let result = try reader.response(id: 2)
+        // Re-serialising a non-finite number raises an Objective-C exception, which would
+        // abort Tokei: a broken or planted `codex` must fail the probe, not the app.
+        guard JSONSerialization.isValidJSONObject(result) else { throw ProbeError.invalidResponse }
+        return try JSONSerialization.data(withJSONObject: result)
     }
 
     /// Set the group atomically at spawn; setpgid after Process.run races exec.
@@ -213,11 +217,12 @@ public struct CodexRateLimitClient: Sendable {
             guard let window = limits[position] as? [String: Any],
                   let used = number(window["usedPercent"]),
                   let minutes = number(window["windowDurationMins"]), minutes > 0,
+                  minutes <= maximumWindowMinutes,
                   let type = windowType(minutes: minutes) else { continue }
             let percent = min(100, max(0, used))
             windows.append(QuotaWindow(
                 providerID: .codex, type: type, used: percent, limit: 100, remaining: 100 - percent,
-                resetAt: number(window["resetsAt"]).flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil },
+                resetAt: resetDate(number(window["resetsAt"]), observedAt: observedAt),
                 confidence: .providerReported, source: source, observedAt: observedAt,
                 windowDuration: minutes * 60
             ))
@@ -238,6 +243,17 @@ public struct CodexRateLimitClient: Sendable {
             ))
         }
         return Reading(accountID: accountID, windows: windows)
+    }
+
+    /// No real Codex window is longer than a year; anything larger is a broken response.
+    private static let maximumWindowMinutes: Double = 366 * 24 * 60
+
+    /// A reset epoch within 400 days of the reading, else unknown: an absurd value would
+    /// otherwise reach `Int(interval)` in the countdown views and trap.
+    private static func resetDate(_ epoch: Double?, observedAt: Date) -> Date? {
+        guard let epoch, epoch > 0 else { return nil }
+        let date = Date(timeIntervalSince1970: epoch)
+        return date.timeIntervalSince(observedAt) <= 400 * 86_400 ? date : nil
     }
 
     private static func windowType(minutes: Double) -> QuotaWindowType? {

@@ -306,16 +306,23 @@ struct LiteLLMRate: Codable, Sendable, Equatable {
     /// an input or output price. Cached reads fall back to the input rate when a model
     /// publishes no discounted cache price.
     var pricingRate: PricingRate? {
-        guard let input = inputCostPerToken, input.isFinite, input >= 0,
-              let output = outputCostPerToken, output.isFinite, output >= 0 else { return nil }
+        guard let input = inputCostPerToken, let output = outputCostPerToken else { return nil }
         let cached = cacheReadInputTokenCost ?? input
         let creation = cacheCreationInputTokenCost ?? input
-        guard cached.isFinite, cached >= 0, creation.isFinite, creation >= 0 else { return nil }
+        let perMillion = [input, cached, creation, output].map { $0 * 1_000_000 }
+        // Checked after scaling, so a huge-but-finite per-token price cannot become infinity.
+        guard perMillion.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= Self.maximumPerMillion }) else {
+            return nil
+        }
         return PricingRate(
-            inputPerMillion: input * 1_000_000,
-            cachedInputPerMillion: cached * 1_000_000,
-            cacheCreationInputPerMillion: creation * 1_000_000,
-            outputPerMillion: output * 1_000_000
+            inputPerMillion: perMillion[0],
+            cachedInputPerMillion: perMillion[1],
+            cacheCreationInputPerMillion: perMillion[2],
+            outputPerMillion: perMillion[3]
         )
     }
+
+    /// No public model costs anywhere near $10,000 per million tokens; a row above it is
+    /// broken or hostile and is dropped rather than priced.
+    static let maximumPerMillion: Double = 10_000
 }

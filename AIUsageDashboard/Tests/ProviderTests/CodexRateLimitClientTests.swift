@@ -214,6 +214,36 @@ extension CodexRateLimitClientTests {
 }
 
 extension CodexRateLimitClientTests {
+    func testOutOfRangeResetAndDurationAreDropped() throws {
+        let data = Data("""
+        {"accountId":"fixture","rateLimits":{"limitId":"codex",
+        "primary":{"usedPercent":10,"windowDurationMins":10080,"resetsAt":1e300},
+        "secondary":{"usedPercent":20,"windowDurationMins":1e12,"resetsAt":1800009000}}}
+        """.utf8)
+        let reading = try CodexRateLimitClient.decode(data, observedAt: now)
+        XCTAssertEqual(reading.windows.count, 1, "an absurd duration drops the window")
+        XCTAssertEqual(reading.windows.first?.used, 10)
+        XCTAssertNil(reading.windows.first?.resetAt, "an absurd reset is unknown, not a later Int() trap")
+    }
+
+    func testNonFiniteProbeNumbersFailClosedWithoutCrashing() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let binary = try script("""
+        read -r initialize
+        printf '%s\\n' '{"id":1,"result":{}}'
+        read -r initialized
+        read -r limits
+        printf '%s' '{"id":2,"result":{"accountId":"fixture","rateLimits":{"limitId":"codex",'
+        printf '%s\\n' '"primary":{"usedPercent":-1e400,"windowDurationMins":300}}}}'
+        sleep 10
+        """, in: directory)
+        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory)) {
+            XCTAssertEqual($0 as? CodexRateLimitClient.ProbeError, .invalidResponse)
+        }
+    }
+
     private static let capturedCLI163Response = Data("""
     {
       "ordinaryUsageAllowed": true,
