@@ -227,7 +227,8 @@ public struct CodexRateLimitClient: Sendable {
                 windowDuration: minutes * 60
             ))
         }
-        if let credits = limits["credits"] as? [String: Any], let balance = number(credits["balance"]), balance >= 0 {
+        if let credits = limits["credits"] as? [String: Any], let balance = number(credits["balance"]),
+           (0...maximumCreditCount).contains(balance) {
             windows.append(QuotaWindow(
                 providerID: .codex, type: .credits, remaining: balance,
                 confidence: .providerReported, source: source, label: "Purchasable credits",
@@ -235,7 +236,7 @@ public struct CodexRateLimitClient: Sendable {
             ))
         }
         if let credits = result["rateLimitResetCredits"] as? [String: Any],
-           let count = number(credits["availableCount"]), count >= 0 {
+           let count = number(credits["availableCount"]), (0...maximumCreditCount).contains(count) {
             windows.append(QuotaWindow(
                 providerID: .codex, type: .credits, remaining: count,
                 confidence: .providerReported, source: source, label: "Reset bank",
@@ -244,6 +245,10 @@ public struct CodexRateLimitClient: Sendable {
         }
         return Reading(accountID: accountID, windows: windows)
     }
+
+    /// Credit balances and reset counts render through `Int(...)`; a value this large is a
+    /// broken response, never a real balance.
+    private static let maximumCreditCount: Double = 1_000_000_000
 
     /// No real Codex window is longer than a year; anything larger is a broken response.
     private static let maximumWindowMinutes: Double = 366 * 24 * 60

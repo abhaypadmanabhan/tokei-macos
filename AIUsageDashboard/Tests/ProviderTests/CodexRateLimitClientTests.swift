@@ -218,10 +218,11 @@ extension CodexRateLimitClientTests {
         let data = Data("""
         {"accountId":"fixture","rateLimits":{"limitId":"codex",
         "primary":{"usedPercent":10,"windowDurationMins":10080,"resetsAt":1e300},
-        "secondary":{"usedPercent":20,"windowDurationMins":1e12,"resetsAt":1800009000}}}
+        "secondary":{"usedPercent":20,"windowDurationMins":1e12,"resetsAt":1800009000},
+        "credits":{"balance":1e300}},"rateLimitResetCredits":{"availableCount":1e300}}
         """.utf8)
         let reading = try CodexRateLimitClient.decode(data, observedAt: now)
-        XCTAssertEqual(reading.windows.count, 1, "an absurd duration drops the window")
+        XCTAssertEqual(reading.windows.count, 1, "an absurd duration or credit count drops the window")
         XCTAssertEqual(reading.windows.first?.used, 10)
         XCTAssertNil(reading.windows.first?.resetAt, "an absurd reset is unknown, not a later Int() trap")
     }

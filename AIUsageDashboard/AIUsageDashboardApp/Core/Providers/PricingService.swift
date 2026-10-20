@@ -322,7 +322,7 @@ struct LiteLLMRate: Codable, Sendable, Equatable {
         )
     }
 
-    /// No public model costs anywhere near $10,000 per million tokens; a row above it is
+    /// The dearest public row today is under $10,000 per million tokens; ten times that is
     /// broken or hostile and is dropped rather than priced.
-    static let maximumPerMillion: Double = 10_000
+    static let maximumPerMillion: Double = 100_000
 }

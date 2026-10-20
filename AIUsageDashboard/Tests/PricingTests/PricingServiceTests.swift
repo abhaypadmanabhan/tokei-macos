@@ -258,13 +258,13 @@ extension PricingServiceTests {
     func testOverflowingOrAbsurdLiteLLMRatesStayUnpriced() {
         let data = Data("""
         {"overflow":{"input_cost_per_token":1.8e302,"output_cost_per_token":0.00001},\
-        "absurd":{"input_cost_per_token":0.000002,"output_cost_per_token":0.02},\
+        "absurd":{"input_cost_per_token":0.000002,"output_cost_per_token":0.2},\
         "negative":{"input_cost_per_token":-0.000002,"output_cost_per_token":0.00001},\
         "sane":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}
         """.utf8)
         let rates = PricingService.parseLiteLLM(data)
         XCTAssertNil(rates["overflow"], "1.8e302 per token overflows to infinity per million")
-        XCTAssertNil(rates["absurd"], "$20,000 per million is above any public rate")
+        XCTAssertNil(rates["absurd"], "$200,000 per million is far above any public rate")
         XCTAssertNil(rates["negative"])
         XCTAssertEqual(rates["sane"]?.outputPerMillion, 10)
     }
