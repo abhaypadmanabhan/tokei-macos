@@ -90,6 +90,8 @@ public struct CodexRateLimitClient: Sendable {
         defer {
             // Kill even if the wrapper already exited: its descendants still own this group.
             Darwin.kill(-pid, SIGKILL)
+            // And the child itself, in case it left the group (setsid): waitpid would block.
+            Darwin.kill(pid, SIGKILL)
             while waitpid(pid, nil, 0) == -1 && errno == EINTR {}
         }
         try input.fileHandleForReading.close()
