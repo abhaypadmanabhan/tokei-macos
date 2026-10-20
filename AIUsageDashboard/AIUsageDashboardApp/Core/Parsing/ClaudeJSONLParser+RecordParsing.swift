@@ -186,17 +186,22 @@ extension ClaudeJSONLParser {
         )
         guard !totalOverflowed else { return .malformed }
 
+        // Bucket once here, with this parser's calendar; the file cache that keeps the record
+        // is dropped whenever that calendar or its time zone changes.
+        let timestamp = JSONLDateParsing.parseTimestamp(from: json)
         return .usage(ClaudeUsageRecord(
             messageID: messageID,
             requestID: requestID,
             sessionID: sessionID,
             uuid: uuid,
-            timestamp: JSONLDateParsing.parseTimestamp(from: json),
+            timestamp: timestamp,
             inputTokens: inputTokens,
             outputTokens: outputTokens,
             cacheReadInputTokens: cacheReadInputTokens,
             cacheCreationInputTokens: cacheCreationInputTokens,
-            model: model
+            model: model,
+            day: timestamp.map { calendar.startOfDay(for: $0) },
+            hour: timestamp.flatMap { UsageWindows.hourStart(for: $0, calendar: calendar) }
         ))
     }
 

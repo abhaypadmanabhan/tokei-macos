@@ -208,7 +208,7 @@ public actor ClaudeJSONLParser {
         aggregate.lifetime = usage
 
         guard let timestamp = record.timestamp else { return }
-        let day = calendar.startOfDay(for: timestamp)
+        let day = record.day ?? calendar.startOfDay(for: timestamp)
         let adjustedDay = adjusted(
             aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed),
             by: record,
@@ -223,7 +223,7 @@ public actor ClaudeJSONLParser {
 
         accumulateModelUsage(record, day: day, multiplier: multiplier, into: &aggregate)
 
-        guard let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar),
+        guard let hour = record.hour ?? UsageWindows.hourStart(for: timestamp, calendar: calendar),
               record.totalTokens > 0 else { return }
         let contribution = TokenArithmetic.multiplied(
             record.totalTokens,

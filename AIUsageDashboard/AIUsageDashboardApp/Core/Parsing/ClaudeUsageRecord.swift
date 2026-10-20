@@ -12,6 +12,11 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
     public let outputTokens: Int
     public let cacheReadInputTokens: Int
     public let cacheCreationInputTokens: Int
+    /// Start of the record's day and hour in the parser's calendar, computed once at parse
+    /// time. Allocation re-runs over every cached record on each refresh; recomputing these
+    /// there was about half of its CPU. `nil` when built without them (then derived on use).
+    public let day: Date?
+    public let hour: Date?
 
     public init(
         messageID: String?,
@@ -23,9 +28,13 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
         outputTokens: Int,
         cacheReadInputTokens: Int,
         cacheCreationInputTokens: Int,
-        model: String = "unknown"
+        model: String = "unknown",
+        day: Date? = nil,
+        hour: Date? = nil
     ) {
         self.model = model
+        self.day = day
+        self.hour = hour
         self.messageID = messageID
         self.requestID = requestID
         self.sessionID = sessionID
