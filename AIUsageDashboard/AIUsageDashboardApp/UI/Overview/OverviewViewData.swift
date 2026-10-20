@@ -21,7 +21,7 @@ extension OverviewView {
 
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderMetadata.liveQuotaProviders.contains(id) {
+        if ProviderMetadata.showsPendingQuota(for: id) {
             return liveQuotaEnabled(id) ? .fetching : .connect
         }
         return .localOnly
@@ -111,7 +111,12 @@ extension OverviewView {
     /// the user enabled is dropped (FIX 3). Sorted so the pressure that bites is on top.
     var quotaRows: [AgentQuotaRow] {
         visibleProviders
-            .map { AgentQuotaRow(id: $0, name: displayName($0), state: quotaState(for: $0)) }
+            .map { id -> AgentQuotaRow in
+                let state = quotaState(for: id)
+                var pace: QuotaPace?
+                if case .live(let util) = state { pace = viewModel.pace(for: util) }
+                return AgentQuotaRow(id: id, name: displayName(id), state: state, pace: pace)
+            }
             .sorted { lhs, rhs in
                 if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
                 return lhs.usedPercent > rhs.usedPercent

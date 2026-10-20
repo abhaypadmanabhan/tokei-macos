@@ -37,11 +37,11 @@ Symptoms observed 2026-09-17T02:05Z, before any change (`tokei status --json`, p
 - [x] Simplify pass (Sol): −72 net lines, 3 helper families shared, dead code out (`1d076ff`)
 - [x] Real-corpus smoke tests opt-in via `TOKEI_REAL_LOGS=1` — default scheme burns ~3 CPU-min per run on this box (2026-09-17 hot-Mac report)
 - [x] Bump `MARKETING_VERSION` → 0.9.0 (build 9), CHANGELOG, docs 06/08/09, README
-- [~] `scripts/release.sh` running (local artifact); GitHub release / appcast push / main merge / `vercel --prod` **staged for the owner**
+- [x] Released: notarized DMG on GitHub (v0.9.0), signed appcast on main, dev → main merged + tagged, website deployed
 - [x] Website `lib/site.ts` 0.9.0 + download URL + account-aware MCP copy, builds, committed `e0a7052`; deploy only when told
 
 ## Verify (real artifact)
 - [x] Both Claude accounts: independent recompute reconciles to zero residual on 1,722 files (r05); live snapshot shows both with accountID/quota/selector
 - [x] `tokei status --json` + MCP expose accountID/quota/headlineAccountID/target/avoidAccounts; herd-budget joins on account_id
 - [x] RSS/CPU before vs after: peak 7.7 GB → 645 MB, RSS 3.0 → 0.3 GB, cold CPU 6:20 → 3:31 (Bible §8)
-- [~] Notarized DMG in progress; website 0.9.0 committed (not deployed)
+- [x] Notarized DMG launches (stapler validate OK, spctl Notarized Developer ID); appcast valid; website shows 0.9.0

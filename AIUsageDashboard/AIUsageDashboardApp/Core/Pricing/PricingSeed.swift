@@ -14,16 +14,23 @@ public struct NoOpPricingTableRefresher: PricingTableRefreshing {
 
 /// Bundled offline API-equivalent price seed.
 ///
-/// Captured 2026-07-08. Anthropic rows use first-party Claude API pricing; cache
+/// Updated 2026-10-20 from the local LiteLLM table. Anthropic rows use first-party Claude API pricing; cache
 /// creation uses the 5-minute cache-write column and cache reads use the cache-hit
 /// column. OpenAI/Codex rows mirror `CodexPricing` captured 2026-07-06. Cursor,
 /// Kimi, Cline, and GLM rows are curated overrides so local model slugs can resolve
 /// without a network refresh on first run.
 public enum PricingSeed {
-    public static let capturedAt = "2026-07-08"
+    public static let capturedAt = "2026-10-20"
 
     public static let defaultTable = PricingTable(rates: [
         // Anthropic Claude.
+        "claude-opus-5-5": rate(input: 4.00, cachedInput: 0.20, cacheCreation: 5.00, output: 20.00),
+        "claude-opus-5": rate(input: 5.00, cachedInput: 0.50, cacheCreation: 6.25, output: 25.00),
+        "claude-fable-5-1": rate(input: 10.00, cachedInput: 0.25, cacheCreation: 12.50, output: 50.00),
+        "claude-sonnet-5-5": rate(input: 2.00, cachedInput: 0.10, cacheCreation: 2.50, output: 10.00),
+        "claude-haiku-5-5": rate(input: 0.10, cachedInput: 0.01, cacheCreation: 0.125, output: 0.50),
+        "claude-opus-4-6": rate(input: 5.00, cachedInput: 0.50, cacheCreation: 6.25, output: 25.00),
+        "claude-opus-4-5": rate(input: 5.00, cachedInput: 0.50, cacheCreation: 6.25, output: 25.00),
         "claude-opus-4": rate(input: 5.00, cachedInput: 0.50, cacheCreation: 6.25, output: 25.00),
         "claude-opus-4-20250514": rate(input: 15.00, cachedInput: 1.50, cacheCreation: 18.75, output: 75.00),
         "claude-opus-4-1": rate(input: 15.00, cachedInput: 1.50, cacheCreation: 18.75, output: 75.00),
@@ -40,7 +47,20 @@ public enum PricingSeed {
         "claude-3-5-haiku": rate(input: 0.80, cachedInput: 0.08, cacheCreation: 1.00, output: 4.00),
         "claude-3-haiku": rate(input: 0.25, cachedInput: 0.03, cacheCreation: 0.30, output: 1.25),
 
-        // OpenAI / Codex. Keep these in sync with Core/Providers/CodexPricing.swift.
+        // OpenAI / Codex. Explicit rows replace the former family-rate guess.
+        "gpt-6.1-sol": rate(input: 2.00, cachedInput: 0.10, cacheCreation: 2.50, output: 10.00),
+        "gpt-6-astra": rate(input: 10.00, cachedInput: 1.00, cacheCreation: 12.50, output: 50.00),
+        "gpt-6-sol": rate(input: 2.00, cachedInput: 0.20, cacheCreation: 2.50, output: 10.00),
+        "gpt-5.5": rate(input: 5.00, cachedInput: 0.50, output: 30.00),
+        "gpt-5.4": rate(input: 2.50, cachedInput: 0.25, output: 15.00),
+        "gpt-5.3-codex": rate(input: 1.75, cachedInput: 0.175, output: 14.00),
+        "gpt-5.2-codex": rate(input: 1.75, cachedInput: 0.175, output: 14.00),
+        "gpt-5.2": rate(input: 1.75, cachedInput: 0.175, output: 14.00),
+        "gpt-5.1-codex": rate(input: 1.25, cachedInput: 0.125, output: 10.00),
+        "gpt-5.1-codex-max": rate(input: 1.25, cachedInput: 0.125, output: 10.00),
+        "gpt-5.1-codex-mini": rate(input: 0.25, cachedInput: 0.025, output: 2.00),
+        "gpt-5.1": rate(input: 1.25, cachedInput: 0.125, output: 10.00),
+        "gpt-5-codex": rate(input: 1.25, cachedInput: 0.125, output: 10.00),
         "gpt-5": rate(input: 1.25, cachedInput: 0.125, output: 10.00),
         "gpt-5-mini": rate(input: 0.25, cachedInput: 0.025, output: 2.00),
         "gpt-5-nano": rate(input: 0.05, cachedInput: 0.005, output: 0.40),

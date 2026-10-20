@@ -46,36 +46,6 @@ public struct PadzyTheme {
     }
 }
 
-/// Burn-vs-linear verdict for a quota window: is usage running ahead of, on, or
-/// behind a steady linear burn for the elapsed fraction of the window?
-public enum PaceVerdict {
-    case ahead, onPace, headroom
-
-    /// `pct` = used %, `elapsed` = fraction of the window elapsed (0…1).
-    public init(pct: Double, elapsed: Double) {
-        let linear = elapsed * 100
-        if pct > linear * 1.12 { self = .ahead }
-        else if pct < linear * 0.75 { self = .headroom }
-        else { self = .onPace }
-    }
-
-    public var word: String {
-        switch self {
-        case .ahead: return "ahead"
-        case .onPace: return "on pace"
-        case .headroom: return "headroom"
-        }
-    }
-
-    public var color: Color {
-        switch self {
-        case .ahead: return PadzyTheme.warn
-        case .onPace: return Color(hex: "8E8E99")
-        case .headroom: return PadzyTheme.good
-        }
-    }
-}
-
 /// Corner-radius scale. WP-5 adds `window` (10) and `cell`/`chip` (4) matching the
 /// mockup; `card` (12) is the legacy `SectionCard` radius, retired as surfaces
 /// migrate off the card-stack look.

@@ -155,3 +155,30 @@ private struct UnusedClaudeUsageClient: ClaudeUsageClient {
         return []
     }
 }
+
+final class ClaudeModelSnapshotTests: XCTestCase {
+    func testProviderMergesDailyModelUsageAcrossAccounts() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let accounts = try [".claude", ".claude-account-1"].enumerated().map { index, name in
+            let root = home.appendingPathComponent(name)
+            let projects = root.appendingPathComponent("projects")
+            try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            let row = """
+            {"timestamp":"\(timestamp)","message":{"id":"\(name)","model":"claude-opus-5",\
+            "usage":{"input_tokens":1,"output_tokens":\((index + 1) * 10)}}}
+            """
+            try row.write(to: projects.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
+            return ClaudeAccount(configDirectory: root, home: home)
+        }
+        let suite = "wp1-claude-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "claudeNetworkUsageEnabled")
+        let result = try await ClaudeCodeProvider(accounts: accounts, userDefaults: defaults).fetchSnapshot()
+        let models = try XCTUnwrap(result.dailyModelUsage?.values.first)
+        XCTAssertEqual(models["claude-opus-5"]?.inputTokens, 2)
+        XCTAssertEqual(models["claude-opus-5"]?.outputTokens, 30)
+    }
+}

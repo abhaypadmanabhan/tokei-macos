@@ -152,7 +152,7 @@ public actor PricingService {
     // MARK: - LiteLLM parsing
 
     /// Decodes the raw LiteLLM table, slimming every usable row to a `PricingRate`.
-    /// Rows are skipped when they carry no input price (e.g. the `sample_spec`
+    /// Rows are skipped when they lack an input or output price (e.g. the `sample_spec`
     /// documentation stub or metadata-only entries). Tolerant of the file's many
     /// non-cost fields and of individual malformed cost fields.
     static func parseLiteLLM(_ data: Data) -> [String: PricingRate] {
@@ -182,7 +182,21 @@ public actor PricingService {
         string: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
     )!
 
-    static func defaultCacheURL() -> URL {
+    private static let tableCache = FileMetadataCache<PricingTable>()
+
+    /// Synchronous scorecards use the same disk rates and seed overrides as the
+    /// service, without network I/O or decoding the table on every view update.
+    public static func cachedTable(at url: URL = defaultCacheURL()) -> PricingTable {
+        tableCache.value(at: url, fileManager: .default) {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            var rates = parseLiteLLM(data)
+            guard !rates.isEmpty else { return nil }
+            rates.merge(PricingSeed.defaultTable.rates) { _, seed in seed }
+            return PricingTable(rates: rates)
+        } ?? PricingSeed.defaultTable
+    }
+
+    public static func defaultCacheURL() -> URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return base
@@ -288,16 +302,27 @@ struct LiteLLMRate: Codable, Sendable, Equatable {
         cacheCreationInputTokenCost = (try? container.decodeIfPresent(Double.self, forKey: .cacheCreationInputTokenCost)) ?? nil
     }
 
-    /// Converts to a per-million `PricingRate`, or `nil` when the row has no input
-    /// price (unusable). Cached reads fall back to the input rate when a model
+    /// Converts to a per-million `PricingRate`, or `nil` when the row lacks either
+    /// an input or output price. Cached reads fall back to the input rate when a model
     /// publishes no discounted cache price.
     var pricingRate: PricingRate? {
-        guard let input = inputCostPerToken else { return nil }
+        guard let input = inputCostPerToken, let output = outputCostPerToken else { return nil }
+        let cached = cacheReadInputTokenCost ?? input
+        let creation = cacheCreationInputTokenCost ?? input
+        let perMillion = [input, cached, creation, output].map { $0 * 1_000_000 }
+        // Checked after scaling, so a huge-but-finite per-token price cannot become infinity.
+        guard perMillion.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= Self.maximumPerMillion }) else {
+            return nil
+        }
         return PricingRate(
-            inputPerMillion: input * 1_000_000,
-            cachedInputPerMillion: (cacheReadInputTokenCost ?? input) * 1_000_000,
-            cacheCreationInputPerMillion: cacheCreationInputTokenCost.map { $0 * 1_000_000 },
-            outputPerMillion: (outputCostPerToken ?? 0) * 1_000_000
+            inputPerMillion: perMillion[0],
+            cachedInputPerMillion: perMillion[1],
+            cacheCreationInputPerMillion: perMillion[2],
+            outputPerMillion: perMillion[3]
         )
     }
+
+    /// The dearest public row today is under $10,000 per million tokens; ten times that is
+    /// broken or hostile and is dropped rather than priced.
+    static let maximumPerMillion: Double = 100_000
 }

@@ -20,6 +20,8 @@ public actor CodexJSONLParser {
         /// Codex identity attribution consumes these dated totals instead of a
         /// date-relative `today` snapshot so midnight cannot move old usage.
         public let dailyUsage: [Date: TokenUsage]
+        public let dailyModelUsage: [Date: [String: TokenUsage]]
+        public let lifetimeModelUsage: [String: TokenUsage]
         public let dailyTotals: [Date: Int]
         public let todayStart: Date
         public let hourlyTotals: [Date: Int]?
@@ -37,9 +39,8 @@ public actor CodexJSONLParser {
     /// Each entry retains additive usage plus the per-file latest-wins values needed
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
-    private var modelDetectionCache: [String: ModelDetectionCacheEntry] = [:]
-    private var modelDetectionFileReadCount = 0
     private var fileReadCount = 0
+    private var modelUsageMonth: DateInterval?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -49,6 +50,9 @@ public actor CodexJSONLParser {
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
+        prepareModelUsageMonth(referenceDate)
+        var dailyModelUsage: [Date: [String: TokenUsage]] = [:]
+        var lifetimeModelUsage: [String: TokenUsage] = [:]
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
         var dailyUsage: [Date: TokenUsage] = [:]
         var hourlyTotals: [Date: Int] = [:]
@@ -101,6 +105,7 @@ public actor CodexJSONLParser {
                     == cached.continuityTail {
                     incrementalAggregate.lastCumulativeUsageBySession =
                         cached.aggregate.lastCumulativeUsageBySession
+                    incrementalAggregate.currentModel = cached.aggregate.currentModel
                     fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
@@ -209,6 +214,12 @@ public actor CodexJSONLParser {
             activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
         }
 
+        collectModelUsage(
+            from: files,
+            daily: &dailyModelUsage,
+            lifetime: &lifetimeModelUsage,
+            overflowed: &arithmeticOverflowed
+        )
         let finalReportedTotalTokens = TokenArithmetic.sum(
             finalTotalsBySession.values.map(\.totalTokens),
             overflowed: &arithmeticOverflowed
@@ -223,6 +234,8 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyUsage: dailyUsage,
+            dailyModelUsage: dailyModelUsage,
+            lifetimeModelUsage: lifetimeModelUsage,
             dailyTotals: snapshot.dailyTotals,
             todayStart: calendar.startOfDay(for: referenceDate),
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
@@ -259,6 +272,9 @@ public actor CodexJSONLParser {
     private struct FileAggregate: Sendable {
         var lifetime: TokenUsage
         var dailyUsage: [Date: TokenUsage]
+        var dailyModelUsage: [Date: [String: TokenUsage]]
+        var lifetimeModelUsage: [String: TokenUsage]
+        var currentModel: String
         var dailyReportedTotals: [Date: Int]
         var hourlyTotals: [Date: Int]
         var deltaReportedTotalTokens: Int
@@ -273,6 +289,9 @@ public actor CodexJSONLParser {
             FileAggregate(
                 lifetime: TokenUsage(confidence: .localParsed),
                 dailyUsage: [:],
+                dailyModelUsage: [:],
+                lifetimeModelUsage: [:],
+                currentModel: "unknown",
                 dailyReportedTotals: [:],
                 hourlyTotals: [:],
                 deltaReportedTotalTokens: 0,
@@ -294,6 +313,9 @@ public actor CodexJSONLParser {
         if let timestamp = record.timestamp {
             aggregate.firstEventAt = min(aggregate.firstEventAt ?? timestamp, timestamp)
             aggregate.lastEventAt = max(aggregate.lastEventAt ?? timestamp, timestamp)
+        }
+        if let model = record.model {
+            aggregate.currentModel = model.isEmpty ? "unknown" : model
         }
         guard record.contributesUsage else { return }
 
@@ -321,11 +343,13 @@ public actor CodexJSONLParser {
 
         recordLatestSnapshots(into: &aggregate, from: record, sessionKey: sessionKey)
 
+        accumulateLifetimeModelUsage(deltaUsage, into: &aggregate)
         guard let timestamp = record.timestamp else { return }
         let day = calendar.startOfDay(for: timestamp)
         aggregate.dailyUsage[day] = (
             aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
         ).merging(deltaUsage, overflowed: &aggregate.arithmeticOverflowed)
+        accumulateModelUsage(deltaUsage, day: day, into: &aggregate)
         aggregate.dailyReportedTotals[day] = TokenArithmetic.adding(
             aggregate.dailyReportedTotals[day, default: 0],
             deltaReportedTotalTokens,
@@ -338,6 +362,24 @@ public actor CodexJSONLParser {
             aggregate.hourlyTotals[hour, default: 0],
             deltaReportedTotalTokens,
             overflowed: &aggregate.arithmeticOverflowed
+        )
+    }
+
+    private func accumulateLifetimeModelUsage(_ usage: TokenUsage, into aggregate: inout FileAggregate) {
+        guard (usage.totalTokens ?? 0) > 0 else { return }
+        let model = aggregate.currentModel
+        aggregate.lifetimeModelUsage[model] = (
+            aggregate.lifetimeModelUsage[model] ?? UsageWindows.emptyUsage(.localParsed)
+        ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
+    }
+
+    private func accumulateModelUsage(_ usage: TokenUsage, day: Date, into aggregate: inout FileAggregate) {
+        guard let month = modelUsageMonth, day >= month.start, day < month.end,
+              (usage.totalTokens ?? 0) > 0 else { return }
+        let model = aggregate.currentModel
+        let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
+        aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
+            usage, overflowed: &aggregate.arithmeticOverflowed
         )
     }
 
@@ -363,8 +405,6 @@ public actor CodexJSONLParser {
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
-        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed
-            || incremental.arithmeticOverflowed
         aggregate.lifetime = aggregate.lifetime.merging(
             incremental.lifetime,
             overflowed: &aggregate.arithmeticOverflowed
@@ -374,6 +414,7 @@ public actor CodexJSONLParser {
                 aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
             ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
+        mergeModelUsage(incremental, into: &aggregate)
         for (day, total) in incremental.dailyReportedTotals {
             aggregate.dailyReportedTotals[day] = TokenArithmetic.adding(
                 aggregate.dailyReportedTotals[day, default: 0],
@@ -413,6 +454,58 @@ public actor CodexJSONLParser {
         }
         if let lastEventAt = incremental.lastEventAt {
             aggregate.lastEventAt = max(aggregate.lastEventAt ?? lastEventAt, lastEventAt)
+        }
+    }
+
+    private func prepareModelUsageMonth(_ referenceDate: Date) {
+        let month = calendar.dateInterval(of: .month, for: referenceDate)
+        if month != modelUsageMonth {
+            modelUsageMonth = month
+            fileCache.removeAll(keepingCapacity: true)
+        }
+    }
+
+    private func collectModelUsage(
+        from files: [FileUsage],
+        daily: inout [Date: [String: TokenUsage]],
+        lifetime: inout [String: TokenUsage],
+        overflowed: inout Bool
+    ) {
+        for file in files {
+            guard let aggregate = fileCache[file.path]?.aggregate else { continue }
+            mergeModels(aggregate.dailyModelUsage, into: &daily, overflowed: &overflowed)
+            for (model, usage) in aggregate.lifetimeModelUsage {
+                lifetime[model] = (lifetime[model] ?? UsageWindows.emptyUsage(.localParsed))
+                    .merging(usage, overflowed: &overflowed)
+            }
+        }
+    }
+
+    private func mergeModelUsage(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
+        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed || incremental.arithmeticOverflowed
+        mergeModels(
+            incremental.dailyModelUsage,
+            into: &aggregate.dailyModelUsage,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+        for (model, usage) in incremental.lifetimeModelUsage {
+            aggregate.lifetimeModelUsage[model] = (
+                aggregate.lifetimeModelUsage[model] ?? UsageWindows.emptyUsage(.localParsed)
+            ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
+        }
+        aggregate.currentModel = incremental.currentModel
+    }
+
+    private func mergeModels(
+        _ source: [Date: [String: TokenUsage]],
+        into target: inout [Date: [String: TokenUsage]],
+        overflowed: inout Bool
+    ) {
+        for (day, models) in source {
+            for (model, usage) in models {
+                let previous = target[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
+                target[day, default: [:]][model] = previous.merging(usage, overflowed: &overflowed)
+            }
         }
     }
 
@@ -541,6 +634,7 @@ struct CodexUsageRecord: Sendable {
     let cumulativeReportedTotalTokens: Int?
     let cumulativeUsageSignature: CodexCumulativeUsageSignature?
     let rateLimits: CodexRateLimitSnapshot?
+    var model: String?
 
     func isNewerThan(_ finalTotal: CodexSessionFinalTotal) -> Bool {
         switch (timestamp, finalTotal.timestamp) {
@@ -627,76 +721,6 @@ private enum CodexWindowDuration {
 }
 
 extension CodexJSONLParser {
-    /// Best-effort scan for the most recently configured model, read from `turn_context`
-    /// events' `payload.model`. Read-only: does not affect `parse(logSources:)` or the
-    /// shape of `AggregateUsage`. This is a separate pass over the log files from
-    /// `parse(logSources:)`'s token-count scan, so sources are walked newest-first
-    /// (they're expected pre-sorted chronologically, as `CodexProvider.discoverLogSources()`
-    /// returns them) and stop at the first file with a `turn_context` event — avoiding a
-    /// second full read of every session file just to find the most recent model.
-    public func detectLatestModel(logSources: [LogSource]) async -> String? {
-        let activePaths = Set(logSources.map(\.url.path))
-        defer {
-            modelDetectionCache = modelDetectionCache.filter { activePaths.contains($0.key) }
-        }
-        for source in logSources.reversed() {
-            let metadata = fileMetadata(of: source.url)
-            let stamp = ModelSourceStamp(
-                fileIdentifier: metadata.identifier,
-                modificationDate: metadata.modificationDate ?? source.lastModified,
-                size: metadata.size
-            )
-            let cached = modelDetectionCache[source.url.path]
-            let model: String?
-            if cached?.stamp == stamp {
-                model = cached?.model
-            } else {
-                model = await latestModel(inFileAt: source.url)
-                modelDetectionCache[source.url.path] = ModelDetectionCacheEntry(
-                    stamp: stamp,
-                    model: model
-                )
-            }
-            if let model {
-                return model
-            }
-        }
-        return nil
-    }
-
-    func modelDetectionFileReadCountForTesting() -> Int {
-        modelDetectionFileReadCount
-    }
-
-    private func latestModel(inFileAt url: URL) async -> String? {
-        modelDetectionFileReadCount += 1
-        var model: String?
-        do {
-            for try await line in url.lines {
-                guard let data = line.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      json["type"] as? String == "turn_context",
-                      let payload = json["payload"] as? [String: Any],
-                      let payloadModel = payload["model"] as? String else { continue }
-                model = payloadModel
-            }
-        } catch {
-            return nil
-        }
-        return model
-    }
-
-    private struct ModelSourceStamp: Equatable {
-        let fileIdentifier: UInt64?
-        let modificationDate: Date?
-        let size: UInt64
-    }
-
-    private struct ModelDetectionCacheEntry {
-        let stamp: ModelSourceStamp
-        let model: String?
-    }
-
     func parseLine(_ data: Data) -> CodexLineParseOutcome {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .malformed
@@ -707,7 +731,9 @@ extension CodexJSONLParser {
         guard json["type"] as? String == "event_msg",
               let payload = json["payload"] as? [String: Any],
               payload["type"] as? String == "token_count" else {
-            guard let timestamp else { return .skipped }
+            let model = json["type"] as? String == "turn_context"
+                ? (json["payload"] as? [String: Any])?["model"] as? String : nil
+            guard timestamp != nil || model != nil else { return .skipped }
             return .usage(CodexUsageRecord(
                 timestamp: timestamp,
                 contributesUsage: false,
@@ -715,7 +741,8 @@ extension CodexJSONLParser {
                 deltaReportedTotalTokens: 0,
                 cumulativeReportedTotalTokens: nil,
                 cumulativeUsageSignature: nil,
-                rateLimits: nil
+                rateLimits: nil,
+                model: model
             ))
         }
 

@@ -11,7 +11,8 @@ final class ProviderUserDefaultsReader: @unchecked Sendable {
         self.userDefaults = userDefaults
     }
 
-    func bool(forKey key: String) -> Bool {
-        userDefaults.bool(forKey: key)
+    func bool(forKey key: String, defaultValue: Bool = false) -> Bool {
+        guard userDefaults.object(forKey: key) != nil else { return defaultValue }
+        return userDefaults.bool(forKey: key)
     }
 }

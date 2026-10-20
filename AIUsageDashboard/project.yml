@@ -13,8 +13,8 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.9.0"
-    CURRENT_PROJECT_VERSION: "9"
+    MARKETING_VERSION: "0.10.0"
+    CURRENT_PROJECT_VERSION: "10"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
@@ -100,6 +100,8 @@ targets:
       # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
       # run without pulling the whole app target into the test target.
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
+      # Pure provider settings facts are tested without launching the app.
+      - path: AIUsageDashboardApp/UI/Components/ProviderMetadata.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
       # index, and a chart whose series collide cannot answer the question it exists for.

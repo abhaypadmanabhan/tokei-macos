@@ -55,6 +55,16 @@ notarize() {
 # 1. Build with Developer ID + secure timestamps
 TOKEI_RELEASE=1 "$ROOT/scripts/build-app.sh"
 
+# The appcast step needs Sparkle's EdDSA sign_update from the release tree's package
+# artifacts. Check now, not after ~10 minutes of notarization (0.10.0: the artifact's bin/
+# had been emptied, only old_dsa_scripts/ remained, and the release stopped at the appcast).
+if ! find "$ROOT/build/DerivedData-release/SourcePackages/artifacts" -path '*/bin/sign_update' \
+    -not -path '*old_dsa_scripts*' -type f -perm -u+x 2>/dev/null | grep -q .; then
+  echo "release: Sparkle sign_update missing from build/DerivedData-release." >&2
+  echo "release: rm -rf build/DerivedData-release/SourcePackages, then rerun scripts/release.sh." >&2
+  exit 1
+fi
+
 VERSION="$(defaults read "$APP/Contents/Info" CFBundleShortVersionString)"
 BUILD="$(defaults read "$APP/Contents/Info" CFBundleVersion)"
 echo "Releasing Tokei $VERSION ($BUILD)"

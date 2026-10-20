@@ -15,12 +15,9 @@ extension ProviderDetailView {
         return used
     }
 
-    func paceVerdict(_ window: QuotaWindow) -> PaceVerdict? {
-        guard let pct = usedPercent(window),
-              let pace = MaxxerMath.pace(usedPercent: pct, windowType: window.type,
-                                         resetAt: window.resetAt, now: Date())
-        else { return nil }
-        return PaceVerdict(pct: pct, elapsed: pace.elapsedFraction)
+    /// Used vs elapsed share of the window; `nil` when there is no honest pace.
+    func pace(_ window: QuotaWindow, now: Date = Date()) -> QuotaPace? {
+        QuotaPace(window: window, now: now)
     }
 
     /// This week's tokens: the provider's own weekly metric, else the trailing

@@ -91,7 +91,8 @@ public enum UsageClientPolicy {
                 source: window.source,
                 label: window.label,
                 bucketKey: window.bucketKey,
-                observedAt: observedAt
+                observedAt: observedAt,
+                windowDuration: window.windowDuration
             )
         }
     }

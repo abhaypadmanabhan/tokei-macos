@@ -155,6 +155,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
             lastSyncedAt: fetchedAt,
             dailyTotals: UsageAggregation.merge(perAccountUsage.map(\.dailyTotals)),
             hourlyTotals: UsageAggregation.merge(perAccountUsage.compactMap(\.hourlyTotals)),
+            dailyModelUsage: UsageAggregation.mergeModels(perAccountUsage.map(\.dailyModelUsage)),
             accounts: accountUsages,
             // Internal/UI compatibility: ProviderSnapshot names the legacy account row id.
             // The public AgentSnapshot writer projects the stable accountID separately.
