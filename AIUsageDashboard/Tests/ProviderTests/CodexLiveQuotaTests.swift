@@ -45,15 +45,18 @@ final class CodexLiveQuotaTests: XCTestCase {
         """.utf8)
     }
 
-    private func writeLog(at date: Date, used: Int = 80) throws {
+    private func writeLog(at date: Date, used: Int = 80, individualLimit: Int? = nil) throws {
         let sessions = directory.appendingPathComponent("sessions")
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: date)
+        let spendLimit = individualLimit.map {
+            ",\"spend_control\":{\"individual_limit\":{\"used_percent\":\($0)}}"
+        } ?? ""
         let row = """
         {"timestamp":"\(stamp)","type":"event_msg","payload":{"type":"token_count",
         "info":{"total_token_usage":{"input_tokens":10,"total_tokens":10},
         "last_token_usage":{"input_tokens":10,"total_tokens":10}},
-        "rate_limits":{"primary":{"used_percent":\(used),"window_minutes":300,"resets_at":1900000000}}}}
+        "rate_limits":{"primary":{"used_percent":\(used),"window_minutes":300,"resets_at":1900000000}\(spendLimit)}}}
         """.replacingOccurrences(of: "\n", with: "")
         try Data(row.utf8).write(to: sessions.appendingPathComponent("session.jsonl"), options: .atomic)
     }
@@ -93,8 +96,9 @@ final class CodexLiveQuotaTests: XCTestCase {
         try writeLog(at: clock.read(), used: 60)
         clock.advance(301)
         let newer = try await provider.fetchSnapshot()
-        XCTAssertEqual(newer.accounts?.first?.quotaWindows.first?.used, 60)
-        XCTAssertFalse(newer.accounts?.first?.quotaWindows.first?.source.contains("app-server") ?? true)
+        let session = newer.accounts?.first?.quotaWindows.first { $0.type == .session }
+        XCTAssertEqual(session?.used, 60)
+        XCTAssertFalse(session?.source.contains("app-server") ?? true)
     }
 
     func testIdentityMismatchNeverAttributesAndExplicitOffDoesNotProbe() async throws {
@@ -112,7 +116,7 @@ final class CodexLiveQuotaTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
-    func testSubsequentRefreshObtainsFreshObservation() async throws {
+    func testRefreshReusesReadingAt299SecondsAndProbesAt300() async throws {
         let clock = LiveQuotaClock(Date(timeIntervalSince1970: 1800000000))
         let probe = LiveQuotaProbe()
         await probe.set(live())
@@ -121,12 +125,50 @@ final class CodexLiveQuotaTests: XCTestCase {
         clock.advance(299)
         _ = try await provider.fetchSnapshot()
         let calls = await probe.calls
-        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(calls, 1)
         clock.advance(1)
         _ = try await provider.fetchSnapshot()
         let refreshedCalls = await probe.calls
-        XCTAssertEqual(refreshedCalls, 3)
+        XCTAssertEqual(refreshedCalls, 2)
     }
+    func testLiveWeeklyKeepsTighterLogIndividualLimit() async throws {
+        let clock = LiveQuotaClock(Date(timeIntervalSince1970: 1800000000))
+        try writeLog(at: clock.read().addingTimeInterval(-60), used: 10, individualLimit: 90)
+        let probe = LiveQuotaProbe()
+        await probe.set(Data("""
+        {"accountId":"fixture-account","rateLimits":{"limitId":"codex",
+        "primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1900000000}}}
+        """.utf8))
+        let provider = provider(probe: probe, clock: clock)
+        defaults.set(false, forKey: "codexLiveQuotaEnabled")
+        let logOnly = try await provider.fetchSnapshot()
+        XCTAssertEqual(logOnly.accounts?.first?.quotaWindows.first {
+            $0.bucketKey == "spend_control_individual_limit"
+        }?.used, 90)
+        defaults.set(true, forKey: "codexLiveQuotaEnabled")
+        let snapshot = try await provider.fetchSnapshot()
+        let account = try XCTUnwrap(snapshot.accounts?.first)
+        XCTAssertEqual(account.quotaWindows.first { $0.type == .weekly }?.used, 20)
+        XCTAssertEqual(account.quotaWindows.first { $0.bucketKey == "spend_control_individual_limit" }?.used, 90)
+        let decision = AccountQuotaDecision.evaluate(account, providerID: .codex, now: clock.read())
+        XCTAssertEqual(decision.headroomPercent, 10)
+    }
+
+    func testFailedProbeIsAlsoLimitedToFiveMinutes() async throws {
+        let clock = LiveQuotaClock(Date(timeIntervalSince1970: 1800000000))
+        let probe = LiveQuotaProbe()
+        let provider = provider(probe: probe, clock: clock)
+        _ = try await provider.fetchSnapshot()
+        clock.advance(299)
+        _ = try await provider.fetchSnapshot()
+        let calls = await probe.calls
+        XCTAssertEqual(calls, 1)
+        clock.advance(1)
+        _ = try await provider.fetchSnapshot()
+        let retriedCalls = await probe.calls
+        XCTAssertEqual(retriedCalls, 2)
+    }
+
 }
 
 private struct LiveQuotaDiscovery: AccountDiscovering {

@@ -14,6 +14,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let liveQuotaClient: CodexRateLimitClient
     private let userDefaultsReader: ProviderUserDefaultsReader
     private var liveReadings: [String: CodexRateLimitClient.Reading] = [:]
+    private var lastProbeAt: [String: Date] = [:]
     private var identityAttribution = CodexIdentityAttribution()
 
     private struct AccountCollection {
@@ -120,8 +121,13 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         guard userDefaultsReader.bool(forKey: "codexLiveQuotaEnabled") else { return usages }
         let currentIDs = Set(accounts.map(\.id))
         liveReadings = liveReadings.filter { currentIDs.contains($0.key) }
+        lastProbeAt = lastProbeAt.filter { currentIDs.contains($0.key) }
         for account in accounts {
             guard let profile = account.preferredProfile else { continue }
+            let date = now()
+            if let previous = lastProbeAt[account.id], date.timeIntervalSince(previous) < 300 { continue }
+            // Stamp before suspending, so another refresh cannot spawn for this account.
+            lastProbeAt[account.id] = date
             // A failed/mismatched probe never clears the last good reading, and a
             // profile that switched identities during the request cannot borrow it.
             if let reading = try? await liveQuotaClient.fetch(root: profile.root),
@@ -131,19 +137,25 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             }
         }
         return usages.map { usage in
-            guard let accountID = usage.accountID,
-                  let reading = liveReadings[accountID],
-                  let liveDate = reading.windows.compactMap(\.observedAt).max(),
-                  liveDate > (usage.quotaWindows.compactMap(\.observedAt).max() ?? .distantPast) else {
-                return usage
+            guard let accountID = usage.accountID, let reading = liveReadings[accountID] else { return usage }
+            let liveWindows = reading.windows.filter { live in
+                let logs = usage.quotaWindows.filter { Self.sameQuota($0, live) }
+                return (live.observedAt ?? .distantPast) > (logs.compactMap(\.observedAt).max() ?? .distantPast)
             }
+            guard !liveWindows.isEmpty else { return usage }
+            let logOnly = usage.quotaWindows.filter { log in !liveWindows.contains { Self.sameQuota(log, $0) } }
             return ProviderAccountUsage(
                 id: usage.id, accountID: usage.accountID, selector: usage.selector,
-                label: usage.label, quotaWindows: reading.windows, todayUsage: usage.todayUsage,
+                label: usage.label, quotaWindows: liveWindows + logOnly, todayUsage: usage.todayUsage,
                 dailyTotals: usage.dailyTotals, configDirectories: usage.configDirectories,
                 unreadableDirectories: usage.unreadableDirectories, quotaStatus: .eligible
             )
         }
+    }
+
+    private static func sameQuota(_ lhs: QuotaWindow, _ rhs: QuotaWindow) -> Bool {
+        // Credits have independent spend-control, balance and reset-bank buckets.
+        lhs.type == rhs.type && (lhs.type != .credits || lhs.bucketKey == rhs.bucketKey)
     }
 
     private func collect(_ accounts: [ProviderAccount]) async throws -> AccountCollection {
