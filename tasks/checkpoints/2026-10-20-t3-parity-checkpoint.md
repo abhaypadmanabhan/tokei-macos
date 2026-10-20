@@ -76,3 +76,20 @@ run 658 tests, 5 skips, 0 failures after one stale assertion was fixed. secscan 
    Abhay's explicit yes in that session; see memory `dev-approved-publish-permissions`.
 6. Cleanup: remove `/tmp/tokei-live-proof.lock` if stale, relaunch Abhay's normal Tokei
    (`/Applications/Tokei.app` or `AIUsageDashboard/dist/Tokei.app`), remove the three worktrees after merge.
+
+## Session 2 (Claude Opus 5.5, Claude Code + herdr) — ~09:30 UTC 2026-10-20
+
+Abhay's answers before sleeping (binding for this release):
+- **Publish:** YES to ship everything if every check passes (merge main, push, GitHub release with
+  notarized DMG, appcast, website version). Stop and wait if any check fails.
+- **CPU bar:** ship if the new Release build is ≤ 1 % idle when no agent writes logs AND no worse than
+  shipped 0.9.0 under the same agent load.
+- **Menu-bar quota rows:** add a small state arrow per row (no words); words stay in the headline.
+
+State: T3 runs for WP-2/WP-3 were CANCELLED at 09:11:38Z (parent thread closed); WP-1 completed.
+- WP-1: Claude review Spec PASS / Standards 2 fixes → `1340f2f` (Codex delta PASS). Tests 92/0 + mutation red. AC5 pinned 0.004 % / 0.12 %.
+- WP-2: Claude review CHANGES (SIGPIPE, cooperative-pool block, probe every refresh, coalescing drops changes,
+  live drops log-only windows, real client default, perpetual fetching, grandchild kill) → Codex fixer in herdr
+  pane `wp2-codex-fix`, brief `tasks/reports/2026-10-20-wp2.fix-brief.md` in the WP-2 worktree.
+- WP-3: Codex review CHANGES → `bcbc781`; delta still wants the Overview/menu pace accessor to require a reported used + per-row state.
+- Proof lock `/tmp/tokei-live-proof.lock` now owned by the orchestrator. Baseline `mtd_baseline.py` keeps largest; `BASELINE_NOW` pins time.
