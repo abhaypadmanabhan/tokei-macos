@@ -137,6 +137,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
                reading.accountID == account.id,
                reading.windows.contains(where: { UtilizationEngine.usedPercent(from: $0) != nil }) {
                 liveReadings[account.id] = reading
+                lastProbeAt[account.id] = now()
             }
         }
         return usages.map { usage in

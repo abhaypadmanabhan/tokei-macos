@@ -61,10 +61,15 @@ final class CodexLiveQuotaTests: XCTestCase {
         try Data(row.utf8).write(to: sessions.appendingPathComponent("session.jsonl"), options: .atomic)
     }
 
-    private func provider(probe: LiveQuotaProbe, clock: LiveQuotaClock) -> CodexProvider {
+    private func provider(
+        probe: LiveQuotaProbe, clock: LiveQuotaClock, responseDelay: TimeInterval = 0
+    ) -> CodexProvider {
         let binary = directory!
         let client = CodexRateLimitClient(
-            resolveBinary: { binary }, run: { _, _ in try await probe.run() }, now: { clock.read() }
+            resolveBinary: { binary }, run: { _, _ in
+                clock.advance(responseDelay)
+                return try await probe.run()
+            }, now: { clock.read() }
         )
         let account = ProviderAccountNormalizer.normalize(providerID: .codex, candidates: [.init(
             root: directory, label: "fixture", quotaIdentity: "fixture-account", selector: nil
@@ -133,6 +138,22 @@ final class CodexLiveQuotaTests: XCTestCase {
         XCTAssertEqual(refreshedCalls, 2)
     }
 
+    func testSlowProbeStillReusesReadingFor300SecondsAfterObservation() async throws {
+        let clock = LiveQuotaClock(Date(timeIntervalSince1970: 1800000000))
+        let probe = LiveQuotaProbe()
+        await probe.set(live())
+        let provider = provider(probe: probe, clock: clock, responseDelay: 5)
+        _ = try await provider.fetchSnapshot()
+        clock.advance(299)
+        _ = try await provider.fetchSnapshot()
+        let calls = await probe.calls
+        XCTAssertEqual(calls, 1)
+        clock.advance(1)
+        _ = try await provider.fetchSnapshot()
+        let refreshedCalls = await probe.calls
+        XCTAssertEqual(refreshedCalls, 2)
+    }
+
     func testDefaultProviderHasNoCLIClient() throws {
         // Inspect configuration without ever giving the old default a chance to spawn.
         let provider = CodexProvider(userDefaults: defaults)
@@ -148,7 +169,8 @@ final class CodexLiveQuotaTests: XCTestCase {
         let probe = LiveQuotaProbe()
         await probe.set(Data("""
         {"accountId":"fixture-account","rateLimits":{"limitId":"codex",
-        "primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1900000000}}}
+        "primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1900000000},
+        "credits":{"balance":"50"}}}
         """.utf8))
         let provider = provider(probe: probe, clock: clock)
         defaults.set(false, forKey: CodexProvider.liveQuotaEnabledKey)
@@ -160,6 +182,7 @@ final class CodexLiveQuotaTests: XCTestCase {
         let snapshot = try await provider.fetchSnapshot()
         let account = try XCTUnwrap(snapshot.accounts?.first)
         XCTAssertEqual(account.quotaWindows.first { $0.type == .weekly }?.used, 20)
+        XCTAssertEqual(account.quotaWindows.first { $0.bucketKey == "credits" }?.remaining, 50)
         XCTAssertEqual(account.quotaWindows.first { $0.bucketKey == "spend_control_individual_limit" }?.used, 90)
         let decision = AccountQuotaDecision.evaluate(account, providerID: .codex, now: clock.read())
         XCTAssertEqual(decision.headroomPercent, 10)

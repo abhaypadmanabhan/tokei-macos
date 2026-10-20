@@ -35,73 +35,7 @@ final class CodexRateLimitClientTests: XCTestCase {
     }
 
     func testCapturedCLI163Response() throws {
-        let fixture = Data("""
-        {
-          "ordinaryUsageAllowed": true,
-          "rateLimits": {
-            "limitId": "codex",
-            "limitName": null,
-            "normalModelSlug": null,
-            "primary": {
-              "usedPercent": 1,
-              "windowDurationMins": 10080,
-              "resetsAt": 1793083660
-            },
-            "secondary": null,
-            "credits": {
-              "hasCredits": true,
-              "unlimited": false,
-              "balance": "62500.0000000000"
-            },
-            "individualLimit": null,
-            "spendControlReached": false,
-            "planType": "pro",
-            "rateLimitReachedType": null
-          },
-          "rateLimitsByLimitId": {
-            "codex": {
-              "limitId": "codex",
-              "limitName": null,
-              "normalModelSlug": null,
-              "primary": {
-                "usedPercent": 1,
-                "windowDurationMins": 10080,
-                "resetsAt": 1793083660
-              },
-              "secondary": null,
-              "credits": {
-                "hasCredits": true,
-                "unlimited": false,
-                "balance": "62500.0000000000"
-              },
-              "individualLimit": null,
-              "spendControlReached": false,
-              "planType": "pro",
-              "rateLimitReachedType": null
-            }
-          },
-          "rateLimitResetCredits": {
-            "availableCount": 3,
-            "credits": [
-              {
-                "status": "available",
-                "expiresAt": 1792700657
-              },
-              {
-                "status": "available",
-                "expiresAt": 1793299570
-              },
-              {
-                "status": "available",
-                "expiresAt": 1794007139
-              }
-            ]
-          },
-          "accountId": "fixture-account",
-          "rateLimitUpsell": null
-        }
-        """.utf8)
-        let reading = try CodexRateLimitClient.decode(fixture, observedAt: now)
+        let reading = try CodexRateLimitClient.decode(Self.capturedCLI163Response, observedAt: now)
         XCTAssertEqual(reading.windows.first?.type, .weekly)
         XCTAssertEqual(reading.windows.first?.windowDuration, 604800)
         XCTAssertEqual(reading.windows.first?.used, 1)
@@ -157,7 +91,7 @@ final class CodexRateLimitClientTests: XCTestCase {
         return binary
     }
 
-    func testRealRunnerHandshakeNotificationAndShutdown() throws {
+    func testRealRunnerHandshakeNotificationAndShutdown() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -174,8 +108,10 @@ final class CodexRateLimitClientTests: XCTestCase {
         printf '%s\\n' '"primary":{"usedPercent":10,"windowDurationMins":300}}}}'
         while :; do :; done
         """, in: directory)
-        let result = try CodexRateLimitClient.runProcess(binary: binary, root: directory)
-        XCTAssertEqual(try CodexRateLimitClient.decode(result, observedAt: now).windows.first?.used, 10)
+        let now = now
+        let client = CodexRateLimitClient(resolveBinary: { binary }, now: { now })
+        let reading = try await client.fetch(root: directory)
+        XCTAssertEqual(reading.windows.first?.used, 10)
     }
 
     func testRealRunnerTimeoutKillsChildWithPartialFrame() throws {
@@ -275,4 +211,73 @@ extension CodexRateLimitClientTests {
             XCTAssertEqual(errno, ESRCH)
         }
     }
+}
+
+extension CodexRateLimitClientTests {
+    private static let capturedCLI163Response = Data("""
+    {
+      "ordinaryUsageAllowed": true,
+      "rateLimits": {
+        "limitId": "codex",
+        "limitName": null,
+        "normalModelSlug": null,
+        "primary": {
+          "usedPercent": 1,
+          "windowDurationMins": 10080,
+          "resetsAt": 1793083660
+        },
+        "secondary": null,
+        "credits": {
+          "hasCredits": true,
+          "unlimited": false,
+          "balance": "62500.0000000000"
+        },
+        "individualLimit": null,
+        "spendControlReached": false,
+        "planType": "pro",
+        "rateLimitReachedType": null
+      },
+      "rateLimitsByLimitId": {
+        "codex": {
+          "limitId": "codex",
+          "limitName": null,
+          "normalModelSlug": null,
+          "primary": {
+            "usedPercent": 1,
+            "windowDurationMins": 10080,
+            "resetsAt": 1793083660
+          },
+          "secondary": null,
+          "credits": {
+            "hasCredits": true,
+            "unlimited": false,
+            "balance": "62500.0000000000"
+          },
+          "individualLimit": null,
+          "spendControlReached": false,
+          "planType": "pro",
+          "rateLimitReachedType": null
+        }
+      },
+      "rateLimitResetCredits": {
+        "availableCount": 3,
+        "credits": [
+          {
+            "status": "available",
+            "expiresAt": 1792700657
+          },
+          {
+            "status": "available",
+            "expiresAt": 1793299570
+          },
+          {
+            "status": "available",
+            "expiresAt": 1794007139
+          }
+        ]
+      },
+      "accountId": "fixture-account",
+      "rateLimitUpsell": null
+    }
+    """.utf8)
 }

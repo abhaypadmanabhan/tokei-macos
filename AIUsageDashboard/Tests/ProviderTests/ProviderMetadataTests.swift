@@ -25,6 +25,20 @@ final class ProviderMetadataTests: XCTestCase {
         XCTAssertNil(registered[CodexProvider.liveQuotaEnabledKey])
     }
 
+    func testDefaultsReaderUsesFallbackOnlyWhenUnset() throws {
+        let suite = "wp2.reader.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let reader = ProviderUserDefaultsReader(defaults)
+        let key = CodexProvider.liveQuotaEnabledKey
+        XCTAssertTrue(reader.bool(forKey: key, defaultValue: true))
+        XCTAssertFalse(reader.bool(forKey: key))
+        defaults.set(false, forKey: key)
+        XCTAssertFalse(reader.bool(forKey: key, defaultValue: true))
+        defaults.set("YES", forKey: key)
+        XCTAssertTrue(reader.bool(forKey: key))
+    }
+
     func testRegisteredFreshInstallRowIsOnAndExplicitOffIsKept() throws {
         let suite = "wp2.settings.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
