@@ -65,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
+        // and the first sync writes that store.
+        AddAgentModel.seedOnFirstLaunchIfNeeded()
         viewModel.beginAutoSync()
         Task { await viewModel.refresh() }
     }

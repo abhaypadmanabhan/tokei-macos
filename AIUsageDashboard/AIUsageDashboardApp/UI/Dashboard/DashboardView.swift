@@ -126,11 +126,6 @@ struct DashboardView: View {
                 break
             }
         }
-        .onAppear {
-            // Seed the canvas once so a brand-new user (no agents on disk) leads with
-            // the + instead of a wall of empty provider rows; idempotent thereafter.
-            AddAgentModel.seedOnFirstLaunchIfNeeded()
-        }
         .task {
             // Syncing itself starts at app launch (AppDelegate); opening the window refreshes.
             await viewModel.refresh()
