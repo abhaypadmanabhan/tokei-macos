@@ -203,7 +203,9 @@ extension CodexRateLimitClientTests {
                 }
             }
         }
-        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory, timeout: 0.2))
+        // Generous timeout: on a loaded full-suite run the wrapper needs time to write both
+        // pid files before the probe gives up (0.2 s flaked with a missing grandchild file).
+        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory, timeout: 2))
         for name in ["pid", "grandchild"] {
             let pid = try XCTUnwrap(Int32(String(contentsOf: directory.appendingPathComponent(name))))
             for _ in 0..<100 where Darwin.kill(pid, 0) == 0 { usleep(1000) }
