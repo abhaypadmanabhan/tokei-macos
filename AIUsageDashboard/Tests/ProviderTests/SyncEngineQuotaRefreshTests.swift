@@ -16,6 +16,8 @@ private actor QuotaRefreshProvider: UsageProvider {
     nonisolated let displayName = "fixture"
     nonisolated let capabilities: ProviderCapabilities = [.quota]
     var calls = 0
+    private var value = 1
+    func changeValue() { value = 2 }
     private var held = false
     private var continuation: CheckedContinuation<Void, Never>?
     func detectAvailability() async -> ProviderAvailability { .installed }
@@ -24,8 +26,9 @@ private actor QuotaRefreshProvider: UsageProvider {
     func release() { held = false; continuation?.resume(); continuation = nil }
     func fetchSnapshot() async throws -> ProviderSnapshot {
         calls += 1
+        let fetchedValue = value
         if held { await withCheckedContinuation { continuation = $0 } }
-        return ProviderSnapshot(providerID: id, displayName: displayName, authStatus: .authenticated,
+        return ProviderSnapshot(providerID: id, displayName: "value-\(fetchedValue)", authStatus: .authenticated,
                                 todayUsage: .unavailable, weekUsage: .unavailable)
     }
 }
@@ -69,7 +72,7 @@ final class SyncEngineQuotaRefreshTests: XCTestCase {
         XCTAssertEqual(stoppedCalls, 1)
     }
 
-    func testTimerAndConcurrentRefreshJoinOneInFlightOperation() async {
+    func testTimerAndConcurrentRefreshGetOneTrailingResult() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let provider = QuotaRefreshProvider()
@@ -81,13 +84,20 @@ final class SyncEngineQuotaRefreshTests: XCTestCase {
         await engine.startAutoSync()
         await eventually { await sleeper.intervals.count == 1 }
         await sleeper.tick()
+        await provider.changeValue()
         let second = Task { await engine.refreshAll() }
+        let third = Task { await engine.refreshAll() }
         try? await Task.sleep(nanoseconds: 30_000_000)
         let concurrentCalls = await provider.calls
         XCTAssertEqual(concurrentCalls, 1)
         await provider.release()
         _ = await first.value
-        _ = await second.value
+        let changed = await second.value
+        let alsoChanged = await third.value
+        XCTAssertEqual(changed.first?.displayName, "value-2")
+        XCTAssertEqual(alsoChanged.first?.displayName, "value-2")
+        let releasedCalls = await provider.calls
+        XCTAssertEqual(releasedCalls, 2)
         await eventually { await sleeper.intervals.count == 2 }
         await engine.stopAutoSync()
         await sleeper.tick()

@@ -12,6 +12,7 @@ public actor SyncEngine {
     private let sleep: @Sendable (TimeInterval) async throws -> Void
     private var periodicSyncTask: Task<Void, Never>?
     private var refreshTask: Task<[ProviderSnapshot], Never>?
+    private var refreshDirty = false
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
 
@@ -55,12 +56,22 @@ public actor SyncEngine {
     }
 
     public func refreshAll() async -> [ProviderSnapshot] {
-        if let refreshTask { return await refreshTask.value }
-        let task = Task { await self.performRefresh() }
+        if let refreshTask {
+            refreshDirty = true
+            return await refreshTask.value
+        }
+        let task = Task {
+            var snapshots: [ProviderSnapshot]
+            repeat {
+                self.refreshDirty = false
+                snapshots = await self.performRefresh()
+            } while self.refreshDirty
+            // Clear before publishing completion so a later caller starts a new run.
+            self.refreshTask = nil
+            return snapshots
+        }
         refreshTask = task
-        let snapshots = await task.value
-        refreshTask = nil
-        return snapshots
+        return await task.value
     }
 
     private func performRefresh() async -> [ProviderSnapshot] {
