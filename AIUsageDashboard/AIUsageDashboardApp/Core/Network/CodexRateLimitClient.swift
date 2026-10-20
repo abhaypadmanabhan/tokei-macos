@@ -30,9 +30,11 @@ public struct CodexRateLimitClient: Sendable {
     ) {
         self.resolve = resolveBinary ?? { Self.resolveBinary() }
         self.run = run ?? { binary, root in
-            try await Task.detached(priority: .utility) {
-                try Self.runProcess(binary: binary, root: root)
-            }.value
+            try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .utility).async {
+                    continuation.resume(with: Result { try Self.runProcess(binary: binary, root: root) })
+                }
+            }
         }
         self.now = now
     }
@@ -71,26 +73,27 @@ public struct CodexRateLimitClient: Sendable {
     // POSIX poll/read, like MCPFrameReader: never block on a partial newline or let a
     // noisy child grow the buffer without a bound. One deadline covers the handshake too.
     static func runProcess(binary: URL, root: URL, timeout: TimeInterval = 5) throws -> Data {
-        let process = Process()
         let input = Pipe()
         let output = Pipe()
-        process.executableURL = binary
-        process.arguments = ["app-server"]
-        var environment = ProcessInfo.processInfo.environment
-        environment["CODEX_HOME"] = root.path
-        // Node-backed installations need their sibling node when launched from Finder.
-        environment["PATH"] = binary.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
-        process.environment = environment
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        let deadline = ProcessInfo.processInfo.systemUptime + min(5, max(0, timeout))
-        try process.run()
         defer {
-            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+            try? input.fileHandleForReading.close()
             try? input.fileHandleForWriting.close()
             try? output.fileHandleForReading.close()
+            try? output.fileHandleForWriting.close()
         }
+        // A dead CLI must produce a write error, never a process-wide SIGPIPE.
+        guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + min(5, max(0, timeout))
+        let pid = try spawn(binary: binary, root: root, input: input, output: output)
+        defer {
+            // Kill even if the wrapper already exited: its descendants still own this group.
+            Darwin.kill(-pid, SIGKILL)
+            while waitpid(pid, nil, 0) == -1 && errno == EINTR {}
+        }
+        try input.fileHandleForReading.close()
+        try output.fileHandleForWriting.close()
         func send(_ message: [String: Any]) throws {
             var data = try JSONSerialization.data(withJSONObject: message)
             data.append(0x0A)
@@ -105,6 +108,42 @@ public struct CodexRateLimitClient: Sendable {
         try send(["jsonrpc": "2.0", "method": "initialized"])
         try send(["jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": NSNull()])
         return try JSONSerialization.data(withJSONObject: reader.response(id: 2))
+    }
+
+    /// Set the group atomically at spawn; setpgid after Process.run races exec.
+    private static func spawn(binary: URL, root: URL, input: Pipe, output: Pipe) throws -> pid_t {
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        posix_spawn_file_actions_init(&actions)
+        posix_spawnattr_init(&attributes)
+        defer {
+            posix_spawn_file_actions_destroy(&actions)
+            posix_spawnattr_destroy(&attributes)
+        }
+        posix_spawn_file_actions_adddup2(&actions, input.fileHandleForReading.fileDescriptor, STDIN_FILENO)
+        posix_spawn_file_actions_adddup2(&actions, output.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        posix_spawnattr_setpgroup(&attributes, 0)
+        var environment = ProcessInfo.processInfo.environment
+        environment["CODEX_HOME"] = root.path
+        // Node-backed installations need their sibling node when launched from Finder.
+        environment["PATH"] = binary.deletingLastPathComponent().path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        let arguments = [binary.path, "app-server"].map { strdup($0) } + [nil]
+        let variables = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer {
+            arguments.forEach { free($0) }
+            variables.forEach { free($0) }
+        }
+        var pid: pid_t = 0
+        let result = arguments.withUnsafeBufferPointer { argv in
+            variables.withUnsafeBufferPointer { env in
+                guard let argvBase = argv.baseAddress, let envBase = env.baseAddress else { return EINVAL }
+                return posix_spawn(&pid, binary.path, &actions, &attributes, argvBase, envBase)
+            }
+        }
+        guard result == 0 else { throw POSIXError(POSIXErrorCode(rawValue: result) ?? .EIO) }
+        return pid
     }
 
     private struct ResponseReader {

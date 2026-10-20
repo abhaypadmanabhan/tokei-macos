@@ -233,3 +233,46 @@ final class CodexRateLimitClientTests: XCTestCase {
         XCTAssertTrue(binary.path.contains("v22.10.0"))
     }
 }
+
+extension CodexRateLimitClientTests {
+    func testEarlyStdinCloseFailsWithoutSIGPIPE() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let binary = try script("""
+        read -r initialize
+        exec 0<&-
+        printf '%s\\n' '{"id":1,"result":{}}'
+        exit 0
+        """, in: directory)
+        let previous = Darwin.signal(SIGPIPE, SIG_DFL)
+        defer { Darwin.signal(SIGPIPE, previous) }
+        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory))
+    }
+
+    func testTimeoutKillsWrapperAndGrandchild() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let binary = try script("""
+        printf '%s' "$$" > "$CODEX_HOME/pid"
+        sleep 60 &
+        printf '%s' "$!" > "$CODEX_HOME/grandchild"
+        wait
+        """, in: directory)
+        defer {
+            for name in ["pid", "grandchild"] {
+                if let value = try? String(contentsOf: directory.appendingPathComponent(name)), let pid = Int32(value) {
+                    Darwin.kill(pid, SIGKILL)
+                }
+            }
+        }
+        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory, timeout: 0.2))
+        for name in ["pid", "grandchild"] {
+            let pid = try XCTUnwrap(Int32(String(contentsOf: directory.appendingPathComponent(name))))
+            for _ in 0..<100 where Darwin.kill(pid, 0) == 0 { usleep(1000) }
+            XCTAssertEqual(Darwin.kill(pid, 0), -1, "Surviving \(name)")
+            XCTAssertEqual(errno, ESRCH)
+        }
+    }
+}
