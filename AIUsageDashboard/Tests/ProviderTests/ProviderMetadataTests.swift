@@ -3,6 +3,15 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class ProviderMetadataTests: XCTestCase {
+    func testCodexWithoutQuotaUsesLocalStateAndKeepsSettingsRow() {
+        XCTAssertTrue(ProviderMetadata.liveQuotaProviders.contains(.codex))
+        XCTAssertFalse(ProviderMetadata.showsPendingQuota(for: .codex))
+        XCTAssertTrue(ProviderMetadata.showsPendingQuota(for: .claudeCode))
+        XCTAssertTrue(ProviderMetadata.showsPendingQuota(for: .cursor))
+        XCTAssertTrue(ProviderMetadata.showsPendingQuota(for: .antigravity))
+        XCTAssertFalse(ProviderMetadata.showsPendingQuota(for: .cline))
+    }
+
     func testKeyLookupDoesNotRegisterDefaults() {
         let defaults = UserDefaults.standard
         let original = defaults.volatileDomain(forName: UserDefaults.registrationDomain)

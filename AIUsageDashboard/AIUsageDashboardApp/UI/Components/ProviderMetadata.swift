@@ -45,6 +45,11 @@ enum ProviderCapabilityTier {
 enum ProviderMetadata {
     static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity]
 
+    static func showsPendingQuota(for providerID: ProviderID) -> Bool {
+        // Codex still reads local logs when its optional CLI probe has no window.
+        providerID != .codex && liveQuotaProviders.contains(providerID)
+    }
+
     static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
         switch providerID {
         case .claudeCode: return "claudeNetworkUsageEnabled"
