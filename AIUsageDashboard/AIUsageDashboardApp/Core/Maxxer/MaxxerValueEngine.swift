@@ -51,7 +51,8 @@ public enum MaxxerValueEngine {
             planMonthlyUSD: planMonthlyUSD,
             valueMultiple: valueMultiple,
             confidence: cost.confidence,
-            hasUnpricedTokens: cost.hasUnpricedTokens
+            hasUnpricedTokens: cost.hasUnpricedTokens,
+            models: []
         )
     }
 
