@@ -39,8 +39,6 @@ public actor CodexJSONLParser {
     /// Each entry retains additive usage plus the per-file latest-wins values needed
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
-    private var modelDetectionCache: [String: ModelDetectionCacheEntry] = [:]
-    private var modelDetectionFileReadCount = 0
     private var fileReadCount = 0
     private var modelUsageMonth: DateInterval?
 
@@ -723,76 +721,6 @@ private enum CodexWindowDuration {
 }
 
 extension CodexJSONLParser {
-    /// Best-effort scan for the most recently configured model, read from `turn_context`
-    /// events' `payload.model`. Read-only: does not affect `parse(logSources:)` or the
-    /// shape of `AggregateUsage`. This is a separate pass over the log files from
-    /// `parse(logSources:)`'s token-count scan, so sources are walked newest-first
-    /// (they're expected pre-sorted chronologically, as `CodexProvider.discoverLogSources()`
-    /// returns them) and stop at the first file with a `turn_context` event — avoiding a
-    /// second full read of every session file just to find the most recent model.
-    public func detectLatestModel(logSources: [LogSource]) async -> String? {
-        let activePaths = Set(logSources.map(\.url.path))
-        defer {
-            modelDetectionCache = modelDetectionCache.filter { activePaths.contains($0.key) }
-        }
-        for source in logSources.reversed() {
-            let metadata = fileMetadata(of: source.url)
-            let stamp = ModelSourceStamp(
-                fileIdentifier: metadata.identifier,
-                modificationDate: metadata.modificationDate ?? source.lastModified,
-                size: metadata.size
-            )
-            let cached = modelDetectionCache[source.url.path]
-            let model: String?
-            if cached?.stamp == stamp {
-                model = cached?.model
-            } else {
-                model = await latestModel(inFileAt: source.url)
-                modelDetectionCache[source.url.path] = ModelDetectionCacheEntry(
-                    stamp: stamp,
-                    model: model
-                )
-            }
-            if let model {
-                return model
-            }
-        }
-        return nil
-    }
-
-    func modelDetectionFileReadCountForTesting() -> Int {
-        modelDetectionFileReadCount
-    }
-
-    private func latestModel(inFileAt url: URL) async -> String? {
-        modelDetectionFileReadCount += 1
-        var model: String?
-        do {
-            for try await line in url.lines {
-                guard let data = line.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      json["type"] as? String == "turn_context",
-                      let payload = json["payload"] as? [String: Any],
-                      let payloadModel = payload["model"] as? String else { continue }
-                model = payloadModel
-            }
-        } catch {
-            return nil
-        }
-        return model
-    }
-
-    private struct ModelSourceStamp: Equatable {
-        let fileIdentifier: UInt64?
-        let modificationDate: Date?
-        let size: UInt64
-    }
-
-    private struct ModelDetectionCacheEntry {
-        let stamp: ModelSourceStamp
-        let model: String?
-    }
-
     func parseLine(_ data: Data) -> CodexLineParseOutcome {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .malformed

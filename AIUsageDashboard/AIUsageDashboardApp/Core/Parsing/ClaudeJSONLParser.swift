@@ -6,8 +6,9 @@ public actor ClaudeJSONLParser {
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
-        /// Total tokens per calendar day (start-of-day key) for records with timestamps.
+        /// Tokens per calendar day (start-of-day key) per served model, current month only.
         public let dailyModelUsage: [Date: [String: TokenUsage]]
+        /// Total tokens per calendar day (start-of-day key) for records with timestamps.
         public let dailyTotals: [Date: Int]
         public let hourlyTotals: [Date: Int]?
         public let warnings: [ProviderWarning]
