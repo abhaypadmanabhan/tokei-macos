@@ -341,6 +341,7 @@ struct MenuBarView: View {
                 reduceMotion: reduceMotion
             )
             .frame(maxWidth: .infinity)
+            PaceMark(pace: pace)
             Text(resetText(util?.resetAt))
                 .font(.mono(size: 10.5))
                 .monospacedDigit()

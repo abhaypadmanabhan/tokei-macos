@@ -95,6 +95,21 @@ final class DashboardViewModelUtilizationTests: XCTestCase {
         XCTAssertNil(model.pace(for: util), "no reported length and no implied one: show nothing")
     }
 
+    func testPaceNilForRemainingOnlyReadings() throws {
+        // The gauge can show 30% from limit - remaining, but pace needs a reported used.
+        let model = DashboardViewModel(now: { Self.paceNow })
+        let remainingOnly = QuotaWindow(
+            providerID: .cursor, type: .weekly, used: nil, limit: 100, remaining: 70,
+            resetAt: Self.paceNow.addingTimeInterval(7 * 86_400 / 2),
+            confidence: .providerReported, source: "test"
+        )
+        model.snapshots = [paceSnapshot(.cursor, windows: [remainingOnly])]
+        let util = try XCTUnwrap(model.utilization.first)
+        XCTAssertEqual(util.usedPercent, 30, accuracy: 1e-9)
+        XCTAssertNil(model.pace(for: util))
+        XCTAssertNil(model.tightestAccountPace)
+    }
+
     func testTightestAccountPaceFollowsTightestWindow() throws {
         // Claude's weekly (80%) is tighter than its 5 h (20%) and Codex (30%).
         let model = DashboardViewModel(now: { Self.paceNow })

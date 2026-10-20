@@ -10,18 +10,16 @@ extension DashboardViewModel {
         tightestAccountPeak.flatMap { QuotaPace(window: $0.window, now: now()) }
     }
 
-    /// Pace for a live reading, using its source window's reported length when it has one.
+    /// Pace for a live reading, read off the window that produced it so it carries that
+    /// window's reported length and follows `QuotaPace(window:now:)`'s rules (a reported
+    /// `used` is required: a remaining-only reading gets no pace).
     public func pace(for utilization: Utilization) -> QuotaPace? {
         let source = snapshot(for: utilization.providerID)?.quotaWindows.first {
-            $0.type == utilization.window && $0.resetAt == utilization.resetAt
+            $0.type == utilization.window
+                && $0.resetAt == utilization.resetAt
+                && UtilizationEngine.usedPercent(from: $0) == utilization.usedPercent
         }
-        return QuotaPace(
-            usedPercent: utilization.usedPercent,
-            windowType: utilization.window,
-            windowDuration: source?.windowDuration,
-            resetAt: utilization.resetAt,
-            now: now()
-        )
+        return source.flatMap { QuotaPace(window: $0, now: now()) }
     }
 
     /// The highest-used account window among visible providers; first seen wins a tie.
