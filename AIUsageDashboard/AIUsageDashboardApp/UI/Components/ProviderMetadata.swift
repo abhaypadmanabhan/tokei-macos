@@ -43,11 +43,17 @@ enum ProviderCapabilityTier {
 /// Static, UI-only facts about each provider that never need Core access: local
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
-    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .cursor, .antigravity]
+    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity]
+
+    static func showsPendingQuota(for providerID: ProviderID) -> Bool {
+        // Codex still reads local logs when its optional CLI probe has no window.
+        providerID != .codex && liveQuotaProviders.contains(providerID)
+    }
 
     static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
         switch providerID {
         case .claudeCode: return "claudeNetworkUsageEnabled"
+        case .codex: return CodexProvider.liveQuotaEnabledKey
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         default: return nil

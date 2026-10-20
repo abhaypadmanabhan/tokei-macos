@@ -1,6 +1,9 @@
 import Foundation
 
 public actor CodexProvider: UsageProvider, LocalLogProvider {
+    public static let liveQuotaEnabledKey = "codexLiveQuotaEnabled"
+    public static let liveQuotaDefaults = [liveQuotaEnabledKey: true]
+
     public let id: ProviderID = .codex
     public let displayName: String = "OpenAI Codex"
     public let capabilities: ProviderCapabilities = [.localLog, .tokenUsage, .quota]
@@ -11,6 +14,10 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let discoverer: any AccountDiscovering
     private let discoveryContext: DiscoveryContext
     private let now: @Sendable () -> Date
+    private let liveQuotaClient: CodexRateLimitClient?
+    private let userDefaultsReader: ProviderUserDefaultsReader
+    private var liveReadings: [String: CodexRateLimitClient.Reading] = [:]
+    private var lastProbeAt: [String: Date] = [:]
     private var identityAttribution = CodexIdentityAttribution()
 
     private struct AccountCollection {
@@ -28,13 +35,17 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         registeredDirectories: [URL] = [],
         environment: [String: String] = ProcessInfo.processInfo.environment,
         discoverer: any AccountDiscovering = CodexAccountDiscoverer(),
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        liveQuotaClient: CodexRateLimitClient? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
         self.parser = parser
         self.pricing = pricing
         self.discoverer = discoverer
         self.now = now
+        self.liveQuotaClient = liveQuotaClient
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
 
         let home = homeDirectory ?? codexDirectory?.deletingLastPathComponent()
             ?? fileManager.homeDirectoryForCurrentUser
@@ -70,12 +81,13 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         let accounts = try discoverer.discover(context: discoveryContext)
         let fetchedAt = now()
         let collected = try await collect(accounts)
-        let attributedUsages = identityAttribution.attribute(
+        let logUsages = identityAttribution.attribute(
             accounts: accounts,
             profiles: collected.profiles,
             observedAt: fetchedAt
         )
 
+        let attributedUsages = await enrichQuota(logUsages, accounts: accounts)
         let headline = AccountQuotaDecision.headline(
             among: attributedUsages,
             providerID: id,
@@ -103,6 +115,52 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             accounts: attributedUsages.isEmpty ? nil : attributedUsages,
             headlineAccountID: headline?.account.id
         )
+    }
+
+    private func enrichQuota(
+        _ usages: [ProviderAccountUsage],
+        accounts: [ProviderAccount]
+    ) async -> [ProviderAccountUsage] {
+        guard let liveQuotaClient,
+              userDefaultsReader.bool(forKey: Self.liveQuotaEnabledKey, defaultValue: true) else { return usages }
+        let currentIDs = Set(accounts.map(\.id))
+        liveReadings = liveReadings.filter { currentIDs.contains($0.key) }
+        lastProbeAt = lastProbeAt.filter { currentIDs.contains($0.key) }
+        for account in accounts {
+            guard let profile = account.preferredProfile else { continue }
+            let date = now()
+            if let previous = lastProbeAt[account.id], date.timeIntervalSince(previous) < 300 { continue }
+            // Stamp before suspending, so another refresh cannot spawn for this account.
+            lastProbeAt[account.id] = date
+            // A failed/mismatched probe never clears the last good reading, and a
+            // profile that switched identities during the request cannot borrow it.
+            if let reading = try? await liveQuotaClient.fetch(root: profile.root),
+               reading.accountID == account.id,
+               reading.windows.contains(where: { UtilizationEngine.usedPercent(from: $0) != nil }) {
+                liveReadings[account.id] = reading
+                lastProbeAt[account.id] = now()
+            }
+        }
+        return usages.map { usage in
+            guard let accountID = usage.accountID, let reading = liveReadings[accountID] else { return usage }
+            let liveWindows = reading.windows.filter { live in
+                let logs = usage.quotaWindows.filter { Self.sameQuota($0, live) }
+                return (live.observedAt ?? .distantPast) > (logs.compactMap(\.observedAt).max() ?? .distantPast)
+            }
+            guard !liveWindows.isEmpty else { return usage }
+            let logOnly = usage.quotaWindows.filter { log in !liveWindows.contains { Self.sameQuota(log, $0) } }
+            return ProviderAccountUsage(
+                id: usage.id, accountID: usage.accountID, selector: usage.selector,
+                label: usage.label, quotaWindows: liveWindows + logOnly, todayUsage: usage.todayUsage,
+                dailyTotals: usage.dailyTotals, configDirectories: usage.configDirectories,
+                unreadableDirectories: usage.unreadableDirectories, quotaStatus: .eligible
+            )
+        }
+    }
+
+    private static func sameQuota(_ lhs: QuotaWindow, _ rhs: QuotaWindow) -> Bool {
+        // Credits have independent spend-control, balance and reset-bank buckets.
+        lhs.type == rhs.type && (lhs.type != .credits || lhs.bucketKey == rhs.bucketKey)
     }
 
     private func collect(_ accounts: [ProviderAccount]) async throws -> AccountCollection {

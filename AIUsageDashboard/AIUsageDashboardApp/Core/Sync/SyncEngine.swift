@@ -8,6 +8,11 @@ public actor SyncEngine {
     private let quotaSeriesStore: QuotaSeriesStore
     private let agentSnapshotWriter: AgentSnapshotWriter
     private let watcher: FileWatcher
+    private let evaluateThresholds: @Sendable ([ProviderSnapshot]) async -> Void
+    private let sleep: @Sendable (TimeInterval) async throws -> Void
+    private var periodicSyncTask: Task<Void, Never>?
+    private var refreshTask: Task<[ProviderSnapshot], Never>?
+    private var refreshDirty = false
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
 
@@ -18,13 +23,21 @@ public actor SyncEngine {
         store: UsageStore = .shared,
         quotaSeriesStore: QuotaSeriesStore = .shared,
         agentSnapshotWriter: AgentSnapshotWriter = .shared,
-        watcher: FileWatcher = .shared
+        watcher: FileWatcher = .shared,
+        evaluateThresholds: @escaping @Sendable ([ProviderSnapshot]) async -> Void = {
+            await NotificationEngine.shared.evaluateThresholds(for: $0)
+        },
+        sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
     ) {
         self.registry = registry
         self.store = store
         self.quotaSeriesStore = quotaSeriesStore
         self.agentSnapshotWriter = agentSnapshotWriter
         self.watcher = watcher
+        self.sleep = sleep
+        self.evaluateThresholds = evaluateThresholds
         var continuation: AsyncStream<[ProviderSnapshot]>.Continuation!
         self.updates = AsyncStream { cont in
             continuation = cont
@@ -43,10 +56,29 @@ public actor SyncEngine {
     }
 
     public func refreshAll() async -> [ProviderSnapshot] {
+        if let refreshTask {
+            refreshDirty = true
+            return await refreshTask.value
+        }
+        let task = Task {
+            var snapshots: [ProviderSnapshot]
+            repeat {
+                self.refreshDirty = false
+                snapshots = await self.performRefresh()
+            } while self.refreshDirty
+            // Clear before publishing completion so a later caller starts a new run.
+            self.refreshTask = nil
+            return snapshots
+        }
+        refreshTask = task
+        return await task.value
+    }
+
+    private func performRefresh() async -> [ProviderSnapshot] {
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
-        await NotificationEngine.shared.evaluateThresholds(for: snapshots)
+        await evaluateThresholds(snapshots)
         updatesContinuation?.yield(snapshots)
         // Last: nothing in-process reads this back (only the external `tokei` CLI/MCP
         // helper does), so it shouldn't gate notification delivery or the UI-facing yield.
@@ -56,11 +88,21 @@ public actor SyncEngine {
 
     public func startAutoSync() {
         guard autoSyncTask == nil else { return }
-        autoSyncTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await self.watcher.events
-            await self.watcher.start()
+        autoSyncTask = Task { [weak self, watcher] in
+            let stream = await watcher.events
+            guard !Task.isCancelled else { return }
+            await watcher.start()
             for await _ in stream {
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
+                _ = await self.refreshAll()
+            }
+        }
+        periodicSyncTask = Task { [weak self, sleep] in
+            while !Task.isCancelled {
+                do { try await sleep(300) } catch { break }
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
                 _ = await self.refreshAll()
             }
         }
@@ -69,6 +111,8 @@ public actor SyncEngine {
     public func stopAutoSync() {
         autoSyncTask?.cancel()
         autoSyncTask = nil
+        periodicSyncTask?.cancel()
+        periodicSyncTask = nil
         Task {
             await watcher.stop()
         }

@@ -258,7 +258,6 @@ final class CodexProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.warnings.map(\.message), [expectedWarning])
     }
 }
-
 extension CodexProviderTests {
     func testR09C_01_identityEpochOwnershipSurvivesCalendarChangesAndTokyoRollover() async throws {
         let fixture = try await makeCalendarEpochFixture()

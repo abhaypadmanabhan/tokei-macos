@@ -21,7 +21,7 @@ extension OverviewView {
 
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderMetadata.liveQuotaProviders.contains(id) {
+        if ProviderMetadata.showsPendingQuota(for: id) {
             return liveQuotaEnabled(id) ? .fetching : .connect
         }
         return .localOnly
