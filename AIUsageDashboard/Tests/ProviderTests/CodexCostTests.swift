@@ -87,7 +87,9 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-4.1"), codex: codex)
 
-        let provider = CodexProvider(codexDirectory: codex)
+        let provider = CodexProvider(
+            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+        )
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNotNil(snapshot.costUsage)
@@ -103,7 +105,9 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-5.5"), codex: codex)
 
-        let provider = CodexProvider(codexDirectory: codex)
+        let provider = CodexProvider(
+            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+        )
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNotNil(snapshot.costUsage?.amount)
@@ -115,7 +119,9 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-6-ultra"), codex: codex)
 
-        let provider = CodexProvider(codexDirectory: codex)
+        let provider = CodexProvider(
+            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+        )
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)
@@ -126,7 +132,9 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.twoTokenCountEvents(), codex: codex)
 
-        let provider = CodexProvider(codexDirectory: codex)
+        let provider = CodexProvider(
+            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+        )
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)
@@ -137,7 +145,9 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
 
-        let provider = CodexProvider(codexDirectory: codex)
+        let provider = CodexProvider(
+            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+        )
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)

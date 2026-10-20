@@ -11,6 +11,9 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let discoverer: any AccountDiscovering
     private let discoveryContext: DiscoveryContext
     private let now: @Sendable () -> Date
+    private let liveQuotaClient: CodexRateLimitClient
+    private let userDefaultsReader: ProviderUserDefaultsReader
+    private var liveReadings: [String: CodexRateLimitClient.Reading] = [:]
     private var identityAttribution = CodexIdentityAttribution()
 
     private struct AccountCollection {
@@ -29,13 +32,18 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         registeredDirectories: [URL] = [],
         environment: [String: String] = ProcessInfo.processInfo.environment,
         discoverer: any AccountDiscovering = CodexAccountDiscoverer(),
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        liveQuotaClient: CodexRateLimitClient = .init(),
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
         self.parser = parser
         self.pricing = pricing
         self.discoverer = discoverer
         self.now = now
+        self.liveQuotaClient = liveQuotaClient
+        userDefaults.register(defaults: ["codexLiveQuotaEnabled": true])
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
 
         let home = homeDirectory ?? codexDirectory?.deletingLastPathComponent()
             ?? fileManager.homeDirectoryForCurrentUser
@@ -71,12 +79,13 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         let accounts = try discoverer.discover(context: discoveryContext)
         let fetchedAt = now()
         let collected = try await collect(accounts)
-        let attributedUsages = identityAttribution.attribute(
+        let logUsages = identityAttribution.attribute(
             accounts: accounts,
             profiles: collected.profiles,
             observedAt: fetchedAt
         )
 
+        let attributedUsages = await enrichQuota(logUsages, accounts: accounts)
         let headline = AccountQuotaDecision.headline(
             among: attributedUsages,
             providerID: id,
@@ -102,6 +111,39 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             accounts: attributedUsages.isEmpty ? nil : attributedUsages,
             headlineAccountID: headline?.account.id
         )
+    }
+
+    private func enrichQuota(
+        _ usages: [ProviderAccountUsage],
+        accounts: [ProviderAccount]
+    ) async -> [ProviderAccountUsage] {
+        guard userDefaultsReader.bool(forKey: "codexLiveQuotaEnabled") else { return usages }
+        let currentIDs = Set(accounts.map(\.id))
+        liveReadings = liveReadings.filter { currentIDs.contains($0.key) }
+        for account in accounts {
+            guard let profile = account.preferredProfile else { continue }
+            // A failed/mismatched probe never clears the last good reading, and a
+            // profile that switched identities during the request cannot borrow it.
+            if let reading = try? await liveQuotaClient.fetch(root: profile.root),
+               reading.accountID == account.id,
+               reading.windows.contains(where: { UtilizationEngine.usedPercent(from: $0) != nil }) {
+                liveReadings[account.id] = reading
+            }
+        }
+        return usages.map { usage in
+            guard let accountID = usage.accountID,
+                  let reading = liveReadings[accountID],
+                  let liveDate = reading.windows.compactMap(\.observedAt).max(),
+                  liveDate > (usage.quotaWindows.compactMap(\.observedAt).max() ?? .distantPast) else {
+                return usage
+            }
+            return ProviderAccountUsage(
+                id: usage.id, accountID: usage.accountID, selector: usage.selector,
+                label: usage.label, quotaWindows: reading.windows, todayUsage: usage.todayUsage,
+                dailyTotals: usage.dailyTotals, configDirectories: usage.configDirectories,
+                unreadableDirectories: usage.unreadableDirectories, quotaStatus: .eligible
+            )
+        }
     }
 
     private func collect(_ accounts: [ProviderAccount]) async throws -> AccountCollection {

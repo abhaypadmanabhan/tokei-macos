@@ -43,11 +43,16 @@ enum ProviderCapabilityTier {
 /// Static, UI-only facts about each provider that never need Core access: local
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
-    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .cursor, .antigravity]
+    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity]
 
     static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
         switch providerID {
         case .claudeCode: return "claudeNetworkUsageEnabled"
+        case .codex:
+            // The existing AppStorage row defaults to false; register this provider's
+            // default before handing its key to that row, including on a fresh install.
+            UserDefaults.standard.register(defaults: ["codexLiveQuotaEnabled": true])
+            return "codexLiveQuotaEnabled"
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         default: return nil
