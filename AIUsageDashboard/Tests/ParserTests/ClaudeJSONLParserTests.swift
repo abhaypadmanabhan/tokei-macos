@@ -790,7 +790,6 @@ final class ClaudeJSONLParserTests: XCTestCase {
   }
 }
 
-
 final class ValueByModelParserTests: XCTestCase {
     func testClaudeModelsSurviveDedupeAllocationCacheAndCorrection() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -860,7 +859,9 @@ final class ValueByModelParserTests: XCTestCase {
         let claudeURL = root.appendingPathComponent("claude.jsonl")
         let codexURL = root.appendingPathComponent("codex.jsonl")
         let claudeRows = claude("a", "claude-opus-5-5", 10) + "\n"
-            + claude("b", "claude-opus-5-5", 20).replacingOccurrences(of: "2026-10-20T10:00:00Z", with: "2026-11-01T00:00:00Z")
+            + claude("b", "claude-opus-5-5", 20).replacingOccurrences(
+                of: "2026-10-20T10:00:00Z", with: "2026-11-01T00:00:00Z"
+            )
         let codexRows = context("gpt-6-sol") + "\n" + codex(10) + "\n"
             + codex(20).replacingOccurrences(of: "2026-10-20T10:00:00Z", with: "2026-11-01T00:00:00Z")
         try claudeRows.write(to: claudeURL, atomically: true, encoding: .utf8)
@@ -880,7 +881,10 @@ final class ValueByModelParserTests: XCTestCase {
     }
 
     private func claude(_ id: String, _ model: String, _ input: Int) -> String {
-        "{\"timestamp\":\"2026-10-20T10:00:00Z\",\"message\":{\"id\":\"\(id)\",\"model\":\"\(model)\",\"usage\":{\"input_tokens\":\(input)}}}"
+        """
+        {"timestamp":"2026-10-20T10:00:00Z","message":{\
+        "id":"\(id)","model":"\(model)","usage":{"input_tokens":\(input)}}}
+        """
     }
 
     private func context(_ model: String) -> String {
@@ -888,7 +892,10 @@ final class ValueByModelParserTests: XCTestCase {
     }
 
     private func codex(_ input: Int) -> String {
-        "{\"timestamp\":\"2026-10-20T10:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":\(input)}}}}"
+        """
+        {"timestamp":"2026-10-20T10:00:00Z","type":"event_msg","payload":{\
+        "type":"token_count","info":{"last_token_usage":{"input_tokens":\(input)}}}}
+        """
     }
 
     private func source(_ url: URL, _ provider: ProviderID) -> LogSource {

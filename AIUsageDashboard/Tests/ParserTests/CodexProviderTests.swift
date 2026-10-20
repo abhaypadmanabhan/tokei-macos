@@ -220,7 +220,6 @@ final class CodexProviderTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         // A3: pin the provider clock so parsed rate-limit observations are freshness-testable.
@@ -255,7 +254,8 @@ final class CodexProviderTests: XCTestCase {
         // while the historical account row still exposes both parsed windows.
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
         XCTAssertEqual(snapshot.accounts?.first?.quotaWindows.count, 2)
-        XCTAssertTrue(snapshot.warnings.isEmpty)
+        let expectedWarning = "Some Codex models have no public rate; estimated cost covers priced models only."
+        XCTAssertEqual(snapshot.warnings.map(\.message), [expectedWarning])
     }
 }
 

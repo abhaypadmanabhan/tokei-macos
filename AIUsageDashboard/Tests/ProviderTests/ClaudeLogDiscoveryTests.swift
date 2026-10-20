@@ -164,7 +164,11 @@ final class ClaudeModelSnapshotTests: XCTestCase {
             let root = home.appendingPathComponent(name)
             let projects = root.appendingPathComponent("projects")
             try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
-            let row = "{\"timestamp\":\"\(ISO8601DateFormatter().string(from: Date()))\",\"message\":{\"id\":\"\(name)\",\"model\":\"claude-opus-5\",\"usage\":{\"input_tokens\":1,\"output_tokens\":\((index + 1) * 10)}}}"
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            let row = """
+            {"timestamp":"\(timestamp)","message":{"id":"\(name)","model":"claude-opus-5",\
+            "usage":{"input_tokens":1,"output_tokens":\((index + 1) * 10)}}}
+            """
             try row.write(to: projects.appendingPathComponent("session.jsonl"), atomically: true, encoding: .utf8)
             return ClaudeAccount(configDirectory: root, home: home)
         }

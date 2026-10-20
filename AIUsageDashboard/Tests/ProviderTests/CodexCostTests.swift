@@ -135,7 +135,11 @@ final class CodexCostTests: XCTestCase {
 
     func testCostUsesEachServedModelAndSnapshotCarriesDatedUsage() async throws {
         let codex = codexDirectory()
-        let row = #"{"type":"event_msg","timestamp":"2026-07-06T10:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000000,"cached_input_tokens":200000,"output_tokens":500000,"reasoning_output_tokens":100000}}}}"#
+        let row = """
+        {"type":"event_msg","timestamp":"2026-07-06T10:00:00Z","payload":{\
+        "type":"token_count","info":{"last_token_usage":{"input_tokens":1000000,\
+        "cached_input_tokens":200000,"output_tokens":500000,"reasoning_output_tokens":100000}}}}
+        """
         let content = [
             #"{"type":"turn_context","payload":{"model":"gpt-4.1"}}"#, row,
             #"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#, row
@@ -157,7 +161,10 @@ final class CodexCostTests: XCTestCase {
 
     func testCostReportsPartialCoverageWhenAModelIsUnpriced() async throws {
         let codex = codexDirectory()
-        let event = #"{"type":"event_msg","timestamp":"2026-07-06T10:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000000}}}}"#
+        let event = """
+        {"type":"event_msg","timestamp":"2026-07-06T10:00:00Z","payload":{\
+        "type":"token_count","info":{"last_token_usage":{"input_tokens":1000000}}}}
+        """
         try writeSession([
             #"{"type":"turn_context","payload":{"model":"gpt-4.1"}}"#, event,
             #"{"type":"turn_context","payload":{"model":"codex-auto-review"}}"#, event

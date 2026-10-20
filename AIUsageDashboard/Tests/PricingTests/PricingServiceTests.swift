@@ -240,8 +240,14 @@ final class PricingServiceTests: XCTestCase {
         XCTAssertNotNil(known)
     }
 
+}
+
+extension PricingServiceTests {
     func testIncompleteLiteLLMRateStaysUnpricedAndMissingCacheRatesUseInput() throws {
-        let data = Data(#"{"half":{"input_cost_per_token":0.000002},"full":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}"#.utf8)
+        let data = Data("""
+        {"half":{"input_cost_per_token":0.000002},\
+        "full":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}
+        """.utf8)
         let rates = PricingService.parseLiteLLM(data)
         XCTAssertNil(rates["half"])
         let full = try XCTUnwrap(rates["full"])
