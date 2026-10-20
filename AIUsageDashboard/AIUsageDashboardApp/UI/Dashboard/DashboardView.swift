@@ -132,7 +132,7 @@ struct DashboardView: View {
             AddAgentModel.seedOnFirstLaunchIfNeeded()
         }
         .task {
-            viewModel.beginAutoSync()
+            // Syncing itself starts at app launch (AppDelegate); opening the window refreshes.
             await viewModel.refresh()
         }
     }

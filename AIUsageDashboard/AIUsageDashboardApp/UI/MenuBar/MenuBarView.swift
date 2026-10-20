@@ -141,12 +141,6 @@ struct MenuBarView: View {
         .padding(10)
         .background(PadzyTheme.ground)
         .preferredColorScheme(.dark)
-        .task {
-            viewModel.beginAutoSync()
-            if viewModel.lastSyncedAt == nil {
-                await viewModel.refresh()
-            }
-        }
         // Reload the previous-period pace baselines after each sync (and on open).
         .task(id: viewModel.lastSyncedAt) {
             await loadPaceBaselines()
