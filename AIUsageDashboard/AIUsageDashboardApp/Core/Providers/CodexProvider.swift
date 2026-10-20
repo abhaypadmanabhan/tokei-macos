@@ -1,6 +1,9 @@
 import Foundation
 
 public actor CodexProvider: UsageProvider, LocalLogProvider {
+    public static let liveQuotaEnabledKey = "codexLiveQuotaEnabled"
+    public static let liveQuotaDefaults = [liveQuotaEnabledKey: true]
+
     public let id: ProviderID = .codex
     public let displayName: String = "OpenAI Codex"
     public let capabilities: ProviderCapabilities = [.localLog, .tokenUsage, .quota]
@@ -43,7 +46,6 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         self.discoverer = discoverer
         self.now = now
         self.liveQuotaClient = liveQuotaClient
-        userDefaults.register(defaults: ["codexLiveQuotaEnabled": true])
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
 
         let home = homeDirectory ?? codexDirectory?.deletingLastPathComponent()
@@ -118,7 +120,8 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         _ usages: [ProviderAccountUsage],
         accounts: [ProviderAccount]
     ) async -> [ProviderAccountUsage] {
-        guard let liveQuotaClient, userDefaultsReader.bool(forKey: "codexLiveQuotaEnabled") else { return usages }
+        guard let liveQuotaClient,
+              userDefaultsReader.bool(forKey: Self.liveQuotaEnabledKey, defaultValue: true) else { return usages }
         let currentIDs = Set(accounts.map(\.id))
         liveReadings = liveReadings.filter { currentIDs.contains($0.key) }
         lastProbeAt = lastProbeAt.filter { currentIDs.contains($0.key) }

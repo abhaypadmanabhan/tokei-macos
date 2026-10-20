@@ -48,11 +48,7 @@ enum ProviderMetadata {
     static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
         switch providerID {
         case .claudeCode: return "claudeNetworkUsageEnabled"
-        case .codex:
-            // The existing AppStorage row defaults to false; register this provider's
-            // default before handing its key to that row, including on a fresh install.
-            UserDefaults.standard.register(defaults: ["codexLiveQuotaEnabled": true])
-            return "codexLiveQuotaEnabled"
+        case .codex: return CodexProvider.liveQuotaEnabledKey
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         default: return nil

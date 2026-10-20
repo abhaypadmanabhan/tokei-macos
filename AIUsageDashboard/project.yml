@@ -100,6 +100,8 @@ targets:
       # logic is unit-tested by the standard `-scheme AIUsageDashboardCore test`
       # run without pulling the whole app target into the test target.
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
+      # Pure provider settings facts are tested without launching the app.
+      - path: AIUsageDashboardApp/UI/Components/ProviderMetadata.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
       # index, and a chart whose series collide cannot answer the question it exists for.

@@ -8,6 +8,10 @@ struct AIUsageDashboardApp: App {
     @StateObject private var viewModel = DashboardViewModel()
     @StateObject private var windowVisibility = WindowVisibilityMonitor()
 
+    init() {
+        UserDefaults.standard.register(defaults: CodexProvider.liveQuotaDefaults)
+    }
+
     var body: some Scene {
         Window("Tokei", id: "dashboard-window") {
             DashboardView()

@@ -81,7 +81,8 @@ final class CodexLiveQuotaTests: XCTestCase {
         let probe = LiveQuotaProbe()
         await probe.set(live())
         let provider = provider(probe: probe, clock: clock)
-        XCTAssertTrue(defaults.bool(forKey: "codexLiveQuotaEnabled"))
+        XCTAssertNil(defaults.object(forKey: CodexProvider.liveQuotaEnabledKey),
+                     "Provider must not register app defaults")
         let first = try await provider.fetchSnapshot()
         XCTAssertEqual(first.accounts?.first?.quotaWindows.first?.used, 30)
         XCTAssertEqual(first.accounts?.first?.quotaStatus, .eligible)
@@ -109,7 +110,7 @@ final class CodexLiveQuotaTests: XCTestCase {
         let provider = provider(probe: probe, clock: clock)
         let mismatch = try await provider.fetchSnapshot()
         XCTAssertEqual(mismatch.accounts?.first?.quotaWindows.first?.used, 80)
-        defaults.set(false, forKey: "codexLiveQuotaEnabled")
+        defaults.set(false, forKey: CodexProvider.liveQuotaEnabledKey)
         clock.advance(301)
         _ = try await provider.fetchSnapshot()
         let calls = await probe.calls
@@ -150,12 +151,12 @@ final class CodexLiveQuotaTests: XCTestCase {
         "primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1900000000}}}
         """.utf8))
         let provider = provider(probe: probe, clock: clock)
-        defaults.set(false, forKey: "codexLiveQuotaEnabled")
+        defaults.set(false, forKey: CodexProvider.liveQuotaEnabledKey)
         let logOnly = try await provider.fetchSnapshot()
         XCTAssertEqual(logOnly.accounts?.first?.quotaWindows.first {
             $0.bucketKey == "spend_control_individual_limit"
         }?.used, 90)
-        defaults.set(true, forKey: "codexLiveQuotaEnabled")
+        defaults.set(true, forKey: CodexProvider.liveQuotaEnabledKey)
         let snapshot = try await provider.fetchSnapshot()
         let account = try XCTUnwrap(snapshot.accounts?.first)
         XCTAssertEqual(account.quotaWindows.first { $0.type == .weekly }?.used, 20)
