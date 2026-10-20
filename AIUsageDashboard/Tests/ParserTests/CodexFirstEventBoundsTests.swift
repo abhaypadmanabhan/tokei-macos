@@ -101,8 +101,7 @@ final class CodexFirstEventBoundsTests: XCTestCase {
             parser: parser,
             codexDirectory: codex,
             environment: [:],
-            now: { clock.read() },
-            liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            now: { clock.read() }
         )
         let initial = try await provider.fetchSnapshot()
         let accountA = try XCTUnwrap(initial.accounts?.first?.accountID)

@@ -111,8 +111,7 @@ final class CodexAccountDiscoveryTests: XCTestCase {
             homeDirectory: home,
             registeredDirectories: registered,
             environment: [:],
-            now: { self.now },
-            liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            now: { self.now }
         )
     }
 
@@ -380,8 +379,7 @@ extension CodexAccountDiscoveryTests {
             homeDirectory: home,
             registeredDirectories: [secondRoot],
             environment: [:],
-            now: { self.now },
-            liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            now: { self.now }
         )
 
         _ = try await provider.fetchSnapshot()

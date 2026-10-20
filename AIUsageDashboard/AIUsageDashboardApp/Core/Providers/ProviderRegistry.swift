@@ -11,7 +11,7 @@ public actor ProviderRegistry {
         ProviderRegistry(providers: [
             // Every Claude account on this machine, not just `~/.claude` — see `ClaudeAccount`.
             ClaudeCodeProvider(accounts: []),
-            CodexProvider(),
+            CodexProvider(liveQuotaClient: CodexRateLimitClient()),
             CursorProvider(),
             ClineProvider(),
             AntigravityProvider(),

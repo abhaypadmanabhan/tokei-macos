@@ -131,6 +131,16 @@ final class CodexLiveQuotaTests: XCTestCase {
         let refreshedCalls = await probe.calls
         XCTAssertEqual(refreshedCalls, 2)
     }
+
+    func testDefaultProviderHasNoCLIClient() throws {
+        // Inspect configuration without ever giving the old default a chance to spawn.
+        let provider = CodexProvider(userDefaults: defaults)
+        let client = try XCTUnwrap(Mirror(reflecting: provider).children.first { $0.label == "liveQuotaClient" })
+        let configuration = Mirror(reflecting: client.value)
+        XCTAssertEqual(configuration.displayStyle, .optional)
+        XCTAssertTrue(configuration.children.isEmpty, "Core must be offline until a client is injected")
+    }
+
     func testLiveWeeklyKeepsTighterLogIndividualLimit() async throws {
         let clock = LiveQuotaClock(Date(timeIntervalSince1970: 1800000000))
         try writeLog(at: clock.read().addingTimeInterval(-60), used: 10, individualLimit: 90)

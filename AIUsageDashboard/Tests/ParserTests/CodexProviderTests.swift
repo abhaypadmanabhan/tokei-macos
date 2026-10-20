@@ -35,7 +35,6 @@ private struct CalendarEpochFixture {
 }
 
 final class CodexProviderTests: XCTestCase {
-    private static let offline = CodexRateLimitClient(resolveBinary: { nil })
     private var tempDirectory: URL!
 
     override func setUp() {
@@ -120,7 +119,7 @@ final class CodexProviderTests: XCTestCase {
             parser: parser,
             codexDirectory: codex,
             environment: [:],
-            now: { clock.read() }, liveQuotaClient: Self.offline
+            now: { clock.read() }
         )
         let first = try await provider.fetchSnapshot()
         let accountA = try XCTUnwrap(first.accounts?.first?.accountID)
@@ -188,7 +187,7 @@ final class CodexProviderTests: XCTestCase {
 
     func testDetectAvailabilityAndAuthUseCodexDirectoryPresenceOnly() async throws {
         let codex = codexDirectory()
-        let provider = CodexProvider(codexDirectory: codex, liveQuotaClient: Self.offline)
+        let provider = CodexProvider(codexDirectory: codex)
 
         var availability = await provider.detectAvailability()
         var authStatus = try await provider.authenticate()
@@ -234,7 +233,7 @@ final class CodexProviderTests: XCTestCase {
             minute: 15
         ))!
         let parser = CodexJSONLParser(calendar: calendar, now: { now })
-        let provider = CodexProvider(parser: parser, codexDirectory: codex, now: { now }, liveQuotaClient: Self.offline)
+        let provider = CodexProvider(parser: parser, codexDirectory: codex, now: { now })
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertEqual(snapshot.providerID, .codex)
@@ -317,7 +316,7 @@ extension CodexProviderTests {
             parser: CodexJSONLParser(calendar: utcCalendar(), now: { clock.read() }),
             codexDirectory: codex,
             environment: [:],
-            now: { clock.read() }, liveQuotaClient: Self.offline
+            now: { clock.read() }
         )
         let initial = try await provider.fetchSnapshot()
         let accountA = try XCTUnwrap(initial.accounts?.first?.accountID)
@@ -368,7 +367,7 @@ extension CodexProviderTests {
             parser: CodexJSONLParser(calendar: utcCalendar(), now: { clock.read() }),
             codexDirectory: codex,
             environment: [:],
-            now: { clock.read() }, liveQuotaClient: Self.offline
+            now: { clock.read() }
         )
         let initial = try await provider.fetchSnapshot()
         let accountA = try XCTUnwrap(initial.accounts?.first?.accountID)

@@ -11,7 +11,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
     private let discoverer: any AccountDiscovering
     private let discoveryContext: DiscoveryContext
     private let now: @Sendable () -> Date
-    private let liveQuotaClient: CodexRateLimitClient
+    private let liveQuotaClient: CodexRateLimitClient?
     private let userDefaultsReader: ProviderUserDefaultsReader
     private var liveReadings: [String: CodexRateLimitClient.Reading] = [:]
     private var lastProbeAt: [String: Date] = [:]
@@ -34,7 +34,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         discoverer: any AccountDiscovering = CodexAccountDiscoverer(),
         now: @escaping @Sendable () -> Date = Date.init,
-        liveQuotaClient: CodexRateLimitClient = .init(),
+        liveQuotaClient: CodexRateLimitClient? = nil,
         userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
@@ -118,7 +118,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         _ usages: [ProviderAccountUsage],
         accounts: [ProviderAccount]
     ) async -> [ProviderAccountUsage] {
-        guard userDefaultsReader.bool(forKey: "codexLiveQuotaEnabled") else { return usages }
+        guard let liveQuotaClient, userDefaultsReader.bool(forKey: "codexLiveQuotaEnabled") else { return usages }
         let currentIDs = Set(accounts.map(\.id))
         liveReadings = liveReadings.filter { currentIDs.contains($0.key) }
         lastProbeAt = lastProbeAt.filter { currentIDs.contains($0.key) }

@@ -88,7 +88,7 @@ final class CodexCostTests: XCTestCase {
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-4.1"), codex: codex)
 
         let provider = CodexProvider(
-            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            codexDirectory: codex
         )
         let snapshot = try await provider.fetchSnapshot()
 
@@ -106,7 +106,7 @@ final class CodexCostTests: XCTestCase {
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-5.5"), codex: codex)
 
         let provider = CodexProvider(
-            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            codexDirectory: codex
         )
         let snapshot = try await provider.fetchSnapshot()
 
@@ -120,7 +120,7 @@ final class CodexCostTests: XCTestCase {
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-6-ultra"), codex: codex)
 
         let provider = CodexProvider(
-            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            codexDirectory: codex
         )
         let snapshot = try await provider.fetchSnapshot()
 
@@ -133,7 +133,7 @@ final class CodexCostTests: XCTestCase {
         try writeSession(CodexFixtures.twoTokenCountEvents(), codex: codex)
 
         let provider = CodexProvider(
-            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            codexDirectory: codex
         )
         let snapshot = try await provider.fetchSnapshot()
 
@@ -146,7 +146,7 @@ final class CodexCostTests: XCTestCase {
         try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
 
         let provider = CodexProvider(
-            codexDirectory: codex, liveQuotaClient: CodexRateLimitClient(resolveBinary: { nil })
+            codexDirectory: codex
         )
         let snapshot = try await provider.fetchSnapshot()
 
