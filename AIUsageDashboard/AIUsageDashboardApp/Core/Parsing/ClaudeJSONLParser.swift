@@ -23,7 +23,7 @@ public actor ClaudeJSONLParser {
     var fileCache: [String: FileCacheEntry] = [:]
     private var fileCacheGeneration: UInt64 = 0
     private var allocationCache: AllocationCache?
-    private var modelUsageMonth: DateInterval?
+    var modelUsageMonth: DateInterval?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -220,22 +220,7 @@ public actor ClaudeJSONLParser {
             aggregate.dailyUsage[day] = adjustedDay
         }
 
-        if modelUsageMonth?.contains(day) == true {
-            let modelUsage = adjusted(
-                aggregate.dailyModelUsage[day]?[record.model] ?? UsageWindows.emptyUsage(.localParsed),
-                by: record,
-                multiplier: multiplier,
-                overflowed: &aggregate.arithmeticOverflowed
-            )
-            if modelUsage.totalTokens == 0 {
-                aggregate.dailyModelUsage[day]?.removeValue(forKey: record.model)
-                if aggregate.dailyModelUsage[day]?.isEmpty == true {
-                    aggregate.dailyModelUsage.removeValue(forKey: day)
-                }
-            } else {
-                aggregate.dailyModelUsage[day, default: [:]][record.model] = modelUsage
-            }
-        }
+        accumulateModelUsage(record, day: day, multiplier: multiplier, into: &aggregate)
 
         guard let hour = UsageWindows.hourStart(for: timestamp, calendar: calendar),
               record.totalTokens > 0 else { return }
@@ -252,7 +237,7 @@ public actor ClaudeJSONLParser {
         if aggregate.hourlyTotals[hour] == 0 { aggregate.hourlyTotals.removeValue(forKey: hour) }
     }
 
-    private func adjusted(
+    func adjusted(
         _ usage: TokenUsage,
         by record: ClaudeUsageRecord,
         multiplier: Int,
@@ -290,14 +275,7 @@ public actor ClaudeJSONLParser {
                 aggregate.dailyUsage[day] ?? UsageWindows.emptyUsage(.localParsed)
             ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
-        for (day, models) in incremental.dailyModelUsage {
-            for (model, usage) in models {
-                let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
-                aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
-                    usage, overflowed: &aggregate.arithmeticOverflowed
-                )
-            }
-        }
+        mergeModelUsage(incremental, into: &aggregate)
         for (hour, total) in incremental.hourlyTotals {
             aggregate.hourlyTotals[hour] = TokenArithmetic.adding(
                 aggregate.hourlyTotals[hour, default: 0],

@@ -376,7 +376,8 @@ public actor CodexJSONLParser {
     }
 
     private func accumulateModelUsage(_ usage: TokenUsage, day: Date, into aggregate: inout FileAggregate) {
-        guard modelUsageMonth?.contains(day) == true, (usage.totalTokens ?? 0) > 0 else { return }
+        guard let month = modelUsageMonth, day >= month.start, day < month.end,
+              (usage.totalTokens ?? 0) > 0 else { return }
         let model = aggregate.currentModel
         let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
         aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
@@ -406,8 +407,6 @@ public actor CodexJSONLParser {
     }
 
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
-        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed
-            || incremental.arithmeticOverflowed
         aggregate.lifetime = aggregate.lifetime.merging(
             incremental.lifetime,
             overflowed: &aggregate.arithmeticOverflowed
@@ -485,6 +484,7 @@ public actor CodexJSONLParser {
     }
 
     private func mergeModelUsage(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
+        aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed || incremental.arithmeticOverflowed
         mergeModels(
             incremental.dailyModelUsage,
             into: &aggregate.dailyModelUsage,

@@ -165,6 +165,68 @@ final class MaxxerValueEngineTests: XCTestCase {
         XCTAssertEqual(scorecard.tier, .warming)
     }
 
+    func testModelValuesUseDatedComponentsWithoutScalingAndKeepUnknownLast() throws {
+        let calendar = Calendar.current
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: now))
+        let prior = month.start.addingTimeInterval(-86_400)
+        let today = calendar.startOfDay(for: now)
+        let future = now.addingTimeInterval(86_400)
+        let usage = TokenUsage(inputTokens: 1_000_000, outputTokens: 400_000,
+                               cacheReadTokens: 200_000, cacheCreationTokens: 100_000,
+                               reasoningTokens: 100_000, confidence: .localParsed)
+        let snapshot = ProviderSnapshot(
+            providerID: .claudeCode, displayName: "Claude", authStatus: .unknown,
+            todayUsage: .unavailable, weekUsage: .unavailable,
+            monthUsage: tokens(input: 99_000_000), dailyTotals: [today: 99_000_000],
+            dailyModelUsage: [
+                prior: ["claude-opus-5-5": tokens(input: 50_000_000)],
+                today: ["claude-opus-5-5": usage, "claude-sonnet-5-5": tokens(input: 1_000_000),
+                        "no-public-rate": tokens(input: 123)],
+                future: ["claude-opus-5-5": tokens(input: 50_000_000)]
+            ]
+        )
+        let result = try XCTUnwrap(MaxxerValueEngine.scorecard(
+            snapshots: [snapshot], planCosts: planCosts, now: now
+        ).providers.first)
+        // Opus: input 4 + read .04 + write .5 + output/reasoning 10 = 14.54.
+        XCTAssertEqual(try XCTUnwrap(result.apiEquivalentUSD), 16.54, accuracy: 0.000_001)
+        XCTAssertEqual(result.models.map(\.model), ["claude-opus-5-5", "claude-sonnet-5-5", "no-public-rate"])
+        XCTAssertEqual(result.models.first?.totalTokens, 1_800_000)
+        XCTAssertEqual(result.models.last?.totalTokens, 123)
+        XCTAssertNil(result.models.last?.apiEquivalentUSD)
+        XCTAssertTrue(result.hasUnpricedTokens)
+        XCTAssertEqual(result.confidence, .estimated)
+    }
+
+    func testEmptyModelMapIsZeroAndAllUnknownMapIsUnavailable() throws {
+        let day = Calendar.current.startOfDay(for: now)
+        let snapshots = [ProviderSnapshot(
+            providerID: .codex, displayName: "Codex", authStatus: .unknown,
+            todayUsage: .unavailable, weekUsage: .unavailable,
+            monthUsage: tokens(input: 1_000_000), dailyModelUsage: [:]
+        ), ProviderSnapshot(
+            providerID: .claudeCode, displayName: "Claude", authStatus: .unknown,
+            todayUsage: .unavailable, weekUsage: .unavailable,
+            dailyModelUsage: [day: ["unknown": tokens(input: 50)]]
+        )]
+        let values = MaxxerValueEngine.scorecard(snapshots: snapshots, planCosts: planCosts, now: now).providers
+        XCTAssertEqual(values[0].apiEquivalentUSD, 0)
+        XCTAssertTrue(values[0].models.isEmpty)
+        XCTAssertFalse(values[0].hasUnpricedTokens)
+        XCTAssertNil(values[1].apiEquivalentUSD)
+        XCTAssertTrue(values[1].hasUnpricedTokens)
+        XCTAssertEqual(values[1].models.first?.model, "unknown")
+    }
+
+    func testCursorWithoutModelsRetainsReferenceRate() throws {
+        let result = try XCTUnwrap(MaxxerValueEngine.scorecard(
+            snapshots: [snapshot(.cursor, monthUsage: tokens(input: 1_000_000))],
+            planCosts: planCosts, now: now
+        ).providers.first)
+        XCTAssertEqual(result.apiEquivalentUSD, 3)
+        XCTAssertTrue(result.models.isEmpty)
+    }
+
     func testTierBoundaries() throws {
         let cases: [(multiple: Double, expected: MaxxerTier)] = [
             (0.249, .idle),

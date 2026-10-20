@@ -19,3 +19,19 @@ public struct PricingEngine: Sendable {
         return (input + cacheCreation + cacheRead + output) / 1_000_000
     }
 }
+
+extension UsageAggregation {
+    static func mergeModels(_ maps: [[Date: [String: TokenUsage]]]) -> [Date: [String: TokenUsage]] {
+        maps.reduce(into: [:]) { result, days in
+            for (day, models) in days {
+                result[day] = sumModels([result[day] ?? [:], models])
+            }
+        }
+    }
+
+    static func sumModels(_ maps: [[String: TokenUsage]]) -> [String: TokenUsage] {
+        maps.reduce(into: [:]) { result, models in
+            result.merge(models) { $0.merging($1) }
+        }
+    }
+}
