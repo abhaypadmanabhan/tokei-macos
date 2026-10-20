@@ -14,7 +14,7 @@ Spec / source of truth: `tasks/patch-bibles/2026-10-20.md` (read it first).
 
 | Lane | Worktree (branch `patch/2026-10-20/<slug>`) | Agent | State at checkpoint |
 |---|---|---|---|
-| WP-1 value by model | `../tokei-worktrees/2026-10-20-value-by-model` | Codex gpt-6.1-sol | 4 commits; result file says `STATUS: BLOCKED` (see below) |
+| WP-1 value by model | `../tokei-worktrees/2026-10-20-value-by-model` | Codex gpt-6.1-sol | DONE, 4 commits (fbfad6a, ef10d5b, e72a598, 0ee2e5c); numbers pass (see below); needs Claude review |
 | WP-2 live Codex quota + 5-min refresh | `../tokei-worktrees/2026-10-20-codex-live-quota` | Codex gpt-6.1-sol | uncommitted edits + new `CodexRateLimitClient.swift`; running the 10-min idle-CPU proof; holds `/tmp/tokei-live-proof.lock` |
 | WP-3 pace + by-model UI | `../tokei-worktrees/2026-10-20-pace-ui` | Claude Opus 5.5 | 3 commits (QuotaPace, gauge pace line, value-by-model drill-in); screenshots pending (waits on the lock) |
 
@@ -24,15 +24,18 @@ Child thread IDs (read with `t3_thread_read`; do not start new review rounds on 
 - WP-3 `thread:delegated-task:command%3Amcp%3A440643f5-c144-4a99-b990-c259e83e6690%3Adelegate-task%3Atokei-2026-10-20-wp3-r1`
 Done = `tasks/reports/2026-10-20-wpN.result.md` committed in the worktree with first line `STATUS: READY|BLOCKED`.
 
-## WP-1 blocker — decision already reasoned, needs applying
+## WP-1 — finished; numbers now PASS (still needs different-model review)
 
-WP-1's Claude MTD value is 2.24 % off the Python baseline. Cause: Tokei keeps the LARGEST record per
-message id (streaming rows; the last row carries final output tokens); the baseline
-(`/tmp/tokei-t3-baseline/mtd_baseline.py`) keeps the FIRST (T3's rule). Tokens differ only 0.03 %, but
-output tokens price 5–100× cache reads, so dollars diverge. Tokei's keep-largest is the more correct rule
-(final output count) and was verified against independent baselines before. Action: change the baseline
-to keep the largest-total record per `id:requestId`, rerun, and accept WP-1 if both providers land
-within 0.5 %. Codex already within 0.5 %.
+WP-1 finished `STATUS: BLOCKED` only because its Claude MTD value was 2.24 % off the first baseline.
+Cause: Tokei keeps the LARGEST record per message id (the last streaming row carries final output
+tokens); the first baseline kept the FIRST (T3's rule). Output tokens price 5–100× cache reads, so a
+0.03 % token gap became 2.2 % in dollars. Tokei's rule is the more correct one. Resolved: new baseline
+`/tmp/tokei-t3-baseline/mtd_baseline_keepmax.py` (keep largest). Result, Oct 1–20:
+Claude baseline $9,086.72 (run 09:04 UTC) vs Tokei REAL-LOGS $9,080.96 (run 08:53 UTC) = 0.06 %, with
+`claude-fable-5-1` exact to the cent ($723.29); the remaining gap is usage that landed between the two
+runs. Codex 0.043 % (Tokei $315.25). Both within the 0.5 % bar → WP-1 accepted on proof.
+Note from WP-1: `run-all.sh fast` fails on PRE-EXISTING swiftlint debt (no new violations); full Core
+run 658 tests, 5 skips, 0 failures after one stale assertion was fixed. secscan PASS on the branch.
 
 ## Measured facts (do not re-derive)
 
