@@ -17,6 +17,8 @@ public actor CursorProvider: UsageProvider {
     private let usageClient: CursorUsageClient
     private let calendar: Calendar
     private let now: @Sendable () -> Date
+    private let parseUsageEvents: @Sendable (String) -> [CursorUsageEvent]
+    private var parsedCSV: (source: String, events: [CursorUsageEvent])?
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
@@ -26,7 +28,8 @@ public actor CursorProvider: UsageProvider {
         usageClient: CursorUsageClient? = nil,
         calendar: Calendar = .current,
         now: @escaping @Sendable () -> Date = { Date() },
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        parseUsageEvents: @escaping @Sendable (String) -> [CursorUsageEvent] = { CursorUsageCSV.parseEvents($0) }
     ) {
         self.fileManager = fileManager
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
@@ -35,6 +38,7 @@ public actor CursorProvider: UsageProvider {
         self.usageClient = usageClient ?? CursorUsageClientImpl()
         self.calendar = calendar
         self.now = now
+        self.parseUsageEvents = parseUsageEvents
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
@@ -150,7 +154,7 @@ public actor CursorProvider: UsageProvider {
             let csv = try await csvResult
             let summaryResponse = await summaryData
             let responseTime = now()
-            let events = CursorUsageCSV.parseEvents(csv)
+            let events = cachedEvents(from: csv)
             let summary = summaryResponse.flatMap { CursorUsageSummary.decode($0.payload) }
 
             var windows = UsageWindows(
@@ -202,5 +206,12 @@ public actor CursorProvider: UsageProvider {
     private func fetchSummarySafely(cookie: String) async -> (payload: Data, observedAt: Date)? {
         guard let payload = try? await usageClient.fetchUsageSummary(cookie: cookie) else { return nil }
         return (payload, now())
+    }
+
+    private func cachedEvents(from csv: String) -> [CursorUsageEvent] {
+        if let parsedCSV, parsedCSV.source == csv { return parsedCSV.events }
+        let events = parseUsageEvents(csv)
+        parsedCSV = (csv, events)
+        return events
     }
 }
