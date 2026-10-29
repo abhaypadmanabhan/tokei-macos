@@ -117,7 +117,7 @@ public actor CopilotProvider: UsageProvider {
             warnings: history.warnings + (history.shutdownCount == 0 ? [warning] : []),
             lastSyncedAt: history.shutdownCount == 0 ? nil : Date(),
             dailyTotals: history.dailyTotals,
-            dailyModelUsage: history.dailyModelUsage
+            dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
     }
 

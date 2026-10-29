@@ -66,7 +66,7 @@ public actor AntigravityProvider: UsageProvider {
             warnings: warnings(from: state, hasLiveQuota: !quotaWindows.isEmpty) + history.warnings,
             lastSyncedAt: Date(),
             dailyTotals: history.dailyTotals,
-            dailyModelUsage: history.dailyModelUsage
+            dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
     }
 

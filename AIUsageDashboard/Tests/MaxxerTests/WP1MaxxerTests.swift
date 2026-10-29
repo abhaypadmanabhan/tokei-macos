@@ -25,4 +25,23 @@ final class WP1MaxxerTests: XCTestCase {
         XCTAssertTrue(value.hasUnpricedTokens)
         XCTAssertNil(value.models.first { $0.model == "unknown-model" }?.apiEquivalentUSD)
     }
+    func testMissingHistoryDoesNotInventAZeroDollarValue() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "ai.padzy.tokei.wp1.maxxer.empty"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let antigravity = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
+                                             conversationParser: .init(roots: []), userDefaults: defaults)
+        let copilot = CopilotProvider(installationMarkers: [], extensionDirectories: [],
+                                      sessionParser: .init(sessionStateDirectory: directory))
+        let snapshots = try await [antigravity.fetchSnapshot(), copilot.fetchSnapshot()]
+        let scorecard = MaxxerValueEngine.scorecard(snapshots: snapshots,
+            planCosts: MaxxerPlanCostStore(defaults: defaults), now: Date())
+        for snapshot in snapshots { XCTAssertNil(snapshot.dailyModelUsage) }
+        for value in scorecard.providers { XCTAssertNil(value.apiEquivalentUSD) }
+    }
+
 }
