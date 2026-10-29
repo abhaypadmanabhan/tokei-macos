@@ -248,7 +248,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
         let recordedSleeps = await sleeper.intervals()
         XCTAssertEqual(recordedSleeps, [])
         XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
-        XCTAssertEqual(staleWindows.count, 3)
+        XCTAssertEqual(staleWindows.count, 4)
         XCTAssertTrue(staleWindows.allSatisfy { $0.confidence == .estimated })
         XCTAssertTrue(staleWindows.allSatisfy { $0.source.contains("(stale)") })
 
@@ -256,7 +256,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
         let cooldownWindows = try await client.fetchQuotaWindows()
 
         XCTAssertEqual(MockClaudeURLProtocol.requests.count, 2)
-        XCTAssertEqual(cooldownWindows.count, 3)
+        XCTAssertEqual(cooldownWindows.count, 4)
         XCTAssertTrue(cooldownWindows.allSatisfy { $0.confidence == .estimated })
     }
 
@@ -455,7 +455,7 @@ final class ClaudeCodeProviderQuotaTests: XCTestCase {
 
         let calls = await client.callCount()
         XCTAssertEqual(calls, 1)
-        XCTAssertEqual(snapshot.quotaWindows.count, 3)
+        XCTAssertEqual(snapshot.quotaWindows.count, 4)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .session }?.used, 8)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 62)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .perModel }?.label, "Fable")

@@ -1,7 +1,5 @@
 import Foundation
 
-// MARK: - Errors
-
 public enum GeminiUsageError: LocalizedError, Sendable, Equatable {
     /// A persisted rate-limit backoff is still active.
     case cooldownActive
@@ -150,7 +148,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         let credentials = try loadCredentials()
         let referenceDate = now()
         if let cached, cached.token == credentials.accessToken,
-           (0..<600).contains(referenceDate.timeIntervalSince(cached.at)),
+           (0..<600).contains(referenceDate.timeIntervalSince(cached.fetchedAt)),
            cached.windows.allSatisfy({ $0.resetAt.map { $0 > referenceDate } ?? true }) {
             return cached.windows
         }
@@ -162,10 +160,10 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         }
         let pending = PendingGeminiQuota(token: credentials.accessToken, task: task)
         inFlight = pending
-        defer { if inFlight?.id == pending.id { inFlight = nil } }
+        defer { if inFlight?.requestID == pending.requestID { inFlight = nil } }
         let observed = try await task.value
         let observedAt = observed.first?.observedAt ?? now()
-        cached = CachedGeminiQuota(at: observedAt, windows: observed, token: credentials.accessToken)
+        cached = CachedGeminiQuota(fetchedAt: observedAt, windows: observed, token: credentials.accessToken)
         return observed
     }
 
@@ -363,8 +361,6 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!
 }
 
-// MARK: - Response models
-
 private struct GeminiQuotaResponse: Decodable {
     let quotaGroups: [GeminiQuotaGroup]
 }
@@ -391,13 +387,13 @@ private struct GeminiQuotaBucket: Decodable {
 }
 
 private struct CachedGeminiQuota {
-    let at: Date
+    let fetchedAt: Date
     let windows: [QuotaWindow]
     let token: String
 }
 
 private struct PendingGeminiQuota {
-    let id = UUID()
+    let requestID = UUID()
     let token: String
     let task: Task<[QuotaWindow], Error>
 }
