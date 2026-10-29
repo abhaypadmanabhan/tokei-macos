@@ -263,8 +263,8 @@ struct ValueView: View {
         let text = footnoteText
         if !text.isEmpty {
             Text(text)
-                .font(.mono(size: 13.5))
-                .foregroundColor(PadzyTheme.ink5)
+                .font(.sans(size: 13))
+                .foregroundColor(PadzyTheme.ink4)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 620, alignment: .leading)
                 .rollingNumber(lifetime.map { Double($0.tokens) }, reduceMotion: reduceMotion)

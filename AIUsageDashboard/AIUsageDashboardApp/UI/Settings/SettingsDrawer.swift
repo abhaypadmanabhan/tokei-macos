@@ -370,6 +370,7 @@ private struct PlanCostDrawerRow: View {
             Text("/mo")
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.ink5)
+                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)

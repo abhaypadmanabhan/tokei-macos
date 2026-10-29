@@ -9,11 +9,12 @@ struct ExtraUsageRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let line = ExtraUsageCopy.line(window) {
+        if let line = ExtraUsageCopy.line(window), let amounts = ExtraUsageCopy.amounts(window) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(line)
-                    .font(.mono(size: 13.5))
-                    .monospacedDigit()
+                // Words in the body font, the dollars in mono: the same sentence as `line`.
+                (Text("\(window.label ?? "Extra usage") ").font(.sans(size: 15))
+                    + Text(amounts).font(.mono(size: 13.5)).monospacedDigit()
+                    + Text(ExtraUsageCopy.status(window).map { " · \($0)" } ?? "").font(.sans(size: 15)))
                     .foregroundColor(PadzyTheme.ink2)
                     .fixedSize(horizontal: false, vertical: true)
                 if let fraction = ExtraUsageCopy.fraction(window) {
