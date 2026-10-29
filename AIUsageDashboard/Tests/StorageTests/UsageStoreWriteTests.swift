@@ -105,7 +105,7 @@ final class UsageStoreWriteTests: XCTestCase {
         XCTAssertTrue(history.contains { $0.date == laterBucket })
     }
 
-    func testSecureWriterReplacesPrivatelyAndRejectsLinkedDirectory() throws {
+    func testSecureWriterReplacesPrivatelyThroughLinkedRoot() throws {
         let file = tempDirectory.appendingPathComponent("private.json")
         try Data("old".utf8).write(to: file)
         try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
@@ -115,9 +115,11 @@ final class UsageStoreWriteTests: XCTestCase {
         XCTAssertEqual(mode?.intValue, 0o600)
         let link = tempDirectory.appendingPathComponent("linked")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: tempDirectory)
-        XCTAssertThrowsError(try SecureFileWriter.write(Data(), to: link.appendingPathComponent("other.json")))
+        try SecureFileWriter.write(Data("through-root".utf8), to: link.appendingPathComponent("other.json"))
+        XCTAssertEqual(try Data(contentsOf: tempDirectory.appendingPathComponent("other.json")),
+                       Data("through-root".utf8))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path).sorted(),
-                       ["linked", "private.json"])
+                       ["linked", "other.json", "private.json"])
     }
 
     func testConstructionHardensFilesBeforeAnyStoreRead() throws {
