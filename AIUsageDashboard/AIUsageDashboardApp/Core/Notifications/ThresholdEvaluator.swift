@@ -77,7 +77,8 @@ public struct ThresholdEvaluator: Sendable {
 
         for snapshot in snapshots {
             for window in snapshot.quotaWindows {
-                guard let used = window.used, let limit = window.limit, limit > 0 else { continue }
+                guard !window.isInformationalCredits,
+                      let used = window.used, let limit = window.limit, limit > 0 else { continue }
                 guard window.confidence != .unavailable else { continue }
                 let percent = (used / limit) * 100.0
                 guard percent.isFinite else { continue }
