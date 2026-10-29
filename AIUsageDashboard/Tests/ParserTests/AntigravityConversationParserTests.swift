@@ -154,6 +154,28 @@ final class AntigravityConversationParserTests: XCTestCase {
         XCTAssertTrue(Set(expected).isSubset(of: Set(roots.map(\.path))))
     }
 
+    func testDefaultDiscoveryNeverCopiesBrowserProfileDatabases() async throws {
+        let browser = directory.appendingPathComponent(".gemini/antigravity-browser-profile")
+        let history = directory.appendingPathComponent(".gemini/antigravity-cli/conversations")
+        try FileManager.default.createDirectory(at: browser, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: history, withIntermediateDirectories: true)
+        try Data().write(to: browser.appendingPathComponent("first_party_sets.db"))
+        try database(".gemini/antigravity-cli/conversations/one.db",
+                     generations: [generation(usage(input: 100, response: "actual-history"))], steps: [])
+        let calls = CopyCalls()
+        let roots = AntigravityConversationFiles.defaultRoots(home: directory, environment: [:])
+        let parser = AntigravityConversationParser(roots: roots, copier: { source, destination in
+            calls.increment()
+            XCTAssertFalse(source.path.contains("antigravity-browser-profile"))
+            try SQLiteSidecarCopy.copyDatabase(from: source, to: destination, using: .default)
+        })
+        let result = await parser.parse()
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.lifetime.inputTokens, 100)
+        XCTAssertTrue(result.warnings.isEmpty)
+    }
+
     private func parser() -> AntigravityConversationParser {
         AntigravityConversationParser(roots: [directory], calendar: calendar,
                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })

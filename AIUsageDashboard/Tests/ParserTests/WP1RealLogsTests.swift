@@ -81,6 +81,18 @@ final class WP1RealLogsTests: XCTestCase {
         XCTAssertEqual(swift, python)
     }
 
+    /// A focused post-fix inventory check: no log or SQLite contents are read.
+    func testDefaultHistoryRootsExcludeBrowserProfilesMetadataOnly() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["TOKEI_ROOT_INVENTORY"] == "1",
+                          "Set TOKEI_ROOT_INVENTORY=1 for directory metadata only")
+        let inventory = AntigravityConversationFiles.discover(AntigravityConversationFiles.defaultRoots())
+        let browserFiles = inventory.files.filter { $0.path.contains("antigravity-browser-profile") }.count
+        print("ANTIGRAVITY_ROOT_INVENTORY files=\(inventory.files.count) browser_files=\(browserFiles)")
+        XCTAssertGreaterThan(inventory.files.count, 0)
+        XCTAssertEqual(browserFiles, 0)
+        XCTAssertFalse(inventory.partial)
+    }
+
     /// Walk only project JSONL files. Never enter configuration, credential or plugin directories.
     private func claudeAccounts() throws -> [ClaudeJSONLParser.AccountLogSources] {
         let manager = FileManager.default

@@ -42,8 +42,16 @@ enum AntigravityConversationFiles {
         let gemini = home.appendingPathComponent(".gemini")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: gemini.path)) ?? []
         let canonical = ["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"]
-        return Set(canonical + names.filter { $0.hasPrefix("antigravity") }).sorted()
-            .map { gemini.appendingPathComponent($0) } + [home.appendingPathComponent(".config/antigravity")]
+        // Extra roots are conversation stores, not similarly named browser/cache profiles.
+        let additional = names.filter { name in
+            guard name.hasPrefix("antigravity") else { return false }
+            let conversations = gemini.appendingPathComponent(name).appendingPathComponent("conversations")
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: conversations.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
+        }
+        return Set(canonical + additional).sorted().map { gemini.appendingPathComponent($0) }
+            + [home.appendingPathComponent(".config/antigravity")]
     }
 
     static func discover(_ roots: [URL]) -> (files: [URL], partial: Bool) {
