@@ -7,15 +7,21 @@ public actor FileWatcher {
     }
     public static var defaultWatchPath: URL { defaultWatchPaths[0] }
 
-    static func watchPaths(homeDirectory home: URL) -> [URL] {
-        let manager = FileManager.default
+    static func watchPaths(homeDirectory home: URL, fileManager manager: FileManager = .default) -> [URL] {
+        let entries = (try? manager.contentsOfDirectory(at: home, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        let claudeProjects = entries.filter { $0.lastPathComponent.hasPrefix(".claude-") }
+            .map { $0.appendingPathComponent("projects", isDirectory: true) }
+            .filter { url in
+                var directory: ObjCBool = false
+                return manager.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
+            }
         let gemini = home.appendingPathComponent(".gemini", isDirectory: true)
         let roots = (try? manager.contentsOfDirectory(at: gemini, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         let optional = roots.filter { $0.lastPathComponent.hasPrefix("antigravity") }
             .map { $0.appendingPathComponent("conversations", isDirectory: true) } + [
                 home.appendingPathComponent(".copilot/session-state", isDirectory: true)
             ]
-        return ClaudeAccount.discover(home: home).flatMap(\.projectsDirectories) + [
+        return [home.appendingPathComponent(".claude/projects", isDirectory: true)] + claudeProjects + [
             home.appendingPathComponent(".codex/sessions", isDirectory: true),
             home.appendingPathComponent(".cline/data/sessions", isDirectory: true)
         ] + optional.filter { url in
@@ -52,7 +58,7 @@ public actor FileWatcher {
         },
         pathsProvider: @escaping @Sendable () -> [URL] = { FileWatcher.defaultWatchPaths }
     ) {
-        self.watchedURLs = paths ?? pathsProvider()
+        self.watchedURLs = (paths ?? pathsProvider()).sorted { $0.path < $1.path }
         self.pathsProvider = paths == nil ? pathsProvider : nil
         self.debounceInterval = debounceInterval
         self.maximumWait = maximumWait
@@ -132,7 +138,7 @@ public actor FileWatcher {
 
     public func refreshWatchPaths() {
         guard let pathsProvider else { return }
-        let paths = pathsProvider()
+        let paths = pathsProvider().sorted { $0.path < $1.path }
         guard paths != watchedURLs else { return }
         let wasRunning = stream != nil
         stop()

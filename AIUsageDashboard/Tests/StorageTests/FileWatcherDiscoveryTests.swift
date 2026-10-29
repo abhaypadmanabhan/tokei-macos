@@ -57,6 +57,27 @@ final class FileWatcherDiscoveryTests: XCTestCase {
         XCTAssertEqual(roots.readCount, 3, "construction plus both refreshes must resolve roots")
         await watcher.stop()
     }
+
+    func testRootDiscoveryDoesNotReadClaudeAccountMetadata() throws {
+        let projects = directory.appendingPathComponent(".claude-work/projects")
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        let manager = MetadataReadCountingManager()
+        let paths = FileWatcher.watchPaths(homeDirectory: directory, fileManager: manager)
+        XCTAssertTrue(paths.contains { $0.resolvingSymlinksInPath().path == projects.resolvingSymlinksInPath().path },
+                      "roots=\(paths.map(\.path)); expected=\(projects.path)")
+        XCTAssertEqual(manager.metadataReads, 0, "watching paths needs directory names, not account metadata")
+    }
+}
+
+private final class MetadataReadCountingManager: FileManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    var metadataReads: Int { lock.withLock { reads } }
+
+    override func contents(atPath path: String) -> Data? {
+        lock.withLock { reads += 1 }
+        return super.contents(atPath: path)
+    }
 }
 
 private final class ChangingWatchRoots: @unchecked Sendable {

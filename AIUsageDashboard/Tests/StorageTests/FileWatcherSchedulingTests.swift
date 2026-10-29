@@ -48,6 +48,34 @@ final class FileWatcherSchedulingTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }
         XCTAssertEqual(count.read(), 0)
     }
+
+    func testRootReorderingDoesNotCancelPendingEvents() async {
+        let scheduler = WatchScheduler()
+        let first = URL(fileURLWithPath: "/tmp/tokei-watch-first")
+        let second = URL(fileURLWithPath: "/tmp/tokei-watch-second")
+        let roots = ReorderingWatchRoots([first, second])
+        let watcher = FileWatcher(sleep: { try await scheduler.sleep($0) }, pathsProvider: roots.read)
+        let count = WatchEventCount()
+        let stream = await watcher.events
+        let consumer = Task { for await _ in stream { count.increment() } }
+        defer { consumer.cancel() }
+        await watcher.handleEvents()
+        await eventually { await scheduler.hasDeadline(2) }
+        roots.set([second, first])
+        await watcher.refreshWatchPaths()
+        await scheduler.advance(by: 2)
+        await eventually { count.read() == 1 }
+        XCTAssertEqual(count.read(), 1)
+        await watcher.stop()
+    }
+}
+
+private final class ReorderingWatchRoots: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [URL]
+    init(_ paths: [URL]) { self.paths = paths }
+    func read() -> [URL] { lock.withLock { paths } }
+    func set(_ paths: [URL]) { lock.withLock { self.paths = paths } }
 }
 
 private final class WatchEventCount: @unchecked Sendable {
