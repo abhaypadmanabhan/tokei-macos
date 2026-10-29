@@ -1,9 +1,11 @@
 import XCTest
 @testable import AIUsageDashboardCore
 
-/// Runs a separate-language recount against fixture or explicitly opted-in real session logs.
+/// Runs an explicitly opted-in separate-language recount against fixtures or real session logs.
 enum WP1CopilotOracle {
     static func counts(root: URL, cutoff: Date) throws -> [String: Int] {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["TOKEI_REAL_LOGS"] == "1",
+                          "Set TOKEI_REAL_LOGS=1 to run external Python oracle checks")
         let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Fixtures/wp1_copilot_oracle.py")
         let process = Process()
