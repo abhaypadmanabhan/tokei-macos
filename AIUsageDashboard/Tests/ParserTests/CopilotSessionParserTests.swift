@@ -149,6 +149,25 @@ final class CopilotSessionParserTests: XCTestCase {
         XCTAssertTrue(result.warnings.isEmpty)
     }
 
+    func testIndependentPythonRecountMatchesHandCountedResumedFixture() async throws {
+        let first = shutdown("2026-10-27T12:00:00Z", input: 100, output: 30,
+                             components: ["cacheReadTokens": 20, "cacheWriteTokens": 10, "reasoningTokens": 10])
+        let corrected = shutdown("2026-10-28T10:00:00Z", input: 100, output: 30,
+                                 components: ["cacheReadTokens": 20, "cacheWriteTokens": 10, "reasoningTokens": 15])
+        let resumed = shutdown("2026-10-28T11:00:00Z", input: 160, output: 50,
+                               components: ["cacheReadTokens": 30, "cacheWriteTokens": 10, "reasoningTokens": 20])
+        try write([first, corrected, resumed, resumed].joined(separator: "\n"))
+        let parsed = await parser().parse()
+        let reference = Date(timeIntervalSince1970: 1_793_188_800)
+        let python = try WP1CopilotOracle.counts(root: directory, cutoff: reference)
+        // 160 total prompt minus 30 read/10 written = 120 uncached; total = 160 + 50 = 210.
+        let expected = ["shutdowns": 4, "input": 120, "cacheRead": 30, "cacheWrite": 10,
+                        "output": 50, "reasoning": 20, "reportedInput": 160, "total": 210]
+        XCTAssertEqual(python, expected)
+        XCTAssertEqual(WP1CopilotOracle.counts(parsed), expected)
+        XCTAssertEqual(parsed.today.totalTokens, 80)
+    }
+
     private func parser() -> CopilotSessionParser {
         CopilotSessionParser(sessionStateDirectory: directory, calendar: calendar,
                              now: { Date(timeIntervalSince1970: 1_793_188_800) })
