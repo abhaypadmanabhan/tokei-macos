@@ -250,13 +250,13 @@ fixture data, not a claim about the current machine.
 | `pace.state` | `ahead`, `onPace`, or `behind`, comparing used share with elapsed share. |
 | `pace.elapsedPercent` | Elapsed share of the window, clamped to 0–100. |
 | `pace.deltaPoints` | Used percent minus elapsed percent. Positive means faster consumption. |
-| `forecast.kind` | `lastsToReset`, `runsOut`, `exhausted`, or `tooEarly`. |
+| `forecast.kind` | String: writers emit `lastsToReset`, `runsOut`, `exhausted`, or `tooEarly`; readers preserve unknown future strings. |
 | `forecast.runsOutAt` | UTC ISO8601 projection, present only for `runsOut`. |
 
 Pace and forecast are computed at `generatedAt`; they do not refresh the provider reading.
 Unknown duration/reset/used values omit both. A projection is `tooEarly` before 5% of
 the window passes. Claude's `claude_extra_usage` credits are informational: never paced,
-never an account's binding window, and excluded from routing. Their bounded `source`
+never an account's binding window, and excluded from routing, utilization totals/aggregates, and threshold alerts. Their bounded `source`
 label carries USD, enabled/disabled and the recognized `out_of_credits` reason.
 
 ### Recommendation
@@ -328,7 +328,8 @@ tokei version
 
 Missing, unreadable, and malformed snapshots exit 3, 4, and 5 respectively for
 `status`; stale reads still exit 0 and identify themselves. `TOKEI_SNAPSHOT_PATH`
-may point the helper at a fixture.
+may point the helper at a fixture. `status --json` remains pretty-printed; the snapshot
+file and MCP text are compact.
 
 The newline-delimited JSON-RPC server exposes exactly two read-only tools:
 
@@ -349,9 +350,14 @@ The server performs no network or credential access, and closed stdout exits cle
 fresh eligible headroom at least N (default 15), 1 below N, 69 for stale, missing,
 expired, or unavailable quota, and 64 for bad arguments. Without `--provider` it
 uses the recommended provider/account and requires an unexpired recommendation.
-Only accounts with `quota.status == eligible`, unexpired `quota.validUntil`, and a
-fresh official binding reading qualify. Single-account adapters without account
-eligibility metadata return 69. The command never refreshes quota or contacts a provider.
+Providers with account rows use `quota.status == eligible`, unexpired `quota.validUntil`,
+and a fresh official binding reading. Providers without account rows use their provider-level
+rate windows: all must be official, observed within the snapshot's 600-second validity
+(with up to 60 seconds of future clock skew), and not past a reported reset. Their headroom
+is `100 - max(usedPercent)`. `claude_extra_usage` is informational and never binds the check.
+Missing/stale/unconfirmed readings return 69 with the failed check named in the message.
+The same rule applies to an explicit provider and a provider-only `recommendation.routeTo`.
+The command never refreshes quota or contacts a provider.
 
 ## 7. Registration
 
