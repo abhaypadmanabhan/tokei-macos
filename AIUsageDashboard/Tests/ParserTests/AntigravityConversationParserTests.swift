@@ -128,6 +128,14 @@ final class AntigravityConversationParserTests: XCTestCase {
         XCTAssertEqual(result.dailyModelUsage.values.first?["gemini-3.5-flash"]?.inputTokens, 150)
     }
 
+    func testEmptyStepMetadataIsValidAndDoesNotDiscardTheDatabase() async throws {
+        try database("one.db", generations: [generation(usage(input: 100, response: "valid"))], steps: [Data()])
+        let result = await parser().parse()
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.lifetime.inputTokens, 100)
+        XCTAssertTrue(result.warnings.isEmpty)
+    }
+
     private func parser() -> AntigravityConversationParser {
         AntigravityConversationParser(roots: [directory], calendar: calendar,
                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })

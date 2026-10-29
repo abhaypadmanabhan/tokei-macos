@@ -136,8 +136,9 @@ struct AntigravityConversationDatabase: Sendable {
 
     private static func blob(_ statement: OpaquePointer?, column: Int32) throws -> Data {
         let count = Int(sqlite3_column_bytes(statement, column))
-        guard sqlite3_column_type(statement, column) == SQLITE_BLOB,
-              let bytes = sqlite3_column_blob(statement, column) else { throw ReadError.database }
+        guard sqlite3_column_type(statement, column) == SQLITE_BLOB else { throw ReadError.database }
+        if count == 0 { return Data() }
+        guard let bytes = sqlite3_column_blob(statement, column) else { throw ReadError.database }
         return Data(bytes: bytes, count: count)
     }
 }
