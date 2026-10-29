@@ -45,7 +45,9 @@ public actor AntigravityProvider: UsageProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
-        let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        let state = fileManager.fileExists(atPath: stateDatabaseURL.path)
+            ? await parser.parse(stateDatabaseURL: stateDatabaseURL)
+            : AntigravityStateDBParser.ParsedState()
         let history = await conversationParser.parse()
         var quotaWindows: [QuotaWindow] = []
 

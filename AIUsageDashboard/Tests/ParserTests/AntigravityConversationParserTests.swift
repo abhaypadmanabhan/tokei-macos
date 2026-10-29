@@ -114,10 +114,17 @@ final class AntigravityConversationParserTests: XCTestCase {
 
     func testCLIConversationHistoryEstablishesAvailabilityWithoutIDEState() async throws {
         try database("one.db", generations: [generation(usage(input: 100, response: "cli"))], steps: [])
+        let suite = "ai.padzy.tokei.wp1.cli-only"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
         let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
-                                          conversationParser: parser())
+                                          conversationParser: parser(), userDefaults: defaults)
         let availability = await provider.detectAvailability()
         XCTAssertEqual(availability, .installed)
+        let snapshot = try await provider.fetchSnapshot()
+        XCTAssertEqual(snapshot.lifetimeUsage?.inputTokens, 100)
+        XCTAssertFalse(snapshot.warnings.contains { $0.level == .warning })
     }
 
     func testCrossDatabaseModelLearningAndTransitiveDedupeUseNamedGeneration() async throws {

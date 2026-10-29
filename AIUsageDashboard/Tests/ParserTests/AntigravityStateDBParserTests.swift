@@ -103,6 +103,21 @@ final class AntigravityStateDBParserTests: XCTestCase {
         })
     }
 
+    func testProviderWarnsWhenExistingStateDatabaseCannotBeRead() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("unreadable-state.vscdb")
+        try Data("not a SQLite database".utf8).write(to: stateDB)
+        let suite = "ai.padzy.tokei.wp1.unreadable-state"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []),
+                                          userDefaults: defaults)
+        let snapshot = try await provider.fetchSnapshot()
+        XCTAssertTrue(snapshot.warnings.contains {
+            $0.level == .warning && $0.message.contains("local state database could not be read")
+        })
+    }
+
     private func fixtureRows() -> [String: String] {
         [
             "antigravityAuthStatus": #"{"userStatusProtoBinaryBase64":"\#(AntigravityFixtures.userStatusProtoBase64)"}"#,
