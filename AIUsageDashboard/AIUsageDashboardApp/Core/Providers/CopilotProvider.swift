@@ -1,19 +1,14 @@
 import Foundation
 
-/// Detects local GitHub Copilot installations without reading or copying credentials.
-///
-/// Copilot's supported clients keep authentication in OS-protected secret storage, and
-/// the VS Code extension obtains quota snapshots from authenticated network responses.
-/// No stable, documented local token-usage or quota record is currently available, so
-/// snapshots deliberately report unavailable metrics instead of inferring a schema.
+/// Reads Copilot CLI shutdown usage from session-state without accessing credentials.
+/// Extension-only installs remain visible with unavailable metrics until CLI logs exist.
 public actor CopilotProvider: UsageProvider {
     public let id: ProviderID = .copilot
     public let displayName: String = "GitHub Copilot"
 
-    /// No data capability is advertised until Copilot exposes a stable source that
-    /// Tokei can consume without accessing credentials.
-    public nonisolated var capabilities: ProviderCapabilities { [] }
+    public nonisolated var capabilities: ProviderCapabilities { [.localLog] }
 
+    private let sessionParser: CopilotSessionParser
     private let fileManager: FileManager
     private let installationMarkers: [URL]
     private let extensionDirectories: [URL]
@@ -25,9 +20,11 @@ public actor CopilotProvider: UsageProvider {
     public init(
         fileManager: FileManager = .default,
         installationMarkers: [URL]? = nil,
-        extensionDirectories: [URL]? = nil
+        extensionDirectories: [URL]? = nil,
+        sessionParser: CopilotSessionParser = .init()
     ) {
         self.fileManager = fileManager
+        self.sessionParser = sessionParser
 
         let home = fileManager.homeDirectoryForCurrentUser
         // Copilot has no single canonical install location (VS Code extension, Cursor's
@@ -94,12 +91,12 @@ public actor CopilotProvider: UsageProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
+        let history = await sessionParser.parse()
         let availability = await detectAvailability()
-        let isInstalled = availability == .installed
+        let isInstalled = availability == .installed || history.shutdownCount > 0
         let warning = isInstalled
             ? ProviderWarning(
-                message: "GitHub Copilot usage is unavailable because Copilot doesn't persist a documented "
-                    + "local usage or quota record that Tokei can safely read.",
+                message: "GitHub Copilot CLI usage appears after a session ends. No local CLI usage has been recorded.",
                 level: .info
             )
             : ProviderWarning(
@@ -112,14 +109,24 @@ public actor CopilotProvider: UsageProvider {
             displayName: displayName,
             authStatus: isInstalled ? .unknown : .unauthenticated,
             quotaWindows: [],
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: .unavailable,
-            lifetimeUsage: .unavailable,
-            costUsage: nil,
-            warnings: [warning],
-            lastSyncedAt: nil
+            todayUsage: history.today,
+            weekUsage: history.week,
+            monthUsage: history.month,
+            lifetimeUsage: history.lifetime,
+            costUsage: costUsage(history),
+            warnings: history.warnings + (history.shutdownCount == 0 ? [warning] : []),
+            lastSyncedAt: history.shutdownCount == 0 ? nil : Date(),
+            dailyTotals: history.dailyTotals,
+            dailyModelUsage: history.dailyModelUsage
         )
+    }
+
+    private func costUsage(_ history: CopilotSessionParser.AggregateUsage) -> CostUsage? {
+        let pricing = PricingEngine(table: PricingService.cachedTable())
+        let models = UsageAggregation.sumModels(Array(history.dailyModelUsage.values))
+        let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
+        guard !amounts.isEmpty else { return nil }
+        return CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)
     }
 
     private nonisolated static func isCopilotExtension(_ url: URL) -> Bool {
