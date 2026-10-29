@@ -1,4 +1,4 @@
-// Adapted from T3 Code: packages/provider-core/src/server/usagePricing.ts (MIT).
+// Tier handling adapted from T3 Code: usagePricing.ts (MIT; THIRD_PARTY_NOTICES.md).
 import Foundation
 
 /// Rates use model@tier keys; standard model keys and persisted token shapes stay compatible.

@@ -1,4 +1,4 @@
-// Tier handling adapted from T3 Code: packages/provider-codex/src/server/codexUsage.ts (MIT).
+// Tier handling adapted from T3 Code: codexUsage.ts (MIT; THIRD_PARTY_NOTICES.md).
 import Foundation
 
 public actor CodexJSONLParser {

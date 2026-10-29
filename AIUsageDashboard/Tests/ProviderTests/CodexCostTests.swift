@@ -83,6 +83,29 @@ final class CodexCostTests: XCTestCase {
 
     // MARK: - CodexProvider.fetchSnapshot() costUsage attachment
 
+    func testProviderPricesEachServiceTierAndLeavesUnknownModelsUnpriced() async throws {
+        let codex = codexDirectory()
+        let token = (#"{"type":"event_msg","timestamp":"2026-07-06T10:00:00Z","#
+            + #""payload":{"type":"token_count","#
+            + #""info":{"last_token_usage":{"input_tokens":1000000}}}}"#)
+        var lines = [#"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#, token]
+        for tier in ["priority", "ultrafast"] {
+            lines.append((#"{"type":"event_msg","payload":{"type":"thread_settings_applied","#
+            + #""thread_settings":{"service_tier":"\#(tier)"}}}"#))
+            lines.append(token)
+        }
+        lines.append(#"{"type":"turn_context","payload":{"model":"unpriced-model"}}"#)
+        lines.append(token)
+        try writeSession(lines.joined(separator: "\n"), codex: codex)
+        let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
+                                     cacheURL: tempDirectory.appendingPathComponent("prices.json"))
+        let provider = CodexProvider(codexDirectory: codex, pricing: pricing)
+        let snapshot = try await provider.fetchSnapshot()
+        // One million input tokens at standard $2, priority $4, ultrafast $12.
+        XCTAssertEqual(try XCTUnwrap(snapshot.costUsage?.amount), 18, accuracy: 0.000001)
+        XCTAssertTrue(snapshot.warnings.contains { $0.message.contains("no public rate") })
+    }
+
     func testFetchSnapshotAttachesEstimatedCostForKnownModel() async throws {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-4.1"), codex: codex)

@@ -1,4 +1,4 @@
-// Tier handling adapted from T3 Code: packages/provider-claude/src/server/claudeUsage.ts (MIT).
+// Tier handling adapted from T3 Code: claudeUsage.ts (MIT; THIRD_PARTY_NOTICES.md).
 import Foundation
 
 extension ClaudeJSONLParser {

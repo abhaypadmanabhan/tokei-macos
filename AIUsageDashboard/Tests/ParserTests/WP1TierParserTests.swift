@@ -20,11 +20,15 @@ final class WP1TierParserTests: XCTestCase {
     func testClaudeSplitSurvivesLargestCorrectionAndEveryWindow() async throws {
         let url = directory.appendingPathComponent("claude.jsonl")
         let text =
-            (#"{"timestamp":"2026-10-28T10:00:00Z","message":{"id":"a","model":"claude-sonnet-4-6","usage":{"i"#
-            + #"nput_tokens":100,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_1h_input_token"#
+            ((#"{"timestamp":"2026-10-28T10:00:00Z","message":{"id":"a","model":"claude-sonnet-4-6","#
+            + #""usage":{"i"#)
+            + (#"nput_tokens":100,"cache_creation_input_tokens":1000,"#
+            + #""cache_creation":{"ephemeral_1h_input_token"#)
             + #"s":600}}}}"#)
-            + "\n" + (#"{"timestamp":"2026-10-28T11:00:00Z","message":{"id":"a","model":"claude-sonnet-4-6","usage":{"i"#
-            + #"nput_tokens":100,"output_tokens":20,"cache_creation_input_tokens":1000,"cache_creation":{"ephem"#
+            + "\n" + ((#"{"timestamp":"2026-10-28T11:00:00Z","message":{"id":"a","model":"claude-sonnet-4-6","#
+            + #""usage":{"i"#)
+            + (#"nput_tokens":100,"output_tokens":20,"cache_creation_input_tokens":1000,"#
+            + #""cache_creation":{"ephem"#)
             + #"eral_1h_input_tokens":600}}}}"#)
         try text.write(to: url, atomically: true, encoding: .utf8)
         let fixed = now
@@ -40,7 +44,8 @@ final class WP1TierParserTests: XCTestCase {
 
     func testClaudeFastIsSeparatedFromStandardModelTokens() async throws {
         let url = directory.appendingPathComponent("claude.jsonl")
-        try (#"{"timestamp":"2026-10-28T10:00:00Z","message":{"id":"a","model":"claude-opus-5-5","usage":{"inp"#
+        try ((#"{"timestamp":"2026-10-28T10:00:00Z","message":{"id":"a","model":"claude-opus-5-5","#
+            + #""usage":{"inp"#)
             + #"ut_tokens":100,"speed":"fast"}}}"#)
             .write(to: url, atomically: true, encoding: .utf8)
         let fixed = now
@@ -52,7 +57,8 @@ final class WP1TierParserTests: XCTestCase {
     func testCodexTierPersistsAcrossIncrementalAppendAndResetsToStandard() async throws {
         let url = directory.appendingPathComponent("codex.jsonl")
         let initial = #"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"# + "\n"
-            + (#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tie"#
+            + ((#"{"type":"event_msg","payload":{"type":"thread_settings_applied","#
+            + #""thread_settings":{"service_tie"#)
             + #"r":"priority"}}}"#) + "\n"
         try initial.write(to: url, atomically: true, encoding: .utf8)
         let fixed = now
@@ -61,10 +67,12 @@ final class WP1TierParserTests: XCTestCase {
         _ = await parser.parse(logSources: sources)
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
-        let token = (#"{"timestamp":"2026-10-28T10:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"#
+        let token = ((#"{"timestamp":"2026-10-28T10:00:00Z","type":"event_msg","#
+            + #""payload":{"type":"token_count","info":{"#)
             + #""last_token_usage":{"input_tokens":100}}}}"#) + "\n"
         try handle.write(contentsOf: Data((token
-            + (#"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tie"#
+            + ((#"{"type":"event_msg","payload":{"type":"thread_settings_applied","#
+            + #""thread_settings":{"service_tie"#)
             + #"r":"default"}}}"#)
             + "\n" + token).utf8))
         try handle.close()
@@ -72,4 +80,27 @@ final class WP1TierParserTests: XCTestCase {
         XCTAssertEqual(result.lifetimeModelUsage["gpt-6.1-sol@priority"]?.inputTokens, 100)
         XCTAssertEqual(result.lifetimeModelUsage["gpt-6.1-sol"]?.inputTokens, 100)
     }
+    func testEveryCodexTierAliasAndMissingTierAreCarriedPerRollout() async throws {
+        let url = directory.appendingPathComponent("tiers.jsonl")
+        var lines = [#"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#]
+        for tier in ["priority", "fast", "ultrafast", "default", "standard", "flex", "", "unknown"] {
+            let event: [String: Any] = ["type": "event_msg", "payload": ["type": "thread_settings_applied",
+                "thread_settings": ["service_tier": tier]]]
+            lines.append(try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: event), encoding: .utf8)))
+            lines.append((#"{"type":"event_msg","payload":{"type":"token_count","#
+            + #""info":{"last_token_usage":{"input_tokens":10}}}}"#))
+        }
+        lines.append((#"{"type":"event_msg","payload":{"type":"thread_settings_applied","#
+            + #""thread_settings":{}}}"#))
+        lines.append((#"{"type":"event_msg","payload":{"type":"token_count","#
+            + #""info":{"last_token_usage":{"input_tokens":10}}}}"#))
+        try lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+        let fixed = now
+        let result = await CodexJSONLParser(calendar: calendar, now: { fixed })
+            .parse(logSources: [LogSource(providerID: .codex, url: url)])
+        XCTAssertEqual(result.lifetimeModelUsage["gpt-6.1-sol@priority"]?.inputTokens, 20)
+        XCTAssertEqual(result.lifetimeModelUsage["gpt-6.1-sol@ultrafast"]?.inputTokens, 10)
+        XCTAssertEqual(result.lifetimeModelUsage["gpt-6.1-sol"]?.inputTokens, 60)
+    }
+
 }

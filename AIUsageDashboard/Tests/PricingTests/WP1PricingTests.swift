@@ -11,6 +11,38 @@ final class WP1PricingTests: XCTestCase {
                        9.66, accuracy: 0.000001)
     }
 
+    func testDatedAndNamespacedTierUsesExactBaseAndUnknownStaysUnpriced() throws {
+        let engine = PricingEngine()
+        let tokens = TokenUsage(inputTokens: 1_000_000, confidence: .localParsed)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "anthropic/claude-opus-5-5-20261001[1m]@fast",
+                                               tokens: tokens)), 8, accuracy: 0.000001)
+        XCTAssertNil(engine.cost(model: "unpriced-model@priority", tokens: tokens))
+    }
+
+    func testClaudeFallbackCacheTiersAndExplicitOneHourRate() throws {
+        let data = Data((#"{"claude-fixture":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"#
+            + #""cache_creation_input_token_cost_above_1hr":0.000009},"#
+            + #""claude-fallback":{"input_cost_per_token":0.000002,"output_cost_per_token":0.000010}}"#).utf8)
+        let engine = PricingEngine(table: PricingTable(rates: PricingService.parseLiteLLM(data)))
+        let split = TokenUsage(cacheCreationTokens: 1_000_000, cacheCreation1hTokens: 600_000,
+                               confidence: .localParsed)
+        // 400k at $3.75/M plus 600k at the explicit $9/M.
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "claude-fixture", tokens: split)), 6.9, accuracy: 0.000001)
+        let oneHour = TokenUsage(cacheCreationTokens: 1_000_000, cacheCreation1hTokens: 1_000_000,
+                                 confidence: .localParsed)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "claude-fallback", tokens: oneHour)), 4, accuracy: 0.000001)
+    }
+
+    func testMissingTierFallsBackToStandardAndPartialTierScalesOutputAndCache() throws {
+        let data = Data((#"{"sample":{"input_cost_per_token":0.000002,"output_cost_per_token":0.000010,"#
+            + #""cache_read_input_token_cost":0.0000002,"input_cost_per_token_priority":0.000005}}"#).utf8)
+        let engine = PricingEngine(table: PricingTable(rates: PricingService.parseLiteLLM(data)))
+        let tokens = TokenUsage(inputTokens: 1_000_000, outputTokens: 100_000,
+                                cacheReadTokens: 1_000_000, confidence: .localParsed)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "sample@priority", tokens: tokens)), 8, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "sample@ultrafast", tokens: tokens)), 3.2, accuracy: 0.000001)
+    }
+
     func testLiteLLMTiersAndMissingCacheTierScaleFromInput() throws {
         let data = Data(
             (#"{"sample":{"input_cost_per_token":0.000002,"output_cost_per_token":0.000010,"cache_read_input_t"#

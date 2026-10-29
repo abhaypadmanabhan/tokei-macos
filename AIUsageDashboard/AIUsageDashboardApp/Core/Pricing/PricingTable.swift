@@ -43,22 +43,21 @@ public struct PricingTable: Sendable {
             let base = String(key[..<marker])
             let suffix = String(key[marker...])
             guard let standard = resolveRate(for: base) else { return nil }
-            return rates[base + suffix] ?? standard
+            return Self.candidates(for: base).compactMap { rates[$0 + suffix] }.first ?? standard
         }
+        return Self.candidates(for: key).compactMap { rates[$0] }.first
+    }
+
+    private static func candidates(for key: String) -> [String] {
         let slug = key.hasSuffix("[1m]") ? String(key.dropLast(4)) : key
         var candidates = [slug]
         if let slash = slug.lastIndex(of: "/") {
             candidates.append(String(slug[slug.index(after: slash)...]))
         }
-        for candidate in candidates {
-            if let rate = rates[candidate] { return rate }
+        return candidates + candidates.compactMap { candidate in
+            guard let suffix = candidate.range(of: "-\\d{8}$", options: .regularExpression) else { return nil }
+            return String(candidate[..<suffix.lowerBound])
         }
-        for candidate in candidates {
-            guard let dateSuffix = candidate.range(of: "-\\d{8}$", options: .regularExpression),
-                  let rate = rates[String(candidate[..<dateSuffix.lowerBound])] else { continue }
-            return rate
-        }
-        return nil
     }
 
     private static func normalizedSlug(_ slug: String) -> String {

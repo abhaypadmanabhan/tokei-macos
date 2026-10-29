@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Replaces the frozen static snapshot with a live feed while keeping the app fully
 /// functional offline. Prices come from LiteLLM's public
-/// `model_prices_and_context_window.json`, slimmed to the four per-token cost fields
+/// `model_prices_and_context_window.json`, slimmed to the five per-token cost fields
 /// this app charges against, and layered under the bundled curated seed
 /// (`PricingSeed.defaultTable`).
 ///
@@ -163,7 +163,8 @@ public actor PricingService {
         out.reserveCapacity(raw.count)
         let source = (try? JSONSerialization.jsonObject(with: data)) as? [String: [String: Any]] ?? [:]
         for (key, row) in raw {
-            guard key != "sample_spec", let rate = row.pricingRate else { continue }
+            guard key != "sample_spec",
+                  let rate = row.rate(claudeCache: key.lowercased().contains("claude-")) else { continue }
             out[key.lowercased()] = rate
             for (tier, tierRate) in PricingTierRates.read(source[key] ?? [:], standard: rate) {
                 out[key.lowercased() + "@" + tier] = tierRate
@@ -172,7 +173,7 @@ public actor PricingService {
         return out
     }
 
-    /// Serialises a resolved table back to the slim 4-field per-token shape for disk.
+    /// Serialises a resolved table back to the slim 5-field per-token shape for disk.
     static func slim(_ table: PricingTable) -> [String: LiteLLMRate] {
         table.rates.mapValues { LiteLLMRate(perMillion: $0) }
     }
@@ -262,7 +263,7 @@ public struct LiteLLMPricingTableRefresher: PricingTableRefreshing {
     }
 }
 
-/// One slimmed LiteLLM row: the four per-token cost fields, all optional (LiteLLM
+/// One slimmed LiteLLM row: the five per-token cost fields, all optional (LiteLLM
 /// omits fields a model does not have). Doubles as the on-disk cache row shape.
 struct LiteLLMRate: Codable, Sendable, Equatable {
     let inputCostPerToken: Double?
@@ -315,10 +316,12 @@ struct LiteLLMRate: Codable, Sendable, Equatable {
     /// Converts to a per-million `PricingRate`, or `nil` when the row lacks either
     /// an input or output price. Cached reads fall back to the input rate when a model
     /// publishes no discounted cache price.
-    var pricingRate: PricingRate? {
+    var pricingRate: PricingRate? { rate() }
+
+    func rate(claudeCache: Bool = false) -> PricingRate? {
         guard let input = inputCostPerToken, let output = outputCostPerToken else { return nil }
         let cached = cacheReadInputTokenCost ?? input
-        let creation = cacheCreationInputTokenCost ?? input
+        let creation = cacheCreationInputTokenCost ?? input * (claudeCache ? 1.25 : 1)
         let oneHour = cacheCreation1hInputTokenCost ?? input * 2
         let perMillion = [input, cached, creation, output, oneHour].map { $0 * 1_000_000 }
         // Checked after scaling, so a huge-but-finite per-token price cannot become infinity.
