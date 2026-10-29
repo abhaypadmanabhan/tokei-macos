@@ -1,65 +1,48 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// Words for a `QuotaPace`, in the maxxer voice: behind the clock is room you can still
-/// spend before the reset, ahead is burning faster than the window refills. Shared by the
-/// Overview bars, the drill-in rows and the menu-bar popover so they never word it twice.
-enum PaceCopy {
-    /// Whole points between used and elapsed share, never negative.
-    static func points(_ pace: QuotaPace) -> Int { Int(abs(pace.delta).rounded()) }
-
-    /// Sentence-length form for rows with room.
-    static func phrase(_ pace: QuotaPace) -> String {
-        switch pace.state {
-        case .behind: return "\(points(pace)) pts under pace, room to use before reset"
-        case .onPace: return "On pace with the clock"
-        case .ahead: return "\(points(pace)) pts ahead of the clock"
-        }
-    }
-
-    /// Short form for the dense popover.
-    static func compact(_ pace: QuotaPace) -> String {
-        switch pace.state {
-        case .behind: return "\(points(pace)) pts of room"
-        case .onPace: return "On pace"
-        case .ahead: return "\(points(pace)) pts ahead"
-        }
-    }
-
-    /// The state's mark. Form carries the state (direction of the arrow), so every state
-    /// shares one ink and no colour has to explain it.
-    static func symbol(_ state: QuotaPace.State) -> String {
-        switch state {
-        case .behind: return "arrow.down.right"
-        case .onPace: return "equal"
-        case .ahead: return "arrow.up.right"
-        }
-    }
-
-    /// Spoken form; the elapsed share is the tick a sighted reader sees on the bar.
-    static func accessibility(_ pace: QuotaPace) -> String {
-        "\(phrase(pace)). \(Int(pace.elapsedPercent.rounded())) percent of the window has passed."
-    }
-}
-
-/// Mark + words for a pace. Caller decides whether it shows; `nil` pace is never drawn.
+/// Mark + words for a pace, then the forecast when one is honest ("Lasts to reset",
+/// "Runs out ~3:40 PM, 6 h before reset"). The words wrap rather than truncate: a pace
+/// sentence cut to "room to…" says nothing. Caller decides whether it shows; `nil` pace is
+/// never drawn. The words themselves live in `PaceCopy`.
 struct PaceLine: View {
     let pace: QuotaPace
+    /// Reset of the window the pace was read off; the forecast needs it for its lead time.
+    var resetAt: Date?
     var compact = false
+    /// The clock the pace was computed against, so the forecast agrees with it.
+    var now = Date()
+
+    private var forecast: String? { PaceCopy.forecast(pace, resetAt: resetAt, now: now) }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: PaceCopy.symbol(pace.state))
                 .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(PadzyTheme.ink3)
                 .accessibilityHidden(true)
-            Text(compact ? PaceCopy.compact(pace) : PaceCopy.phrase(pace))
+            words
                 .font(.sans(size: 15))
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundColor(PadzyTheme.ink3)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(PaceCopy.accessibility(pace))
+        .accessibilityLabel(PaceCopy.accessibility(pace, forecast: forecast))
+    }
+
+    /// Pace in the muted ink. A forecast that says the window will not last is set in full
+    /// ink and medium weight: the one reading on the row that needs a person, carried by
+    /// its words and weight rather than a hue.
+    private var words: Text {
+        let pacePart = Text(compact ? PaceCopy.compact(pace) : PaceCopy.phrase(pace))
+            .foregroundColor(PadzyTheme.ink3)
+        guard let forecast else { return pacePart }
+        let urgent = PaceCopy.isUrgent(pace.forecast)
+        return pacePart
+            + Text(" · ").foregroundColor(PadzyTheme.ink5)
+            + Text(forecast)
+                .foregroundColor(urgent ? PadzyTheme.ink : PadzyTheme.ink3)
+                .fontWeight(urgent ? .medium : .regular)
     }
 }
 

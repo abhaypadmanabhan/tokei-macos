@@ -90,6 +90,12 @@ struct AgentQuotaRow: Identifiable {
     /// Pace of the live window; `nil` for non-live rows or when the window has no honest pace.
     var pace: QuotaPace?
 
+    /// Reset of the live window, for the forecast's lead time; `nil` for non-live rows.
+    var resetAt: Date? {
+        if case .live(let util) = state { return util.resetAt }
+        return nil
+    }
+
     /// The tightest window's used%, or 0 for non-live states (used only to sort).
     var usedPercent: Double {
         if case .live(let util) = state { return util.usedPercent }
@@ -167,7 +173,7 @@ struct AgentQuotaBars: View {
             }
             track(row.state, pace: row.pace)
             if let pace = row.pace {
-                PaceLine(pace: pace)
+                PaceLine(pace: pace, resetAt: row.resetAt)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -228,7 +234,8 @@ struct AgentQuotaBars: View {
         case .live(let util):
             let base = "\(row.name), \(Int(round(util.usedPercent))) percent of quota used"
             guard let pace = row.pace else { return base }
-            return "\(base). \(PaceCopy.accessibility(pace))"
+            let forecast = PaceCopy.forecast(pace, resetAt: row.resetAt, now: Date())
+            return "\(base). \(PaceCopy.accessibility(pace, forecast: forecast))"
         case .fetching:
             return "\(row.name), live quota enabled, fetching"
         case .connect:

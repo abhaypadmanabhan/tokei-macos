@@ -16,7 +16,7 @@ extension ProviderDetailView {
             SectionLabel("Quota windows")
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    quotaRow(row.window, pace: row.pace)
+                    quotaRow(row.window, pace: row.pace, now: now)
                 }
             }
             if rows.contains(where: { $0.pace != nil }) {
@@ -33,7 +33,7 @@ extension ProviderDetailView {
         }
     }
 
-    private func quotaRow(_ window: QuotaWindow, pace: QuotaPace?) -> some View {
+    private func quotaRow(_ window: QuotaWindow, pace: QuotaPace?, now: Date) -> some View {
         // A window can be present and still carry no `used` — `nonCreditsWindows` filters on
         // confidence, not on having a number. Rendering `?? 0` printed a confident "0%" over
         // an empty bar, which reads as measured headroom; every other unmeasured value on
@@ -53,7 +53,7 @@ extension ProviderDetailView {
             VStack(alignment: .leading, spacing: 8) {
                 quotaFillBar(pct: pct, elapsedPercent: pace?.elapsedPercent)
                     .frame(height: 18)
-                if let pace { PaceLine(pace: pace) }
+                if let pace { PaceLine(pace: pace, resetAt: window.resetAt, now: now) }
             }
             .frame(minWidth: 120, maxWidth: .infinity)
 
@@ -75,7 +75,8 @@ extension ProviderDetailView {
     private func quotaRowAccessibilityLabel(_ window: QuotaWindow, pct: Double, pace: QuotaPace?) -> String {
         let base = "\(windowDisplayName(window)) \(Int(pct.rounded())) percent used"
         guard let pace else { return base }
-        return "\(base). \(PaceCopy.accessibility(pace))"
+        let forecast = PaceCopy.forecast(pace, resetAt: window.resetAt, now: Date())
+        return "\(base). \(PaceCopy.accessibility(pace, forecast: forecast))"
     }
 
     private func quotaFillBar(pct: Double, elapsedPercent: Double?) -> some View {
