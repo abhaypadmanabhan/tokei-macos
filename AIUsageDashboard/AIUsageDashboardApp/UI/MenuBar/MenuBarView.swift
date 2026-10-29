@@ -150,17 +150,7 @@ struct MenuBarView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("TOKENS · TODAY")
-                    .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink5)
-                Spacer(minLength: 8)
-                Text("incl. cache")
-                    .font(.sans(size: 15))
-                    .foregroundColor(PadzyTheme.ink5)
-            }
-
+        VStack(alignment: .leading, spacing: 2) {
             Text(viewModel.todayIsUnknown ? "—" : TokenFormatter.format(viewModel.menuBarTodayTotal))
                 .font(.mono(size: 34, weight: .semibold))
                 .monospacedDigit()
@@ -168,6 +158,9 @@ struct MenuBarView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
                 .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
+            Text("tokens today · incl. cache")
+                .font(.sans(size: 13))
+                .foregroundColor(PadzyTheme.ink4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -193,15 +186,8 @@ struct MenuBarView: View {
                         .rollingNumber(card.totalValueMultiple, reduceMotion: reduceMotion)
                     if let tier = card.tier {
                         Text(tier.displayName)
-                            .font(.mono(size: 9))
-                            .tracking(9 * 0.06)
+                            .font(.sans(size: 12))
                             .foregroundColor(PadzyTheme.ink3)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                                    .stroke(PadzyTheme.border2, lineWidth: 1)
-                            )
                     }
                 }
             }
@@ -256,8 +242,7 @@ struct MenuBarView: View {
                     withAnimation(reduceMotion ? nil : PadzyMotion.quick) { agentMetric = metric }
                 } label: {
                     Text(metric.rawValue)
-                        .font(.mono(size: 10))
-                        .tracking(0.4)
+                        .font(.sans(size: 12, weight: .medium))
                         .foregroundColor(agentMetric == metric ? PadzyTheme.ink : PadzyTheme.ink4)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 4)
@@ -446,7 +431,7 @@ struct MenuBarView: View {
                 NSApp.terminate(nil)
             }) {
                 Text("Quit ⌘Q")
-                    .font(.mono(size: 11))
+                    .font(.sans(size: 12))
                     .foregroundColor(PadzyTheme.ink4)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)

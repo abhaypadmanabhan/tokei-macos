@@ -140,7 +140,7 @@ struct LineTrendChart: View {
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
                         Text(ChartDayLabel.relative(date))
-                            .font(.mono(size: 10))
+                            .font(.mono(size: 11))
                             .foregroundStyle(PadzyTheme.ink5)
                     }
                 }
@@ -200,9 +200,8 @@ struct LineTrendChart: View {
         let detail = pointDetails[Calendar.current.startOfDay(for: point.date)]
         return VStack(alignment: .leading, spacing: 3) {
             Text(ChartDayLabel.callout(point.date))
-                .font(.mono(size: 9))
-                .tracking(0.3)
-                .foregroundColor(PadzyTheme.ink5)
+                .font(.mono(size: 11))
+                .foregroundColor(PadzyTheme.ink4)
             Text(format(point.tokens))
                 .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
@@ -233,15 +232,14 @@ struct LineTrendChart: View {
         .fixedSize()
     }
 
-    /// Chart-state contract (dataviz): the frame stays, a caps micro label names
-    /// the absence. No shimmer, no fake series.
+    /// Chart-state contract (dataviz): the frame stays, a short sentence names the absence.
+    /// No shimmer, no fake series.
     private var emptyState: some View {
         ZStack {
             RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
                 .fill(PadzyTheme.ground.opacity(0.4))
-            Text(points.isEmpty ? "NO USAGE RECORDED" : "NOT ENOUGH HISTORY YET")
-                .font(.mono(size: 11))
-                .tracking(11 * 0.08)
+            Text(points.isEmpty ? "No usage recorded" : "Not enough history yet")
+                .font(.sans(size: 13))
                 .foregroundColor(PadzyTheme.muted)
         }
     }

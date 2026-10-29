@@ -227,8 +227,8 @@ struct DashboardView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                    Text("BACK")
-                        .font(.mono(size: 13.5))
+                    Text("Back")
+                        .font(.sans(size: 13, weight: .medium))
                 }
                 .foregroundColor(PadzyTheme.ink)
                 .padding(.horizontal, 10)

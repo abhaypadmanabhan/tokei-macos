@@ -101,7 +101,7 @@ extension ProviderDetailView {
         let series = rows.compactMap(\.series)
 
         return VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Accounts")
+            SectionHeading("Accounts")
 
             Text(accountsSectionNote)
                 .font(.sans(size: 15))

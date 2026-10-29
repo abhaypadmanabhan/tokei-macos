@@ -77,7 +77,7 @@ struct DrawerScaffold<Content: View>: View {
 
 /// The Settings right-hand drawer (WP-5 IA consolidation). Every control here is
 /// backed by a real store — plan cost, the notification flag, the menu-bar readout
-/// mode, and the Sparkle updater. The prior drill-in `SettingsPane`'s "SOON"
+/// mode, and the Sparkle updater. The prior drill-in `SettingsPane`'s "soon"
 /// placeholders (config presets, theme swatches, accent swatches, monthly limits,
 /// channel pickers) are dropped rather than shipped inert.
 struct SettingsDrawer: View {
@@ -138,7 +138,7 @@ struct SettingsDrawer: View {
 
     private var planCostSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Monthly plan cost")
+            SectionHeading("Monthly plan cost")
             Text("Leave blank if an agent has no fixed plan.")
                 .font(.sans(size: 11))
                 .foregroundColor(PadzyTheme.ink5)
@@ -173,7 +173,7 @@ struct SettingsDrawer: View {
 
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Appearance")
+            SectionHeading("Appearance")
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Menu bar shows")
@@ -258,7 +258,7 @@ struct SettingsDrawer: View {
                     Spacer(minLength: 8)
 
                     Text(updateStatusText)
-                        .font(.mono(size: 10))
+                        .font(.sans(size: 12))
                         .foregroundColor(PadzyTheme.ink5)
                         .lineLimit(1)
                 }
@@ -394,10 +394,9 @@ private struct PlanCostDrawerRow: View {
                 }
             }
         } label: {
-            Text("PRESET")
-                .font(.mono(size: 8.5))
-                .tracking(8.5 * 0.08)
-                .foregroundColor(PadzyTheme.ink4)
+            Text("Presets")
+                .font(.sans(size: 12))
+                .foregroundColor(PadzyTheme.ink3)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .overlay(
@@ -410,23 +409,13 @@ private struct PlanCostDrawerRow: View {
         .accessibilityLabel("\(displayName) plan presets")
     }
 
-    /// Subtle disclosure for an un-persisted detected suggestion — never a second
-    /// accent hue, just a bordered mono kicker plus its source.
+    /// Subtle disclosure for an un-persisted detected suggestion — never a second accent
+    /// hue, one plain sentence naming its source.
     private func detectedCaption(_ plan: DetectedPlan) -> some View {
         HStack(spacing: 6) {
-            Text("DETECTED")
-                .font(.mono(size: 8.5))
-                .tracking(8.5 * 0.08)
-                .foregroundColor(PadzyTheme.ink5)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                        .stroke(PadzyTheme.border2, lineWidth: 1)
-                )
-            Text("from \(plan.source) — edit or leave as-is to confirm")
-                .font(.sans(size: 10))
-                .foregroundColor(PadzyTheme.ink5)
+            Text("Detected from \(plan.source). Edit it, or leave it to confirm.")
+                .font(.sans(size: 12))
+                .foregroundColor(PadzyTheme.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, 34)

@@ -141,21 +141,21 @@ enum TokeiStatusIcon {
 
 #Preview("Burn ladder + spinner") {
     let states: [(String, Double?)] = [
-        ("IDLE", nil), ("LOW 18%", 18), ("MEDIUM 52%", 52),
-        ("HIGH 74%", 74), ("NEAR LIMIT 93%", 93), ("LIMIT 100%", 104),
+        ("Idle", nil), ("Low 18%", 18), ("Medium 52%", 52),
+        ("High 74%", 74), ("Near limit 93%", 93), ("Limit 100%", 104),
     ]
     return VStack(alignment: .leading, spacing: 14) {
         ForEach(states, id: \.0) { name, pct in
             HStack(spacing: 12) {
                 Image(nsImage: TokeiStatusIcon.image(percent: pct))
-                Text(name).font(.mono(size: 11)).foregroundColor(PadzyTheme.muted)
+                Text(name).font(.sans(size: 12)).foregroundColor(PadzyTheme.muted)
             }
         }
         HStack(spacing: 12) {
             ForEach(0..<TokeiStatusIcon.spinnerPhases, id: \.self) { phase in
                 Image(nsImage: TokeiStatusIcon.spinnerImage(phase: phase))
             }
-            Text("SYNCING").font(.mono(size: 11)).foregroundColor(PadzyTheme.muted)
+            Text("Syncing").font(.sans(size: 12)).foregroundColor(PadzyTheme.muted)
         }
     }
     .padding(24)

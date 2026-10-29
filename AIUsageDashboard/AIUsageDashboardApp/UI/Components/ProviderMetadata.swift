@@ -15,10 +15,10 @@ enum ProviderCapabilityTier {
 
     var label: String {
         switch self {
-        case .fullMetrics: return "FULL METRICS"
-        case .planOnly: return "PLAN ONLY / ENABLE ONLINE"
-        case .detectionOnly: return "DETECTION ONLY"
-        case .notInstalled: return "NOT INSTALLED"
+        case .fullMetrics: return "Full metrics"
+        case .planOnly: return "Plan only until online is on"
+        case .detectionOnly: return "Detection only"
+        case .notInstalled: return "Not installed"
         }
     }
 

@@ -36,14 +36,13 @@ struct OverviewView: View {
         Group {
             if let error = viewModel.errorMessage {
                 SurfaceStateView(
-                    header: "Overview",
                     kind: .error(headline: "Sync failed", detail: error),
                     onRetry: { Task { await viewModel.refresh() } }
                 )
             } else if visibleProviders.isEmpty {
                 blankCanvas
             } else if viewModel.isLoading && viewModel.snapshots.isEmpty {
-                SurfaceStateView(header: "Overview", kind: .loading(message: "Reading local logs"))
+                SurfaceStateView(kind: .loading(message: "Reading local logs"))
             } else {
                 content
             }
@@ -181,10 +180,7 @@ struct OverviewView: View {
     private func agentsSection(_ models: [AgentCellModel], linksToValue: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
             HairlineDivider()
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                kicker("Agents · \(AnalyticsFormat.rangeTitle(viewModel.range))")
-                Spacer(minLength: 8)
-            }
+            SectionHeading("Agents \(AnalyticsFormat.rangePhrase(viewModel.range))")
             if models.isEmpty {
                 Text("No agent used tokens in this range. Try 30D or 90D above.")
                     .font(.sans(size: 15))
@@ -216,9 +212,9 @@ struct OverviewView: View {
                 .font(.mono(size: 15, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
-            Text(AnalyticsFormat.rangeTitle(viewModel.range))
-                .font(.mono(size: 13.5))
-                .foregroundColor(PadzyTheme.ink5)
+            Text(AnalyticsFormat.rangePhrase(viewModel.range))
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink4)
             if let delta = cost.delta {
                 deltaLine(delta)
             }
@@ -240,23 +236,14 @@ struct OverviewView: View {
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
                 .rollingNumber(Double(viewModel.overviewRangedTotal), reduceMotion: reduceMotion)
-            Text(AnalyticsFormat.rangeTitle(viewModel.range))
-                .font(.mono(size: 13.5))
-                .foregroundColor(PadzyTheme.ink5)
+            Text("tokens \(AnalyticsFormat.rangePhrase(viewModel.range))")
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink4)
             if let delta = viewModel.overviewDelta {
                 deltaLine(delta)
             }
         }
         .accessibilityElement(children: .combine)
-    }
-
-    // MARK: Small parts
-
-    private func kicker(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.mono(size: 13.5))
-            .foregroundColor(PadzyTheme.ink5)
-            .lineLimit(1)
     }
 
     // MARK: Blank canvas
@@ -265,11 +252,11 @@ struct OverviewView: View {
     /// `+` — the primary action — instead of a wall of empty provider rows.
     private var blankCanvas: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("NO AGENTS LINKED YET")
-                .font(.display(size: 18, weight: .black))
+            Text("No agents linked yet")
+                .font(.sans(size: 17, weight: .semibold))
                 .foregroundColor(PadzyTheme.ink)
             Text("Tokei tracks local AI-coding usage. Link a coding agent to start — detection reads only paths on your disk, nothing leaves your Mac.")
-                .font(.mono(size: 12))
+                .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
             AddAgentButton { onAddAgent() }

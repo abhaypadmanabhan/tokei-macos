@@ -12,8 +12,7 @@ struct AgentCellModel: Identifiable {
     let stat: String
     var statValue: Double? = nil
     let statColor: Color
-    /// Secondary line under the stat — the Quota lens's "54% left" / "FETCHING…" /
-    /// "ENABLE →" / "LOCAL LOGS" caption. `nil` in the Usage lens.
+    /// Secondary line under the stat: "5.21M today" in Usage, "no price data" in Cost.
     var substat: String? = nil
     var substatColor: Color = PadzyTheme.ink5
     /// A caption of words ("no price data") reads in the body font; mono is for numbers.
@@ -104,8 +103,8 @@ struct AgentGridCell: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     if model.hasHeadroom {
-                        Text("HEADROOM")
-                            .font(.mono(size: 13.5))
+                        Text("Most room")
+                            .font(.sans(size: 12))
                             .foregroundColor(PadzyTheme.ink3)
                             .accessibilityLabel("Most headroom, route new work here")
                     }

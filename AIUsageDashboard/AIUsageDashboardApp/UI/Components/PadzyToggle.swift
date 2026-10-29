@@ -56,24 +56,24 @@ extension ToggleStyle where Self == PadzyToggleStyle {
         var body: some View {
             VStack(alignment: .leading, spacing: 14) {
                 Toggle(isOn: $on) {
-                    Text("QUOTA ALERTS")
-                        .font(.mono(size: 12))
+                    Text("Quota alerts")
+                        .font(.sans(size: 13))
                         .foregroundColor(PadzyTheme.ink)
                 }
                 Toggle(isOn: $off) {
-                    Text("SHOW CLAUDE CODE")
-                        .font(.mono(size: 12))
+                    Text("Show Claude Code")
+                        .font(.sans(size: 13))
                         .foregroundColor(PadzyTheme.ink)
                 }
                 Toggle(isOn: $on) {
-                    Text("DISABLED · ON")
-                        .font(.mono(size: 12))
+                    Text("Disabled, on")
+                        .font(.sans(size: 13))
                         .foregroundColor(PadzyTheme.ink)
                 }
                 .disabled(true)
                 Toggle(isOn: $off) {
-                    Text("DISABLED · OFF")
-                        .font(.mono(size: 12))
+                    Text("Disabled, off")
+                        .font(.sans(size: 13))
                         .foregroundColor(PadzyTheme.ink)
                 }
                 .disabled(true)

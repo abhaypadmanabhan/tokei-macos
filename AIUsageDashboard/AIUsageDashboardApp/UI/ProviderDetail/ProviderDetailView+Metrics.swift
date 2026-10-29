@@ -13,7 +13,7 @@ extension ProviderDetailView {
         let now = Date()
         let rows = nonCreditsWindows.map { (window: $0, pace: pace($0, now: now)) }
         return VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Quota windows")
+            SectionHeading("Quota windows")
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     quotaRow(row.window, pace: row.pace, now: now)
@@ -143,7 +143,7 @@ extension ProviderDetailView {
 
     var dailyHistorySection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel(UsageAnalytics.dailyHistoryTitle(for: historyRange))
+            SectionHeading(UsageAnalytics.dailyHistoryTitle(for: historyRange))
             if trend.count >= 2 {
                 LineTrendChart(points: trend, tint: AgentTint.color(snapshot.providerID))
                     .frame(height: 150)
@@ -180,7 +180,7 @@ extension ProviderDetailView {
 
     var tokenSplitSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Token split · today")
+            SectionHeading("Today's token split")
             if hasSplit {
                 let segments = todaySplitSegments
                 let total = max(1, segments.reduce(0) { $0 + $1.value })

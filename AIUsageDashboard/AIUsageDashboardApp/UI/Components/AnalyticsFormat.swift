@@ -11,13 +11,6 @@ enum AnalyticsFormat {
         return formatter.string(from: date)
     }
 
-    /// `weekday` in Calendar convention (1 = Sunday).
-    static func weekdayName(_ weekday: Int) -> String {
-        let symbols = Calendar.current.shortWeekdaySymbols
-        let index = (weekday - 1) % symbols.count
-        return symbols[index < 0 ? index + symbols.count : index].uppercased()
-    }
-
     /// Hour 0…23 → "9AM" / "12PM" style label.
     static func hourLabel(_ hour: Int) -> String {
         let normalized = ((hour % 24) + 24) % 24
@@ -29,15 +22,16 @@ enum AnalyticsFormat {
         }
     }
 
-    /// Chart-header label for the active range.
-    static func rangeTitle(_ range: UsageRange) -> String {
+    /// The active range as it reads mid-sentence: "5.09B tokens in the last 7 days",
+    /// "Agents in the last 7 days".
+    static func rangePhrase(_ range: UsageRange) -> String {
         switch range {
-        case .today: return "TODAY"
-        case .sevenDay, .week: return "LAST 7 DAYS"
-        case .thirtyDay, .month: return "LAST 30 DAYS"
-        case .ninetyDay: return "LAST 90 DAYS"
-        case .lifetime: return "LIFETIME"
-        case .custom: return "CUSTOM RANGE"
+        case .today: return "today"
+        case .sevenDay, .week: return "in the last 7 days"
+        case .thirtyDay, .month: return "in the last 30 days"
+        case .ninetyDay: return "in the last 90 days"
+        case .lifetime: return "all time"
+        case .custom: return "in this range"
         }
     }
 

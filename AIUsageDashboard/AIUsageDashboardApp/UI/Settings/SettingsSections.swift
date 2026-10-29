@@ -15,7 +15,7 @@ struct LiveQuotaSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Live quota")
+            SectionHeading("Live quota")
             Text("Off means local logs only for that agent: no request leaves your Mac for it.")
                 .font(.sans(size: 11))
                 .foregroundColor(PadzyTheme.ink5)
@@ -74,7 +74,7 @@ struct QuotaAlertsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Quota alerts")
+            SectionHeading("Quota alerts")
             VStack(alignment: .leading, spacing: 4) {
                 Toggle(isOn: $notificationsEnabled) {
                     Text("Alert when a window crosses a threshold")
@@ -195,7 +195,7 @@ struct LaunchAtLoginSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
-            SectionLabel("Startup")
+            SectionHeading("Startup")
             Toggle(isOn: Binding(get: { status == .enabled || status == .requiresApproval }, set: set)) {
                 Text("Open Tokei at login")
                     .font(.sans(size: 13))

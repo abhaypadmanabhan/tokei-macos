@@ -127,8 +127,8 @@ struct ValueView: View {
     /// The single primary action on this surface — the one sanctioned accent fill.
     private var planCostCTA: some View {
         Button(action: onOpenPlanCosts) {
-            Text("SET PLAN COSTS →")
-                .font(.mono(size: 11))
+            Text("Set plan costs →")
+                .font(.sans(size: 13, weight: .semibold))
                 .foregroundColor(PadzyTheme.ground)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
@@ -147,7 +147,7 @@ struct ValueView: View {
     private var loadedState: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                SectionLabel("Plan value · this month")
+                SectionHeading("Plan value this month")
 
                 hero
                     .padding(.top, 16)
@@ -248,7 +248,7 @@ struct ValueView: View {
 
     private func extraUsageSection(_ window: QuotaWindow, provider: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("Extra usage · \(provider)")
+            SectionHeading("\(provider) extra usage")
             ExtraUsageRow(window: window)
         }
     }
@@ -354,16 +354,15 @@ struct ValueView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.4)
                             .rollingNumber(Double(lifetime.tokens), reduceMotion: reduceMotion)
-                        Text("TOKENS ALL-TIME")
-                            .font(.mono(size: 11))
-                            .tracking(11 * 0.08)
+                        Text("tokens all time")
+                            .font(.sans(size: 15))
                             .foregroundColor(PadzyTheme.muted)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(lifetime.tokens) tokens all-time")
 
                     Text(lifetimeNote(lifetime))
-                        .font(.mono(size: 10))
+                        .font(.sans(size: 13))
                         .foregroundColor(PadzyTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                         .rollingNumber(Double(lifetime.contributingProviders), reduceMotion: reduceMotion)
@@ -394,15 +393,15 @@ struct ValueView: View {
 // MARK: - Tier
 
 extension MaxxerTier {
-    /// Caps display label for the chip. Kept in the UI layer on purpose — the
-    /// frozen §4 contract carries no presentation strings.
+    /// The tier as a word, sentence case. Kept in the UI layer on purpose — the frozen §4
+    /// contract carries no presentation strings.
     var displayName: String {
         switch self {
-        case .idle: return "IDLE"
-        case .warming: return "WARMING"
-        case .breakEven: return "BREAK EVEN"
-        case .maxxing: return "MAXXING"
-        case .goblinMode: return "GOBLIN MODE"
+        case .idle: return "Idle"
+        case .warming: return "Warming"
+        case .breakEven: return "Break-even"
+        case .maxxing: return "Maxxing"
+        case .goblinMode: return "Goblin mode"
         }
     }
 
@@ -427,23 +426,15 @@ extension MaxxerTier {
     }
 }
 
-/// Tier chip (mockup): a colour-bordered, colour-labelled mono pill in the tier's
-/// semantic status hue. The word carries the meaning; colour only reinforces it,
-/// so the tier is never signalled by colour alone.
+/// The tier beside the multiple: one word in the tier's status hue, no badge box. The word
+/// carries the meaning; colour only reinforces it, so the tier never rests on colour alone.
 struct TierChip: View {
     let tier: MaxxerTier
 
     var body: some View {
         Text(tier.displayName)
-            .font(.mono(size: 11, weight: .semibold))
-            .tracking(11 * 0.1)
+            .font(.sans(size: 17, weight: .semibold))
             .foregroundColor(tier.statusColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .overlay(
-                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                    .stroke(tier.statusColor.opacity(0.4), lineWidth: 1)
-            )
             .fixedSize()
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Tier: \(tier.displayName). \(tier.blurb)")
