@@ -21,6 +21,16 @@ public struct FiredNotificationKey: Sendable {
         self.bucketKey = bucketKey
         self.accountID = accountID
     }
+
+    func migrateLegacy(from legacy: Set<Self>, into fired: inout Set<Self>) {
+        guard let previous = legacy.first(where: {
+            $0.providerID == providerID && $0.windowType == windowType && $0.threshold == threshold
+        }) else { return }
+        fired.remove(previous)
+        var scoped = self
+        scoped.resetAt = previous.resetAt
+        fired.update(with: scoped)
+    }
 }
 
 extension FiredNotificationKey: Hashable {
@@ -60,9 +70,10 @@ public struct ThresholdEvaluator: Sendable {
         previouslyFired: Set<FiredNotificationKey>,
         thresholdsByProvider: [ProviderID: [Int]] = [:]
     ) -> (notifications: [ThresholdEvaluation], fired: Set<FiredNotificationKey>) {
-        var fired = previouslyFired
-        var notifications: [ThresholdEvaluation] = []
         let now = clock.now()
+        var fired = previouslyFired.filter { $0.resetAt.map { $0 > now } ?? true }
+        let legacy = fired.filter { $0.bucketKey == nil && $0.accountID == nil && $0.resetAt != nil }
+        var notifications: [ThresholdEvaluation] = []
 
         for snapshot in snapshots {
             for window in snapshot.quotaWindows {
@@ -80,12 +91,7 @@ public struct ThresholdEvaluator: Sendable {
                         accountID: snapshot.accounts?.first { $0.id == snapshot.headlineAccountID }?.accountID
                     )
 
-                    // Re-arm if the stored window reset has passed.
-                    if let storedKey = fired.first(where: { $0 == key }),
-                       let storedResetAt = storedKey.resetAt,
-                       storedResetAt <= now {
-                        fired.remove(key)
-                    }
+                    key.migrateLegacy(from: legacy, into: &fired)
                     // Re-arm if usage has dropped back below the threshold.
                     if percent < Double(threshold) {
                         fired.remove(key)
