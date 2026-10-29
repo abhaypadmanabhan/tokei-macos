@@ -31,6 +31,15 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     /// Spoken label — identical to the visible label now that the kicker is gone.
     var accessibilityName: String { label }
 
+    /// ⌘1 / ⌘2 / ⌘3, in tab order (View menu).
+    var shortcutKey: KeyEquivalent {
+        switch self {
+        case .overview: return "1"
+        case .value: return "2"
+        case .agents: return "3"
+        }
+    }
+
     /// Neighbours for left/right arrow navigation. Deliberately non-wrapping, so
     /// holding an arrow key stops at the end of the strip instead of cycling.
     var next: DashboardTab? {
@@ -50,8 +59,8 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// The destinations the dashboard pane routes between. Held as local `@State` in
-/// `DashboardView`; `Core` stays untouched.
+/// The destinations the dashboard pane routes between. Held by `DashboardNavigator`, so
+/// the menu bar and the window drive the same state; `Core` stays untouched.
 ///
 /// Three of these are *tab-owned* (`.overview`, `.value`, and `.connections` — the
 /// Agents tab). The remaining one (`.provider`) is a drill-in pane that replaces the

@@ -58,7 +58,8 @@ struct DashboardStatusStrip: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("r", modifiers: .command)
+        // ⌘R lives on View › Sync Now, so the shortcut is listed in the menu bar.
+        .help("Sync now (⌘R)")
         .disabled(viewModel.isLoading)
         .accessibilityLabel("Sync now")
     }

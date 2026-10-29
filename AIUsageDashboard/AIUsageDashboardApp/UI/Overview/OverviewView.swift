@@ -45,6 +45,9 @@ struct OverviewView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        #if DEBUG
+        .onAppear { if ProofRoute.wantsQuotaLens { metric = .quota } }
+        #endif
     }
 
     private var content: some View {

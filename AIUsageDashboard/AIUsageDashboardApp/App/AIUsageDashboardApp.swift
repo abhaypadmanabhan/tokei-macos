@@ -6,13 +6,15 @@ import Sparkle
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var windowVisibility = WindowVisibilityMonitor()
+    /// Observed here so the View and Go menus rebuild when Back becomes available.
+    @ObservedObject private var navigator = DashboardNavigator.shared
 
     init() {
         UserDefaults.standard.register(defaults: CodexProvider.liveQuotaDefaults)
     }
 
     var body: some Scene {
-        Window("Tokei", id: "dashboard-window") {
+        Window("Tokei", id: DashboardWindow.id) {
             DashboardView()
                 .environmentObject(appDelegate.viewModel)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
@@ -27,7 +29,22 @@ struct AIUsageDashboardApp: App {
                     AppDelegate.shared?.checkForUpdates()
                 }
             }
+            DashboardCommands(
+                navigator: navigator,
+                viewModel: appDelegate.viewModel,
+                canGoBack: navigator.canGoBack
+            )
         }
+
+        #if DEBUG
+        // Debug builds only: the popover's content in a plain window, so it can be captured
+        // without clicking the status item (`-TokeiProofRoute popover`).
+        Window("Menu bar popover", id: ProofRoute.popoverWindowID) {
+            MenuBarView()
+                .environmentObject(appDelegate.viewModel)
+        }
+        .windowResizability(.contentSize)
+        #endif
 
         MenuBarExtra {
             MenuBarView()
@@ -72,6 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // took 66 s on 2026-10-28), labelled as saved until the live sync replaces them.
         Task {
             await viewModel.loadSavedSnapshots()
+            #if DEBUG
+            ProofRoute.apply(navigator: .shared, viewModel: viewModel)
+            #endif
             viewModel.beginAutoSync()
             await viewModel.refresh()
         }
@@ -81,4 +101,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.checkForUpdates(nil)
     }
 }
-

@@ -1,0 +1,13 @@
+INFO app active=true window key=true visible=true
+PASS View › Overview is ⌘1
+PASS View › Value is ⌘2
+PASS View › Agents is ⌘3
+PASS View › Sync Now is ⌘R
+PASS Go › Back is ⌘[
+PASS Go › Back is disabled on a tab
+PASS ⌘2 shows Value
+PASS ⌘[ returns to Value
+PASS Go › Back is enabled in a drill-in
+PASS ⌘3 shows Agents
+PASS ⌘1 shows Overview
+SELFTEST PASS
