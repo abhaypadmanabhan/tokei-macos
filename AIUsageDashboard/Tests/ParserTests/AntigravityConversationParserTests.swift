@@ -136,6 +136,24 @@ final class AntigravityConversationParserTests: XCTestCase {
         XCTAssertTrue(result.warnings.isEmpty)
     }
 
+    func testRetryWithDifferentModelIDDoesNotInheritThePrimaryModelName() async throws {
+        let primary = usage(input: 100, response: "primary")
+        let retry = integer(1, 1035) + integer(2, 50) + integer(3, 20) + text(11, "fallback")
+        try database("one.db", generations: [generation(primary, extras: bytes(17, bytes(2, retry)))], steps: [])
+        let result = await parser().parse()
+        let models = try XCTUnwrap(result.dailyModelUsage.values.first)
+        XCTAssertEqual(models["gemini-3.5-flash"]?.inputTokens, 100)
+        XCTAssertEqual(models["claude-sonnet-4-6"]?.inputTokens, 50)
+    }
+
+    func testCanonicalRootsAreDiscoveredEvenBeforeTheirDirectoriesExist() {
+        let roots = AntigravityConversationFiles.defaultRoots(home: directory, environment: [:])
+        let expected = ["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"]
+            .map { directory.appendingPathComponent(".gemini/" + $0).path }
+            + [directory.appendingPathComponent(".config/antigravity").path]
+        XCTAssertTrue(Set(expected).isSubset(of: Set(roots.map(\.path))))
+    }
+
     private func parser() -> AntigravityConversationParser {
         AntigravityConversationParser(roots: [directory], calendar: calendar,
                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })

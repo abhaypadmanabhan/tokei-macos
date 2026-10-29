@@ -35,7 +35,8 @@ struct AntigravityConversationDatabase: Sendable {
             if let model, generation.number(3) > 0 { models[generation.number(3)] = model }
             let ownTime = try generation.message(9)?.message(4)?.timestamp
             generationRecords += try records(generation, usageField: 4, attempts: 17,
-                model: model, time: TimeSource(own: ownTime, trajectory: trajectory, modified: modifiedAt))
+                model: (generation.number(3), model),
+                time: TimeSource(own: ownTime, trajectory: trajectory, modified: modifiedAt))
         }
         var stepRecords: [AntigravityConversationRecord] = []
         for row in steps {
@@ -43,7 +44,8 @@ struct AntigravityConversationDatabase: Sendable {
             let model = try modelMessage.flatMap { try modelName($0, display: 8, slug: 12) }
             let ownTime = try row.message.message(8)?.timestamp ?? row.message.message(1)?.timestamp
             stepRecords += try records(row.message, usageField: 9, attempts: 28,
-                model: model, time: TimeSource(own: ownTime, trajectory: trajectory, modified: modifiedAt))
+                model: (modelMessage?.number(1) ?? 0, model),
+                time: TimeSource(own: ownTime, trajectory: trajectory, modified: modifiedAt))
         }
         return Self(records: stepRecords + generationRecords, models: models)
     }
@@ -59,7 +61,7 @@ struct AntigravityConversationDatabase: Sendable {
 
     private static func records(
         _ message: AntigravityProtobuf, usageField: Int, attempts: Int,
-        model: String?, time: TimeSource
+        model: (id: Int, name: String?), time: TimeSource
     ) throws -> [AntigravityConversationRecord] {
         var usages = try message.message(usageField).map { [$0] } ?? []
         usages += try message.messages(attempts).compactMap { try $0.message(2) }
@@ -73,7 +75,9 @@ struct AntigravityConversationDatabase: Sendable {
             let keys = try [11, 12, 7].compactMap { field -> String? in
                 try usage.text(field).map { "antigravity:\(field):\($0)" }
             }
-            return AntigravityConversationRecord(modelID: usage.number(1), model: model,
+            let modelID = usage.number(1)
+            let name = modelID > 0 && model.id > 0 && modelID != model.id ? nil : model.name
+            return AntigravityConversationRecord(modelID: modelID, model: name,
                 timestamp: time.own ?? time.trajectory ?? time.modified,
                 timestampQuality: time.own != nil ? 2 : (time.trajectory != nil ? 1 : 0), keys: keys,
                 input: input, cached: cached, creation: creation, output: output, reasoning: min(output, reasoning))

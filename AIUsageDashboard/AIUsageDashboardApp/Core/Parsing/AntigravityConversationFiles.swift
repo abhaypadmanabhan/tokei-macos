@@ -33,16 +33,17 @@ enum AntigravityConversationFiles {
                            ? try .read(wal) : nil)
     }
 
-    static func defaultRoots(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [URL] {
-        if let override = ProcessInfo.processInfo.environment["ANTIGRAVITY_DATA_DIR"], !override.isEmpty {
-            return override.split(separator: ",").map {
-                URL(fileURLWithPath: NSString(string: String($0)).expandingTildeInPath)
-            }
+    static func defaultRoots(home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                             environment: [String: String] = ProcessInfo.processInfo.environment) -> [URL] {
+        if let override = environment["ANTIGRAVITY_DATA_DIR"], !override.isEmpty {
+            return override.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
         }
         let gemini = home.appendingPathComponent(".gemini")
         let names = (try? FileManager.default.contentsOfDirectory(atPath: gemini.path)) ?? []
-        return names.filter { $0.hasPrefix("antigravity") }.map { gemini.appendingPathComponent($0) }
-            + [home.appendingPathComponent(".config/antigravity")]
+        let canonical = ["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"]
+        return Set(canonical + names.filter { $0.hasPrefix("antigravity") }).sorted()
+            .map { gemini.appendingPathComponent($0) } + [home.appendingPathComponent(".config/antigravity")]
     }
 
     static func discover(_ roots: [URL]) -> (files: [URL], partial: Bool) {
