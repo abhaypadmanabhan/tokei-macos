@@ -19,6 +19,10 @@ extension ProviderDetailView {
                     quotaRow(row.window, pace: row.pace, now: now)
                 }
             }
+            if let extra = extraUsageWindow {
+                ExtraUsageRow(window: extra)
+                    .padding(.top, rows.isEmpty ? 0 : 10)
+            }
             if rows.contains(where: { $0.pace != nil }) {
                 HStack(spacing: 8) {
                     Rectangle()

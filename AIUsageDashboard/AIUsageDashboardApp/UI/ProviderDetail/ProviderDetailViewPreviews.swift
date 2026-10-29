@@ -49,6 +49,28 @@ private func previewSnapshot() -> ProviderSnapshot {
     .frame(width: 900, height: 1200)
 }
 
+/// Claude with extra usage as WP-4 lands it (§4.3), from the saved real response: $21.52 of
+/// $50.00, switched off because the credits ran out. Drawn under the quota rows, no gauge.
+#Preview("Full metrics · extra usage (WP-4 fixture)") {
+    let base = previewSnapshot()
+    let extra = QuotaWindow(
+        providerID: .claudeCode, type: .credits, used: 21.52, limit: 50, remaining: 28.48,
+        confidence: .providerReported, source: "preview extra_usage disabled out_of_credits",
+        label: "Extra usage", bucketKey: ExtraUsageCopy.bucketKey
+    )
+    return ProviderDetailView(
+        snapshot: ProviderSnapshot(
+            providerID: base.providerID, displayName: base.displayName, authStatus: base.authStatus,
+            quotaWindows: base.quotaWindows + [extra],
+            todayUsage: base.todayUsage, weekUsage: base.weekUsage
+        ),
+        trend: previewTrend(days: 14),
+        peakHour: (hour: 15, tokens: 6_800_000),
+        lastSyncedAt: Date()
+    )
+    .frame(width: 900, height: 1200)
+}
+
 /// Month-to-date value per model, as WP-1's engine will fill it: largest first, the
 /// unpriced row last with its tokens still counted.
 private let previewClaudeModels = [

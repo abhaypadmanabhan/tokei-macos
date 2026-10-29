@@ -158,6 +158,11 @@ struct ValueView: View {
                 valueRows
                     .padding(.top, 28)
 
+                if let extra = extraUsage {
+                    extraUsageSection(extra.window, provider: extra.name)
+                        .padding(.top, 22)
+                }
+
                 excludedFootnote
                     .padding(.top, 18)
             }
@@ -227,6 +232,24 @@ struct ValueView: View {
                 )
                 HairlineDivider()
             }
+        }
+    }
+
+    // MARK: Extra usage
+
+    /// Claude's overage dollars (§4.3), when the provider reports them: spend on top of the
+    /// plan, so it sits beside the value rows but is not part of the multiple.
+    private var extraUsage: (window: QuotaWindow, name: String)? {
+        for snapshot in visibleSnapshots {
+            if let window = ExtraUsageCopy.window(in: snapshot) { return (window, snapshot.displayName) }
+        }
+        return nil
+    }
+
+    private func extraUsageSection(_ window: QuotaWindow, provider: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel("Extra usage · \(provider)")
+            ExtraUsageRow(window: window)
         }
     }
 

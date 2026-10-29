@@ -87,14 +87,33 @@ struct ProviderDetailView: View {
 
     private var isWide: Bool { containerWidth - Self.hPad * 2 >= 720 }
 
-    private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
+    /// Claude's extra-usage balance (§4.3), drawn under the quota rows; never a gauge.
+    var extraUsageWindow: QuotaWindow? { ExtraUsageCopy.window(in: snapshot) }
+
+    private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty || extraUsageWindow != nil }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts || !modelValues.isEmpty }
 
     // MARK: - Body
 
     var body: some View {
+        ScrollViewReader { proxy in
+            scrollingBody
+                #if DEBUG
+                .onAppear {
+                    // Debug proof route `provider.<id>.scrolled`: capture the drill-in scrolled.
+                    guard ProofRoute.scrollsDrillIn else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        proxy.scrollTo(Self.scrolledAnchor, anchor: .top)
+                    }
+                }
+                #endif
+        }
+    }
+
+    static let scrolledAnchor = "drill-after-quota"
+
+    private var scrollingBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xxl) {
                 header
@@ -440,39 +459,34 @@ struct ProviderDetailView: View {
         return "\(MaxxerMath.formatUSD(value?.apiEquivalentUSD))/mo API-equiv"
     }
 
-    // MARK: - 6/7/8 · Bottom region (2-column ≥720pt)
+    // MARK: - 6/7/8 · Bottom region
 
-    @ViewBuilder
+    /// One reading order: quota, history, accounts, token split, value by model. Two columns
+    /// only where both hold content of about the same height (the quota rows beside the
+    /// daily history, on a wide window); everything else runs full width. The old split put
+    /// the short quota list beside a tall right column, leaving the left side empty once
+    /// scrolled (2026-10-28 captures).
     private var bottomRegion: some View {
-        if showQuotaWindows && hasRightColumn {
-            if isWide {
+        VStack(alignment: .leading, spacing: PadzySpace.xxl) {
+            if showQuotaWindows && showHistory && isWide {
                 HStack(alignment: .top, spacing: 44) {
                     quotaWindowsSection.frame(maxWidth: .infinity, alignment: .leading)
-                    rightColumn.frame(maxWidth: .infinity, alignment: .leading)
+                    dailyHistorySection.frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: PadzySpace.xxl) {
-                    quotaWindowsSection
-                    rightColumn
+                if showQuotaWindows { quotaWindowsSection }
+                if showHistory { dailyHistorySection }
+            }
+            Group {
+                if showAccounts {
+                    accountsSection
+                } else if showAccountSetupNotice {
+                    MultiAccountNotice(kind: .claudeSetup)
                 }
+                if showSplitSection { tokenSplitSection }
+                if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
             }
-        } else if hasRightColumn {
-            rightColumn
-        } else if showQuotaWindows {
-            quotaWindowsSection
-        }
-    }
-
-    private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 30) {
-            if showAccounts {
-                accountsSection
-            } else if showAccountSetupNotice {
-                MultiAccountNotice(kind: .claudeSetup)
-            }
-            if showHistory { dailyHistorySection }
-            if showSplitSection { tokenSplitSection }
-            if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
+            .id(Self.scrolledAnchor)
         }
     }
 

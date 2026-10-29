@@ -11,7 +11,8 @@ import AIUsageDashboardCore
 ///     Tokei -TokeiSelfTest menus        # prints PASS/FAIL per check, exits 0 or 1
 ///
 /// Routes: `overview.usage`, `overview.quota`, `value`, `agents`, `settings`, `popover`,
-/// `provider.<ProviderID raw value>` and `provider.<raw>.scrolled`.
+/// `provider.<ProviderID raw value>` and `provider.<raw>.scrolled`. `-TokeiProofFixture
+/// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`).
 enum ProofRoute {
     static let popoverWindowID = "proof-popover"
 
@@ -32,7 +33,14 @@ enum ProofRoute {
             Task { await runMenuSelfTest(navigator: navigator, viewModel: viewModel) }
             return
         }
-        guard let route else { return }
+        if UserDefaults.standard.string(forKey: "TokeiProofFixture") == "extraUsage" {
+            injectExtraUsage(into: viewModel)
+        }
+        if let route { open(route, navigator: navigator, viewModel: viewModel) }
+    }
+
+    @MainActor
+    private static func open(_ route: String, navigator: DashboardNavigator, viewModel: DashboardViewModel) {
         switch route {
         case "value": navigator.select(.value, viewModel: viewModel)
         case "agents": navigator.select(.agents, viewModel: viewModel)
@@ -42,6 +50,35 @@ enum ProofRoute {
             if parts.first == "provider", parts.count >= 2, let id = ProviderID(rawValue: String(parts[1])) {
                 navigator.open(id, viewModel: viewModel)
             }
+        }
+    }
+
+    // MARK: Fixtures
+
+    /// `-TokeiProofFixture extraUsage`: adds the §4.3 window from the saved real response
+    /// (`tasks/research/claude-usage-response.json`: 2152 of 5000 minor USD, disabled,
+    /// out_of_credits) to Claude, so the row can be captured before the network lane lands
+    /// it. The first live sync replaces it.
+    @MainActor
+    private static func injectExtraUsage(into viewModel: DashboardViewModel) {
+        viewModel.snapshots = viewModel.snapshots.map { snapshot in
+            guard snapshot.providerID == .claudeCode else { return snapshot }
+            let extra = QuotaWindow(
+                providerID: .claudeCode, type: .credits, used: 21.52, limit: 50, remaining: 28.48,
+                confidence: .providerReported,
+                source: "api.anthropic.com/api/oauth/usage extra_usage disabled out_of_credits (proof fixture)",
+                label: "Extra usage", bucketKey: ExtraUsageCopy.bucketKey
+            )
+            return ProviderSnapshot(
+                providerID: snapshot.providerID, displayName: snapshot.displayName,
+                authStatus: snapshot.authStatus, quotaWindows: snapshot.quotaWindows + [extra],
+                todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
+                monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage,
+                costUsage: snapshot.costUsage, warnings: snapshot.warnings,
+                lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
+                hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: snapshot.dailyModelUsage,
+                accounts: snapshot.accounts, headlineAccountID: snapshot.headlineAccountID
+            )
         }
     }
 
