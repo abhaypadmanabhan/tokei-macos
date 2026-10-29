@@ -169,19 +169,17 @@ extension CopilotSessionParser {
                     if buffer.count + chunk.distance(from: start, to: end) <= JSONLRecordFraming.maximumRecordBytes {
                         buffer.append(contentsOf: chunk[start..<end])
                     } else {
-                        malformed += 1
                         buffer.removeAll(keepingCapacity: false)
                         discarding = true
                     }
                 }
                 if let newline {
-                    if !discarding { process() }
+                    if discarding { malformed += 1 } else { process() }
                     discarding = false
                     start = chunk.index(after: newline)
                 } else { break }
             }
         }
-        if !discarding { process() }
         return (records, malformed)
     }
 

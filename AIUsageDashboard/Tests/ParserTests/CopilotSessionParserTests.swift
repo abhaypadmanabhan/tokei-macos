@@ -48,7 +48,7 @@ final class CopilotSessionParserTests: XCTestCase {
         XCTAssertEqual(calls.count, initialReads)
         let handle = try FileHandle(forWritingTo: url)
         try handle.seekToEnd()
-        try handle.write(contentsOf: Data(("\n" + shutdown("2026-10-28T11:00:00Z", input: 150, output: 80)).utf8))
+        try handle.write(contentsOf: Data((shutdown("2026-10-28T11:00:00Z", input: 150, output: 80) + "\n").utf8))
         try handle.close()
         let result = await parser.parse()
         XCTAssertGreaterThan(calls.count, initialReads)
@@ -127,7 +127,7 @@ final class CopilotSessionParserTests: XCTestCase {
         try write(shutdown("2026-10-28T10:00:00Z", input: 100, output: 50))
         let second = directory.appendingPathComponent("session-2")
         try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
-        try shutdown("2026-10-28T11:00:00Z", input: 100, output: 50)
+        try (shutdown("2026-10-28T11:00:00Z", input: 100, output: 50) + "\n")
             .write(to: second.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
         let result = await parser().parse()
         XCTAssertEqual(result.lifetime.inputTokens, 200)
@@ -181,6 +181,41 @@ final class CopilotSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.today.totalTokens, 80)
     }
 
+    func testUnterminatedTailWaitsForNewlineBeforeUsageOrMalformedWarning() async throws {
+        let row = Data(shutdown("2026-10-28T11:00:00Z", input: 160, output: 80).utf8)
+        let split = row.count / 2
+        let fixtures: [CopilotTailFixture] = [
+            .init(name: "partial JSON", prefix: Data(row.prefix(split)), suffix: Data(row.suffix(row.count - split)),
+                  count: 2, input: 160, warnings: 0),
+            .init(name: "valid JSON awaiting newline", prefix: row, suffix: Data(), count: 2, input: 160, warnings: 0),
+            .init(name: "oversized unfinished line", prefix: Data(repeating: 0x78, count: 16 * 1024 * 1024 + 1),
+                  suffix: Data(), count: 1, input: 100, warnings: 1),
+            .init(name: "malformed unfinished shutdown", prefix: Data(#"{"type":"session.shutdown"}"#.utf8),
+                  suffix: Data(), count: 1, input: 100, warnings: 1)
+        ]
+        for fixture in fixtures {
+            let url = try write(shutdown("2026-10-28T10:00:00Z", input: 100, output: 50))
+            try appendBytes(fixture.prefix, to: url)
+            let parser = parser()
+            let pending = await parser.parse()
+            XCTAssertEqual(pending.shutdownCount, 1, fixture.name)
+            XCTAssertEqual(pending.lifetime.inputTokens, 100, fixture.name)
+            XCTAssertTrue(pending.warnings.isEmpty, fixture.name)
+            try appendBytes(fixture.suffix + Data([0x0A]), to: url)
+            let completed = await parser.parse()
+            XCTAssertEqual(completed.shutdownCount, fixture.count, fixture.name)
+            XCTAssertEqual(completed.lifetime.inputTokens, fixture.input, fixture.name)
+            XCTAssertEqual(completed.warnings.count, fixture.warnings, fixture.name)
+        }
+    }
+
+    private func appendBytes(_ data: Data, to url: URL) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+    }
+
     private func parser() -> CopilotSessionParser {
         CopilotSessionParser(sessionStateDirectory: directory, calendar: calendar,
                              now: { Date(timeIntervalSince1970: 1_793_188_800) })
@@ -191,7 +226,8 @@ final class CopilotSessionParserTests: XCTestCase {
         let session = directory.appendingPathComponent("session-1")
         try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
         let url = session.appendingPathComponent("events.jsonl")
-        try text.write(to: url, atomically: true, encoding: .utf8)
+        // Completed fixtures end with a newline; tail tests append their unfinished bytes directly.
+        try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 
@@ -205,6 +241,15 @@ final class CopilotSessionParserTests: XCTestCase {
             + "\"gpt-6.1-sol\":{\"usage\":{\(fields)}}}}}"
     }
 
+}
+
+private struct CopilotTailFixture {
+    let name: String
+    let prefix: Data
+    let suffix: Data
+    let count: Int
+    let input: Int
+    let warnings: Int
 }
 
 private final class CopilotReadCalls: @unchecked Sendable {
