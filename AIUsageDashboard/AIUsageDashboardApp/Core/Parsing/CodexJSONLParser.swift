@@ -79,7 +79,8 @@ public actor CodexJSONLParser {
                     // A calendar update may run while the shared cache actor is awaited.
                     // Never repopulate freshly invalidated buckets with an older parse epoch.
                     guard epoch == calendarEpoch else { return await parse(logSources: logSources) }
-                    fileCache[path] = entry
+                    if entry.cacheable { fileCache[path] = entry }
+                    else { fileCache.removeValue(forKey: path) }
                 }
                 apply(
                     entry.aggregate, to: &windows, dailyUsage: &dailyUsage,
@@ -113,6 +114,8 @@ public actor CodexJSONLParser {
         fileCache = fileCache.filter { path, _ in
             activePaths.contains(path) || FileManager.default.fileExists(atPath: path)
         }
+        await CodexCompressedLogCache.shared.prune()
+        guard epoch == calendarEpoch else { return await parse(logSources: logSources) }
 
         collectModelUsage(
             from: files,
@@ -193,11 +196,13 @@ public actor CodexJSONLParser {
             inode: metadata.identifier, device: metadata.device
         ) else {
             entry.failureWarning = compressedWarning(source.url, reason: "File fingerprint unavailable")
+            entry.cacheable = false
             return entry
         }
         let lookup = await CodexCompressedLogCache.shared.read(source.url, fingerprint: fingerprint) { data in
             self.classifyLine(data)
         }
+        entry.cacheable = lookup.cacheable
         if lookup.readFromDisk { fileReadCount += 1 }
         switch lookup.outcome {
         case .decoded(let decoded):
@@ -226,6 +231,7 @@ public actor CodexJSONLParser {
         var malformedCount: Int
         var discardingOversizedRecord: Bool
         var failureWarning: ProviderWarning?
+        var cacheable = true
     }
 
     private func continuityTail(at url: URL, endingAt byteOffset: UInt64) throws -> Data {

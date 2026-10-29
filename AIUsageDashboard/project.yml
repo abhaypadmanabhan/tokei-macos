@@ -57,6 +57,8 @@ targets:
       - path: AIUsageDashboardApp
         excludes:
           - Core
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
     dependencies:
       - target: AIUsageDashboardCore
       - package: Sparkle

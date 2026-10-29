@@ -1,6 +1,6 @@
 import Foundation
 
-/// One decode attempt per fingerprint across parser instances and calendar invalidations.
+/// One decode result per live fingerprint across parser instances and calendar invalidations.
 /// Only compact usage/model/tier records survive; conversation text and decoded bytes do not.
 actor CodexCompressedLogCache {
     static let shared = CodexCompressedLogCache()
@@ -45,26 +45,45 @@ actor CodexCompressedLogCache {
     struct Lookup: Sendable {
         let outcome: Outcome
         let readFromDisk: Bool
+        let cacheable: Bool
+    }
+
+    private struct Entry {
+        let outcome: Outcome
+        var paths: Set<URL>
     }
 
     // Device + inode make /var and /private/var aliases (and hard links) share the same decode.
-    private var entries: [Fingerprint: Outcome] = [:]
+    private var entries: [Fingerprint: Entry] = [:]
 
     func entryCountForTesting() -> Int { entries.count }
 
+    func prune() {
+        entries = entries.filter { fingerprint, entry in
+            entry.paths.contains { Fingerprint.read($0) == fingerprint }
+        }
+    }
+
     func read(_ url: URL, fingerprint: Fingerprint,
               parseLine: @Sendable (Data) -> CodexLineParseOutcome) -> Lookup {
-        if let outcome = entries[fingerprint] {
-            return Lookup(outcome: outcome, readFromDisk: false)
+        if var entry = entries[fingerprint] {
+            entry.paths.insert(url)
+            entries[fingerprint] = entry
+            return Lookup(outcome: entry.outcome, readFromDisk: false, cacheable: true)
         }
         let outcome: Outcome
         do {
             let decoded = try decode(url, parseLine: parseLine)
             guard Fingerprint.read(url) == fingerprint else { throw CacheError.changedDuringRead }
             outcome = .decoded(decoded)
-        } catch { outcome = .failed(error.localizedDescription) }
-        entries[fingerprint] = outcome
-        return Lookup(outcome: outcome, readFromDisk: true)
+        } catch {
+            outcome = .failed(error.localizedDescription)
+            guard error is ZstdDecoder.DecodeError || error is CacheError else {
+                return Lookup(outcome: outcome, readFromDisk: true, cacheable: false)
+            }
+        }
+        entries[fingerprint] = Entry(outcome: outcome, paths: [url])
+        return Lookup(outcome: outcome, readFromDisk: true, cacheable: true)
     }
 
     private func decode(_ url: URL, parseLine: (Data) -> CodexLineParseOutcome) throws -> Decoded {
