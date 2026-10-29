@@ -88,6 +88,36 @@ final class SavedSnapshotLaunchTests: XCTestCase {
         XCTAssertFalse(model.showingSavedSnapshots)
     }
 
+    /// The menu bar cannot say "saved on Tue 20 Oct", so it must not show that day's total
+    /// as today's; a snapshot saved earlier today is still today's.
+    func testTodayIsUnknownOnlyForAnEarlierDaysSave() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let store = UsageStore(directory: directory)
+        await store.save(snapshots: [savedClaude()])
+        let model = DashboardViewModel(store: store, calendar: calendar, now: { Self.now })
+        XCTAssertFalse(model.todayIsUnknown)
+        await model.loadSavedSnapshots()
+        XCTAssertTrue(model.todayIsUnknown)
+    }
+
+    func testTodayIsKnownWhenSavedEarlierToday() async {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let earlierToday = Self.now.addingTimeInterval(-3_600)
+        let store = UsageStore(directory: directory)
+        await store.save(snapshots: [ProviderSnapshot(
+            providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+            todayUsage: TokenUsage(inputTokens: 5, confidence: .exact),
+            weekUsage: TokenUsage(inputTokens: 5, confidence: .exact),
+            lastSyncedAt: earlierToday
+        )])
+        let model = DashboardViewModel(store: store, calendar: calendar, now: { Self.now })
+        await model.loadSavedSnapshots()
+        XCTAssertTrue(model.showingSavedSnapshots)
+        XCTAssertFalse(model.todayIsUnknown)
+    }
+
     func testEmptyStoreLeavesTheLoadingState() async {
         let model = DashboardViewModel(store: UsageStore(directory: directory), now: { Self.now })
         await model.loadSavedSnapshots()

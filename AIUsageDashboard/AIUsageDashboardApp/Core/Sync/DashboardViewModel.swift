@@ -162,6 +162,7 @@ public final class DashboardViewModel: ObservableObject {
     private(set) var calendarGeneration = 0
 
     var analyticsTimeZone: TimeZone { calendar.timeZone }
+    var analyticsCalendar: Calendar { calendar }
 
     func noteEffectiveTimezoneChange(_ calendar: Calendar) {
         self.calendar = calendar

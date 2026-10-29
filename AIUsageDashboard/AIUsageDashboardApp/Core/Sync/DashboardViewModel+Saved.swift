@@ -1,5 +1,16 @@
 import Foundation
 
+extension DashboardViewModel {
+    /// True while the saved numbers on screen were saved on an earlier day: their "today"
+    /// figures describe that day, so a surface that cannot name the day (the menu-bar item,
+    /// the popover) shows today's tokens as unknown until live numbers land.
+    public var todayIsUnknown: Bool {
+        guard showingSavedSnapshots else { return false }
+        guard let saved = savedSnapshotsDate else { return true }
+        return !analyticsCalendar.isDate(saved, inSameDayAs: now())
+    }
+}
+
 /// Ages a snapshot saved by an earlier run before it is shown: any quota reading whose
 /// reset has passed describes a window that already refilled, so it becomes an unknown
 /// reading (no used share, no reset) rather than a confident stale number.

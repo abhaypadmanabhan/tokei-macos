@@ -107,6 +107,9 @@ struct ProviderDetailView: View {
                         proxy.scrollTo(Self.scrolledAnchor, anchor: .top)
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: ProofRoute.scrollNotification)) { _ in
+                    proxy.scrollTo(Self.scrolledAnchor, anchor: .top)
+                }
                 #endif
         }
     }

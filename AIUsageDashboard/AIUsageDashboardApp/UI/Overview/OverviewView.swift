@@ -49,6 +49,9 @@ struct OverviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #if DEBUG
         .onAppear { if ProofRoute.wantsQuotaLens { metric = .quota } }
+        .onReceive(NotificationCenter.default.publisher(for: ProofRoute.metricNotification)) { note in
+            metric = (note.object as? String) == "quota" ? .quota : .usage
+        }
         #endif
     }
 
@@ -169,7 +172,7 @@ struct OverviewView: View {
                 Spacer(minLength: 8)
             }
             if models.isEmpty {
-                Text("No agent used tokens in this range.")
+                Text("No agent used tokens in this range. Try 30D or 90D above.")
                     .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink3)
             } else {

@@ -15,6 +15,9 @@ import AIUsageDashboardCore
 /// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`).
 enum ProofRoute {
     static let popoverWindowID = "proof-popover"
+    static let metricNotification = Notification.Name("TokeiProof.metric")
+    static let scrollNotification = Notification.Name("TokeiProof.scroll")
+    static let popoverNotification = Notification.Name("TokeiProof.popover")
 
     static var route: String? { UserDefaults.standard.string(forKey: "TokeiProofRoute") }
 
@@ -36,7 +39,80 @@ enum ProofRoute {
         if UserDefaults.standard.string(forKey: "TokeiProofFixture") == "extraUsage" {
             injectExtraUsage(into: viewModel)
         }
+        if let directory = UserDefaults.standard.string(forKey: "TokeiProofTour") {
+            Task { await runTour(markerDirectory: directory, navigator: navigator, viewModel: viewModel) }
+            return
+        }
         if let route { open(route, navigator: navigator, viewModel: viewModel) }
+    }
+
+    // MARK: Tour
+
+    /// `-TokeiProofTour <dir>`: after the first live sync lands, walks every WP-3 surface,
+    /// writing `<dir>/step.txt` ("<n> <name> <window title>") when each has settled, so an
+    /// outside script can capture this app's own window; then writes "done" and quits.
+    /// One stop on the tour: what to show, and the title of the window that shows it.
+    private struct TourStep {
+        let name: String
+        var window = "Tokei"
+        let show: () -> Void
+    }
+
+    @MainActor
+    private static func runTour(
+        markerDirectory: String,
+        navigator: DashboardNavigator,
+        viewModel: DashboardViewModel
+    ) async {
+        let marker = URL(fileURLWithPath: markerDirectory).appendingPathComponent("step.txt")
+        func pause(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
+        func post(_ name: Notification.Name, _ object: String? = nil) {
+            NotificationCenter.default.post(name: name, object: object)
+        }
+        var waited = 0.0
+        let awaitingLive = { viewModel.showingSavedSnapshots || viewModel.isLoading || viewModel.lastSyncedAt == nil }
+        while awaitingLive() && waited < 300 {
+            await pause(0.5)
+            waited += 0.5
+        }
+        let steps = [
+            TourStep(name: "03-overview-usage-7d") {
+                navigator.select(.overview, viewModel: viewModel)
+                viewModel.range = .sevenDay
+                post(metricNotification, "usage")
+            },
+            TourStep(name: "04-overview-usage-30d") { viewModel.range = .thirtyDay },
+            TourStep(name: "05-overview-quota") {
+                viewModel.range = .sevenDay
+                post(metricNotification, "quota")
+            },
+            TourStep(name: "06-claude-drillin-top") {
+                injectExtraUsage(into: viewModel)
+                navigator.open(.claudeCode, viewModel: viewModel)
+            },
+            TourStep(name: "07-claude-drillin-scrolled") {
+                injectExtraUsage(into: viewModel)
+                post(scrollNotification)
+            },
+            TourStep(name: "08-value") {
+                injectExtraUsage(into: viewModel)
+                navigator.select(.value, viewModel: viewModel)
+            },
+            TourStep(name: "09-settings") { viewModel.showingSettings = true },
+            TourStep(name: "10-menubar-popover", window: "Menu bar popover") {
+                viewModel.showingSettings = false
+                post(popoverNotification)
+            }
+        ]
+        for (index, step) in steps.enumerated() {
+            step.show()
+            await pause(2.5)
+            try? "\(index + 1) \(step.name) \(step.window)\n".write(to: marker, atomically: true, encoding: .utf8)
+            await pause(3.0)
+        }
+        try? "done\n".write(to: marker, atomically: true, encoding: .utf8)
+        await pause(1.0)
+        exit(0)
     }
 
     @MainActor

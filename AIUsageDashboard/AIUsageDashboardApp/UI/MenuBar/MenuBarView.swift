@@ -161,7 +161,7 @@ struct MenuBarView: View {
                     .foregroundColor(PadzyTheme.ink5)
             }
 
-            Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
+            Text(viewModel.todayIsUnknown ? "—" : TokenFormatter.format(viewModel.menuBarTodayTotal))
                 .font(.mono(size: 34, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)

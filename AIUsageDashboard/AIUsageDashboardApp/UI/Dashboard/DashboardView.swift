@@ -124,6 +124,11 @@ struct DashboardView: View {
                 break
             }
         }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: ProofRoute.popoverNotification)) { _ in
+            openWindow(id: ProofRoute.popoverWindowID)
+        }
+        #endif
         .task {
             #if DEBUG
             if ProofRoute.wantsPopover { openWindow(id: ProofRoute.popoverWindowID) }
