@@ -3,7 +3,7 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class CursorCSVCacheTests: XCTestCase {
-    func testUnchangedCSVParsesOnceChangedCSVReparsesAndDayRollsOver() async throws {
+    func testEveryCSVRefreshParsesWithoutRetainingTheExportAndDayRollsOver() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let suite = directory.appendingPathComponent("preferences").path
@@ -36,15 +36,15 @@ final class CursorCSVCacheTests: XCTestCase {
             let snapshot = try await provider.fetchSnapshot()
             XCTAssertEqual(snapshot.todayUsage.totalTokens, 35)
         }
-        XCTAssertEqual(counter.count, 1)
+        XCTAssertEqual(counter.count, 3)
         await client.set(csv.replacingOccurrences(of: ",10,10,20,5,", with: ",11,11,20,5,"))
         let changed = try await provider.fetchSnapshot()
         XCTAssertEqual(changed.todayUsage.totalTokens, 36)
-        XCTAssertEqual(counter.count, 2)
+        XCTAssertEqual(counter.count, 4)
         clock.nextDay()
         let tomorrow = try await provider.fetchSnapshot()
         XCTAssertEqual(tomorrow.todayUsage.totalTokens, 0)
-        XCTAssertEqual(counter.count, 2, "reuse event timestamps, but rebuild date windows each refresh")
+        XCTAssertEqual(counter.count, 5, "parse the current export and rebuild date windows each refresh")
     }
 }
 
