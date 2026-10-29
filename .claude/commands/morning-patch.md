@@ -132,8 +132,8 @@ a guard if a non-UI agent incidentally touches a view.
 aitracker theme (inline verbatim for non-Claude agents):
 ground `#131316` · surface `#1D1D22` · ink `#ECECF1` · muted `#6E6E78` · ONE accent `#FF3B70`
 (accent = active/running/primary-action only; cost values use ink, never accent). Mono for all
-numeric data. No shadows, no gradients, no rounded card grids, radius ≤ 4px. Numbered mono
-kickers (`01 / OVERVIEW`). Exposed 1px hairline structure. 2px accent tick on active state.
+numeric data. No shadows, no gradients, no rounded card grids, radius ≤ 4px. No eyebrow labels
+or numbered kickers: say it in sentence case or drop it (Abhay 2026-10-29). Exposed 1px hairline structure. 2px accent tick on active state.
 Real empty / loading / error states on every surface.
 
 ## Step 8 — Dispatch via herdr

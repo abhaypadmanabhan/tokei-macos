@@ -22,7 +22,7 @@ Derivation rationale (per padzy-os/references/themes.md):
 
 Invariants (non-negotiable in every view):
 1. Mono font for all data/numbers.
-2. Numbered editorial kickers, e.g. `01 / PROVIDERS`.
+2. No eyebrow text: no numbered kickers or uppercase, letter-spaced micro labels above headings or numbers; use a sentence-case heading or caption, or drop it (Abhay 2026-10-29).
 3. Exposed hairline structure (1px dividers, labeled regions) — no card stacks, no shadows, no glass/materials.
 4. Active/selected/syncing state = square 2px accent bar on leading/bottom edge.
 5. Exactly one accent per view.
