@@ -24,6 +24,34 @@ extension QuotaWindowType: Codable {}
 extension ProviderWarning.Level: Codable {}
 extension AccountQuotaStatus: Codable {}
 
+extension FiredNotificationKey: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case providerID, windowType, threshold, resetAt, bucketKey, accountID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            providerID: try container.decode(ProviderID.self, forKey: .providerID),
+            windowType: try container.decode(QuotaWindowType.self, forKey: .windowType),
+            threshold: try container.decode(Int.self, forKey: .threshold),
+            resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
+            bucketKey: try container.decodeIfPresent(String.self, forKey: .bucketKey),
+            accountID: try container.decodeIfPresent(String.self, forKey: .accountID)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encode(windowType, forKey: .windowType)
+        try container.encode(threshold, forKey: .threshold)
+        try container.encodeIfPresent(resetAt, forKey: .resetAt)
+        try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+    }
+}
+
 extension QuotaSample: Codable {
     private enum CodingKeys: String, CodingKey {
         case providerID, accountID, windowType, bucketKey, usedPercent, used, limit, resetAt, sampledAt

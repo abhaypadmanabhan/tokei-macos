@@ -8,7 +8,7 @@ final class NotificationEngineTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        suiteName = "ai.AIUsageDashboard.NotificationEngineTests.\(UUID().uuidString)"
+        suiteName = "ai.AIUsageDashboard.NotificationEngineTests.fixed"
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
     }
@@ -16,6 +16,11 @@ final class NotificationEngineTests: XCTestCase {
     override func tearDown() {
         if let suiteName {
             defaults.removePersistentDomain(forName: suiteName)
+            defaults.synchronize()
+            defaults = nil
+            let plist = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/" + suiteName + ".plist")
+            try? FileManager.default.removeItem(at: plist)
         }
         defaults = nil
         suiteName = nil

@@ -36,7 +36,6 @@ public struct NotificationRequest: Sendable {
     }
 }
 
-
 // MARK: - Notification Engine
 
 public actor NotificationEngine {
@@ -45,11 +44,14 @@ public actor NotificationEngine {
     public static let notificationThresholds: [Int] = ThresholdEvaluator.thresholds
     public static let notificationsEnabledKey = "notificationsEnabled"
     private static let firedKeysDefaultsKey = "notificationThresholdFiredKeys"
+    private static let predictiveKeysDefaultsKey = "predictiveQuotaWarningFiredKeys"
 
     private let notificationCenter: UserNotificationCenter
     private let clock: Clock
     private let userDefaults: UserDefaults
     private var firedKeys: Set<FiredNotificationKey>
+    private var predictiveKeys: Set<PredictiveQuotaWarning.Key>
+    private var isEvaluating = false
 
     public init(
         notificationCenter: UserNotificationCenter = UserNotificationCenterWrapper(),
@@ -60,22 +62,38 @@ public actor NotificationEngine {
         self.clock = clock
         self.userDefaults = userDefaults
         self.firedKeys = Self.loadFiredKeys(from: userDefaults)
+        self.predictiveKeys = userDefaults.data(forKey: Self.predictiveKeysDefaultsKey).flatMap {
+            try? JSONDecoder().decode(Set<PredictiveQuotaWarning.Key>.self, from: $0)
+        } ?? []
     }
 
     public func evaluateThresholds(for snapshots: [ProviderSnapshot]) async {
         let enabled = userDefaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? true
-        guard enabled else { return }
+        guard enabled, !isEvaluating else { return }
+        isEvaluating = true
+        defer { isEvaluating = false }
+
+        let thresholds = Dictionary(uniqueKeysWithValues: snapshots.map {
+            ($0.providerID, Self.thresholds(for: $0.providerID, defaults: userDefaults))
+        })
 
         let result = ThresholdEvaluator.evaluate(
             snapshots: snapshots,
             clock: clock,
-            previouslyFired: firedKeys
+            previouslyFired: firedKeys,
+            thresholdsByProvider: thresholds
         )
+        let now = clock.now()
+        predictiveKeys = predictiveKeys.filter { $0.resetAt > now }
+        let predictiveEnabled = userDefaults.object(forKey: "predictiveQuotaWarningsEnabled") as? Bool ?? true
+        let predictions = predictiveEnabled ? PredictiveQuotaWarning.evaluate(snapshots: snapshots, now: now)
+            .filter { !predictiveKeys.contains($0.key) } : []
 
-        firedKeys = result.fired
-        Self.saveFiredKeys(firedKeys, to: userDefaults)
-
-        guard !result.notifications.isEmpty else { return }
+        guard !result.notifications.isEmpty || !predictions.isEmpty else {
+            firedKeys = result.fired
+            Self.saveFiredKeys(firedKeys, to: userDefaults)
+            return
+        }
 
         // Lazy authorization: only ask the user when we actually have something to say.
         do {
@@ -85,15 +103,39 @@ public actor NotificationEngine {
             return
         }
 
-        for evaluation in result.notifications {
+        firedKeys = result.fired
+        await deliver(thresholds: result.notifications, predictions: predictions)
+    }
+
+    private func deliver(thresholds: [ThresholdEvaluation], predictions: [PredictiveQuotaWarning]) async {
+        for evaluation in thresholds {
             let request = NotificationRequest(
-                identifier: "\(evaluation.providerID.rawValue)_\(evaluation.windowType.rawValue)_\(evaluation.threshold)_\(UUID().uuidString)",
+                identifier: "\(evaluation.providerID.rawValue)_\(evaluation.threshold)_\(UUID().uuidString)",
                 title: "Tokei",
                 body: Self.body(for: evaluation),
                 sound: true
             )
-            try? await notificationCenter.add(request: request)
+            do { try await notificationCenter.add(request: request) } catch { firedKeys.remove(evaluation.key) }
         }
+        for prediction in predictions where !predictiveKeys.contains(prediction.key) {
+            let request = NotificationRequest(
+                identifier: "predictive_\(UUID().uuidString)", title: "Tokei", body: prediction.body, sound: true
+            )
+            do {
+                try await notificationCenter.add(request: request)
+                predictiveKeys.insert(prediction.key)
+            } catch { continue }
+        }
+        Self.saveFiredKeys(firedKeys, to: userDefaults)
+        if let data = try? JSONEncoder().encode(predictiveKeys) {
+            userDefaults.set(data, forKey: Self.predictiveKeysDefaultsKey)
+        }
+    }
+
+    private nonisolated static func thresholds(for provider: ProviderID, defaults: UserDefaults) -> [Int] {
+        guard let values = defaults.object(forKey: "notificationThresholds.\(provider.rawValue)") as? [Int],
+              values.count <= 4, values.allSatisfy({ (1...100).contains($0) }) else { return notificationThresholds }
+        return Set(values).sorted()
     }
 
     private nonisolated static func body(for evaluation: ThresholdEvaluation) -> String {
@@ -106,7 +148,8 @@ public actor NotificationEngine {
         } else {
             resetString = "unknown"
         }
-        return "\(evaluation.displayName) \(evaluation.windowType.rawValue) window at \(Int(evaluation.percent))% — resets \(resetString)"
+        return "\(evaluation.displayName) \(evaluation.windowType.rawValue) window at " +
+            "\(Int(min(100, max(0, evaluation.percent))))% — resets \(resetString)"
     }
 
     private nonisolated static func loadFiredKeys(from defaults: UserDefaults) -> Set<FiredNotificationKey> {
@@ -123,7 +166,6 @@ public actor NotificationEngine {
         }
     }
 }
-
 
 /// Real notification center wrapper. Marked `@unchecked Sendable` because
 /// `UNUserNotificationCenter.current()` is a thread-safe singleton.
@@ -153,102 +195,3 @@ public struct UserNotificationCenterWrapper: UserNotificationCenter, @unchecked 
         try await center.add(unRequest)
     }
 }
-
-// MARK: - Threshold Logic
-
-public struct FiredNotificationKey: Codable, Sendable {
-    public let providerID: ProviderID
-    public let windowType: QuotaWindowType
-    public let threshold: Int
-    public var resetAt: Date?
-
-    public init(providerID: ProviderID, windowType: QuotaWindowType, threshold: Int, resetAt: Date? = nil) {
-        self.providerID = providerID
-        self.windowType = windowType
-        self.threshold = threshold
-        self.resetAt = resetAt
-    }
-}
-
-extension FiredNotificationKey: Hashable {
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(providerID)
-        hasher.combine(windowType)
-        hasher.combine(threshold)
-    }
-
-    public static func == (lhs: FiredNotificationKey, rhs: FiredNotificationKey) -> Bool {
-        lhs.providerID == rhs.providerID &&
-        lhs.windowType == rhs.windowType &&
-        lhs.threshold == rhs.threshold
-    }
-}
-
-public struct ThresholdEvaluation: Equatable, Sendable {
-    public let providerID: ProviderID
-    public let windowType: QuotaWindowType
-    public let threshold: Int
-    public let percent: Double
-    public let resetAt: Date?
-    public let displayName: String
-}
-
-/// Pure, stateless evaluator for threshold crossing / re-arm logic.
-public struct ThresholdEvaluator: Sendable {
-    public static let thresholds: [Int] = [80, 95]
-
-    /// Returns notifications that should fire and the updated set of armed thresholds.
-    public static func evaluate(
-        snapshots: [ProviderSnapshot],
-        clock: Clock,
-        previouslyFired: Set<FiredNotificationKey>
-    ) -> (notifications: [ThresholdEvaluation], fired: Set<FiredNotificationKey>) {
-        var fired = previouslyFired
-        var notifications: [ThresholdEvaluation] = []
-        let now = clock.now()
-
-        for snapshot in snapshots {
-            for window in snapshot.quotaWindows {
-                guard let used = window.used, let limit = window.limit, limit > 0 else { continue }
-                guard window.confidence != .unavailable else { continue }
-                let percent = (used / limit) * 100.0
-
-                for threshold in thresholds {
-                    let key = FiredNotificationKey(
-                        providerID: window.providerID,
-                        windowType: window.type,
-                        threshold: threshold
-                    )
-
-                    // Re-arm if the stored window reset has passed.
-                    if let storedKey = fired.first(where: { $0 == key }),
-                       let storedResetAt = storedKey.resetAt,
-                       storedResetAt <= now {
-                        fired.remove(key)
-                    }
-                    // Re-arm if usage has dropped back below the threshold.
-                    if percent < Double(threshold) {
-                        fired.remove(key)
-                    }
-
-                    if percent >= Double(threshold), !fired.contains(key) {
-                        notifications.append(ThresholdEvaluation(
-                            providerID: window.providerID,
-                            windowType: window.type,
-                            threshold: threshold,
-                            percent: percent,
-                            resetAt: window.resetAt,
-                            displayName: snapshot.displayName
-                        ))
-                        var keyToStore = key
-                        keyToStore.resetAt = window.resetAt
-                        fired.insert(keyToStore)
-                    }
-                }
-            }
-        }
-
-        return (notifications, fired)
-    }
-}
-
