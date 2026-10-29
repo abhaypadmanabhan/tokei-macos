@@ -226,12 +226,17 @@ public final class DashboardViewModel: ObservableObject {
 
     /// Like for like: the last N complete days against the N before them. Today's part-day is
     /// in neither side (a part-day set against a full day always reads as a drop); `nil` for
-    /// lifetime and custom ranges, or when the earlier period has no data.
+    /// lifetime and custom ranges, or when the recorded history starts after the earlier
+    /// period does: Claude Code deletes old logs, and a half-recorded month read "▲ 2175.9%".
     public var overviewDelta: Double? {
         guard let days = UsageAnalytics.dayCount(for: range),
               let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))
         else { return nil }
         let totals = overviewDailyTotals
+        let previousBounds = UsageAnalytics.dayBounds(.previousDays(days), calendar: calendar, today: yesterday)
+        guard let firstRecorded = UsageAnalytics.normalizedDailyTotals(totals, calendar: calendar)
+                .filter({ $0.value > 0 }).keys.min(),
+              let previousStart = previousBounds.start, firstRecorded <= previousStart else { return nil }
         let previous = UsageAnalytics.filteredDailyTotals(
             totals, range: .previousDays(days), calendar: calendar, now: yesterday
         )

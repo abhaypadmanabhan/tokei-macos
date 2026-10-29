@@ -59,8 +59,9 @@ final class WP4LabelMotionTests: XCTestCase {
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let today = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 9, day: 16))!
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-        // Last day of the previous 30 complete days (08-16); outside the ranged 30 days.
-        let previousEnd = calendar.date(byAdding: .day, value: -31, to: today)!
+        // First day of the previous 30 complete days (07-18), so that period counts as recorded
+        // (a history starting later makes no claim); outside the ranged 30 days.
+        let previousStart = calendar.date(byAdding: .day, value: -60, to: today)!
         let vm = DashboardViewModel(calendar: calendar, now: { today })
         vm.range = .thirtyDay
         vm.snapshots = [
@@ -73,7 +74,7 @@ final class WP4LabelMotionTests: XCTestCase {
                 dailyTotals: [
                     today: 10,
                     yesterday: 990,
-                    previousEnd: 100,
+                    previousStart: 100,
                 ]
             ),
         ]

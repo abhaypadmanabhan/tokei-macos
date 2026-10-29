@@ -24,7 +24,7 @@ final class DashboardViewModelAnalyticsTests: XCTestCase {
         vm.range = .sevenDay
         vm.snapshots = [
             snapshot(.claudeCode, dailyTotals: [
-                day("2026-07-02"): 15,
+                day("2026-06-26"): 15,
                 day("2026-07-09"): 20,
                 day("2026-07-10"): 10
             ]),
@@ -38,7 +38,8 @@ final class DashboardViewModelAnalyticsTests: XCTestCase {
         XCTAssertEqual(vm.providerSplit.map(\.provider), [.claudeCode])
         XCTAssertEqual(vm.providerSplit.map(\.tokens), [30])
         // Like for like (WP-3 AC2): the 7 full days to yesterday (07-03…07-09 = 20) against
-        // the 7 before (06-26…07-02 = 15) is +33.3%; today's part-day 10 is in neither side.
+        // the 7 before (06-26…07-02 = 15, recorded from its first day) is +33.3%; today's
+        // part-day 10 is in neither side.
         XCTAssertEqual(try XCTUnwrap(vm.overviewDelta), 100.0 / 3, accuracy: 1e-9)
         XCTAssertEqual(vm.streak.current, 2)
         XCTAssertEqual(vm.streak.longest, 2)

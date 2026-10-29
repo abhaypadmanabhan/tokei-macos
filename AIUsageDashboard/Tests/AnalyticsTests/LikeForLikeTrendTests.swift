@@ -52,6 +52,20 @@ final class LikeForLikeTrendTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(model(totals).overviewDelta), 50, accuracy: 1e-9)
     }
 
+    /// Claude Code deletes old session logs, so an earlier period can be only partly recorded:
+    /// the 30-day view read "▲ 2175.9%" on real logs (capture, 2026-10-29). 150 a day for the
+    /// last 7 full days against an earlier week recorded only from 3 days in (8, 9, 10 days ago
+    /// at 100) is not like for like: no change is claimed. Record its first day too and it is.
+    func testPartlyRecordedEarlierPeriodMeansNoDelta() throws {
+        var totals: [Date: Int] = [day(0): 10]
+        for offset in 1...7 { totals[day(-offset)] = 150 }
+        for offset in 8...10 { totals[day(-offset)] = 100 }
+        XCTAssertNil(model(totals).overviewDelta)
+
+        totals[day(-14)] = 400 // the earlier week: 300 + 400 = 700 against 1,050 → +50%
+        XCTAssertEqual(try XCTUnwrap(model(totals).overviewDelta), 50, accuracy: 1e-9)
+    }
+
     func testNoEarlierPeriodMeansNoDelta() {
         XCTAssertNil(model([day(0): 10, day(-1): 20]).overviewDelta)
     }
