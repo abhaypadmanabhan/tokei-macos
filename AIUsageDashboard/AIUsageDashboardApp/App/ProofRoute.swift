@@ -67,16 +67,34 @@ enum ProofRoute {
     ) async {
         let marker = URL(fileURLWithPath: markerDirectory).appendingPathComponent("step.txt")
         func pause(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
-        func post(_ name: Notification.Name, _ object: String? = nil) {
-            NotificationCenter.default.post(name: name, object: object)
-        }
         var waited = 0.0
         let awaitingLive = { viewModel.showingSavedSnapshots || viewModel.isLoading || viewModel.lastSyncedAt == nil }
         while awaitingLive() && waited < 300 {
             await pause(0.5)
             waited += 0.5
         }
-        let steps = [
+        let steps = tourSteps(navigator: navigator, viewModel: viewModel)
+        for (index, step) in steps.enumerated() {
+            bringDashboardForward()
+            await pause(0.8)
+            step.show()
+            await pause(2.5)
+            try? "\(index + 1) \(step.name) \(step.window)\n".write(to: marker, atomically: true, encoding: .utf8)
+            await pause(3.0)
+        }
+        try? "done\n".write(to: marker, atomically: true, encoding: .utf8)
+        await pause(1.0)
+        exit(0)
+    }
+
+    /// Every stop on the tour, in capture order.
+    @MainActor
+    private static func tourSteps(navigator: DashboardNavigator, viewModel: DashboardViewModel) -> [TourStep] {
+        func post(_ name: Notification.Name, _ object: String? = nil) {
+            NotificationCenter.default.post(name: name, object: object)
+        }
+        return [
+            TourStep(name: "02-after-live-sync") {},
             TourStep(name: "03-overview-usage-7d") {
                 navigator.select(.overview, viewModel: viewModel)
                 viewModel.range = .sevenDay
@@ -106,15 +124,17 @@ enum ProofRoute {
                 post(popoverNotification)
             }
         ]
-        for (index, step) in steps.enumerated() {
-            step.show()
-            await pause(2.5)
-            try? "\(index + 1) \(step.name) \(step.window)\n".write(to: marker, atomically: true, encoding: .utf8)
-            await pause(3.0)
-        }
-        try? "done\n".write(to: marker, atomically: true, encoding: .utf8)
-        await pause(1.0)
-        exit(0)
+    }
+
+    /// Another app can cover the window during the long wait for the live sync. Covered, the
+    /// dashboard draws a plain fill and its proof hooks are not in the view tree (tour run
+    /// 2026-10-29: steps 02-09 blank, no popover), so each stop first brings it forward.
+    @MainActor
+    private static func bringDashboardForward() {
+        NSApp.activate()
+        let window = NSApp.windows.first { $0.identifier?.rawValue == DashboardWindow.id }
+        window?.orderFrontRegardless()
+        window?.makeKey()
     }
 
     @MainActor
@@ -211,13 +231,6 @@ enum ProofRoute {
         print("INFO app active=\(NSApp.isActive) window key=\(dashboard?.isKeyWindow ?? false)"
             + " visible=\(NSApp.occlusionState.contains(.visible))")
 
-        let commandMap: [MenuCommand] = [
-            MenuCommand(menu: "View", title: "Overview", key: "1"),
-            MenuCommand(menu: "View", title: "Value", key: "2"),
-            MenuCommand(menu: "View", title: "Agents", key: "3"),
-            MenuCommand(menu: "View", title: "Sync Now", key: "r"),
-            MenuCommand(menu: "Go", title: "Back", key: "[")
-        ]
         for command in commandMap {
             let found = menuItem(command.menu, command.title)
             check(
@@ -246,6 +259,11 @@ enum ProofRoute {
         press("3", keyCode: 20)
         await settle()
         check("⌘3 shows Agents", navigator.section == .connections)
+        navigator.open(.claudeCode, viewModel: viewModel)
+        await settle()
+        press("\u{1b}", keyCode: 53, modifiers: [])
+        await settle()
+        check("Esc returns to Agents", navigator.section == .connections)
         press("1", keyCode: 18)
         await settle()
         check("⌘1 shows Overview", navigator.section == .overview)
@@ -262,6 +280,14 @@ enum ProofRoute {
         let key: String
     }
 
+    private static let commandMap: [MenuCommand] = [
+        MenuCommand(menu: "View", title: "Overview", key: "1"),
+        MenuCommand(menu: "View", title: "Value", key: "2"),
+        MenuCommand(menu: "View", title: "Agents", key: "3"),
+        MenuCommand(menu: "View", title: "Sync Now", key: "r"),
+        MenuCommand(menu: "Go", title: "Back", key: "[")
+    ]
+
     /// Reads an item the way a person sees it: SwiftUI applies an item's enabled state when
     /// the menu is about to show (`menuNeedsUpdate`), not when the model changes.
     @MainActor
@@ -271,14 +297,14 @@ enum ProofRoute {
         return submenu?.item(withTitle: title)
     }
 
-    /// Posts ⌘<key> through `NSApp.sendEvent`, the path a real key press takes (key window,
-    /// then the main menu's key equivalents), to the dashboard window.
+    /// Posts ⌘<key> (or a bare key) through `NSApp.sendEvent`, the path a real key press
+    /// takes (key window, then the main menu's key equivalents), to the dashboard window.
     @MainActor
-    private static func press(_ key: String, keyCode: UInt16) {
+    private static func press(_ key: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags = .command) {
         let window = NSApp.windows.first { $0.identifier?.rawValue == DashboardWindow.id }
         window?.makeKeyAndOrderFront(nil)
         guard let event = NSEvent.keyEvent(
-            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+            with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window?.windowNumber ?? 0, context: nil,
             characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: keyCode
         ) else { return }

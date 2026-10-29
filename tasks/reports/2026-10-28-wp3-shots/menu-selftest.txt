@@ -9,5 +9,6 @@ PASS ⌘2 shows Value
 PASS ⌘[ returns to Value
 PASS Go › Back is enabled in a drill-in
 PASS ⌘3 shows Agents
+PASS Esc returns to Agents
 PASS ⌘1 shows Overview
 SELFTEST PASS
