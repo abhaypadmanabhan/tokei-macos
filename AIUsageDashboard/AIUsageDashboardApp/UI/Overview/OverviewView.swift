@@ -86,6 +86,12 @@ struct OverviewView: View {
                 .foregroundColor(PadzyTheme.ink4)
                 .fixedSize(horizontal: false, vertical: true)
                 .rollingNumber(Double(activeAgentCount), reduceMotion: reduceMotion)
+
+            // The tightest reading's pace and forecast, same words as its row below.
+            if metric == .quota, let pace = viewModel.tightestAccountPace {
+                PaceLine(pace: pace, resetAt: viewModel.tightestAccountPressure?.resetAt)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

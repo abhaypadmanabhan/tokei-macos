@@ -70,7 +70,7 @@ struct MenuBarView: View {
 
     /// The agent's tightest live-quota window %, or `nil` when it exposes none.
     private func tightestPercent(_ id: ProviderID) -> Double? {
-        viewModel.utilization.filter { $0.providerID == id }.map(\.usedPercent).max()
+        viewModel.gaugeUtilizations.filter { $0.providerID == id }.map(\.usedPercent).max()
     }
 
     /// Three agents for the mini-list, ranked by whichever metric is showing:
@@ -212,30 +212,33 @@ struct MenuBarView: View {
                     .foregroundColor(PadzyTheme.ink3)
                 Spacer(minLength: 8)
                 if let tightest {
-                    HStack(spacing: 8) {
-                        Text("\(Int(tightest.usedPercent.rounded()))%")
-                            .font(.mono(size: 13.5, weight: .semibold))
-                            .monospacedDigit()
-                            .foregroundColor(PadzyTheme.ink)
-                            .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
-                        Text(tightest.accountLabel)
-                            .font(.sans(size: 15))
-                            .foregroundColor(PadzyTheme.ink4)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                    Text("\(Int(tightest.usedPercent.rounded()))%")
+                        .font(.mono(size: 13.5, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
                 } else {
                     Text("—")
                         .font(.mono(size: 13))
                         .foregroundColor(PadzyTheme.ink3)
+                        .help("No current live quota reading")
                 }
             }
 
-            if let pace = viewModel.tightestAccountPace {
-                HStack {
-                    Spacer(minLength: 8)
-                    PaceLine(pace: pace, compact: true)
+            // Whose window it is and whether it lasts: the same reading and words as the
+            // Overview quota hero.
+            if let tightest {
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("\(QuotaWindowName.owner(of: tightest)) · \(QuotaWindowName.phrase(of: tightest))")
+                        .font(.sans(size: 12.5))
+                        .foregroundColor(PadzyTheme.ink4)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let pace = viewModel.tightestAccountPace {
+                        PaceLine(pace: pace, resetAt: tightest.resetAt, compact: true)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 16)
@@ -399,7 +402,7 @@ struct MenuBarView: View {
     }
 
     private func tightestUtil(_ id: ProviderID) -> Utilization? {
-        viewModel.utilization.filter { $0.providerID == id }.max { $0.usedPercent < $1.usedPercent }
+        viewModel.gaugeUtilizations.filter { $0.providerID == id }.max { $0.usedPercent < $1.usedPercent }
     }
 
     /// Compact reset countdown ("4d 9h" / "2h 41m" / "41m") — no ticking seconds,

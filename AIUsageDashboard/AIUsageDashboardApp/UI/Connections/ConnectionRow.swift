@@ -65,7 +65,7 @@ struct ConnectionRow: View {
     }
 
     private var hasLiveData: Bool {
-        viewModel.utilization.contains { $0.providerID == providerID }
+        viewModel.gaugeUtilizations.contains { $0.providerID == providerID }
     }
 
     private var show: Bool { !hiddenFlag }

@@ -114,7 +114,7 @@ struct DashboardProviderPane: View {
     /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
     /// opinion on visibility, so the filtering happens here.
     private var visibleUtilizations: [Utilization] {
-        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
+        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 
     // MARK: Empty state

@@ -204,16 +204,9 @@ public final class DashboardViewModel: ObservableObject {
         return UsageAnalytics.delta(current: current, previous: previous)
     }
 
-    /// Published headline gauge, labelled as the named best account when the provider picked one (D8).
-    public var overviewHeadlineGauge: HeadlineGauge? {
-        let gauges = visibleSnapshots.compactMap { headlineGauge(for: $0) }
-        if let named = gauges.first(where: { $0.accountID != nil }) {
-            return named
-        }
-        return gauges.max { $0.usedPercent < $1.usedPercent }
-    }
-
-    /// Highest computable account window among visible providers. Surfaces called "tightest" use this (D8/D13).
+    /// The tightest eligible reading among visible providers (see `isEligibleReading`): the
+    /// one definition behind the Overview quota hero, the menu-bar "Tightest quota" and the
+    /// status-item percentage, so no two surfaces name a different number (D13).
     public var tightestAccountPressure: AccountPressureReading? {
         tightestAccountPeak?.reading
     }
@@ -323,44 +316,23 @@ public final class DashboardViewModel: ObservableObject {
             }
         }
     }
-
-    private func headlineGauge(for snapshot: ProviderSnapshot) -> HeadlineGauge? {
-        let windows = snapshot.quotaWindows.filter { $0.type != .credits }
-        guard let peak = windows.compactMap(usedPercent(of:)).max() else { return nil }
-        if let id = snapshot.headlineAccountID,
-           let account = snapshot.accounts?.first(where: { $0.id == id }) {
-            return HeadlineGauge(
-                providerID: snapshot.providerID,
-                accountID: id,
-                accountLabel: account.label,
-                usedPercent: peak
-            )
-        }
-        return HeadlineGauge(
-            providerID: snapshot.providerID,
-            accountID: nil,
-            accountLabel: snapshot.displayName,
-            usedPercent: peak
-        )
-    }
-
-    private func usedPercent(of window: QuotaWindow) -> Double? {
-        UtilizationEngine.usedPercent(from: window)
-    }
 }
 
-/// Named best-account reading the Overview quota hero displays. Not a "tightest" claim.
-public struct HeadlineGauge: Equatable, Sendable {
-    public let providerID: ProviderID
-    public let accountID: String?
-    public let accountLabel: String
-    public let usedPercent: Double
-}
-
-/// Max account window. Surfaces labelled tightest must use this, not the published headline.
+/// The highest-used eligible window of one account (or of a single-account provider), with
+/// what a surface needs to name it: provider, account, which window, and when it resets.
 public struct AccountPressureReading: Equatable, Sendable {
     public let providerID: ProviderID
+    /// The provider's display name ("Claude Code").
+    public let providerName: String
     public let accountID: String
+    /// The account's label ("account-1"); the provider's name when it has no accounts.
     public let accountLabel: String
     public let usedPercent: Double
+    public let window: QuotaWindowType
+    /// The window's own label when the provider gives one ("Claude and GPT Models").
+    public let windowLabel: String?
+    public let resetAt: Date?
+
+    /// True when the provider has several accounts, so a surface should name this one.
+    public var namesAccount: Bool { accountLabel != providerName }
 }

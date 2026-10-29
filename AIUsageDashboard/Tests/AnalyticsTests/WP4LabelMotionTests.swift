@@ -27,29 +27,29 @@ final class WP4LabelMotionTests: XCTestCase {
         XCTAssertFalse(UsageAnalytics.dailyHistoryTitle(for: .thirtyDay).contains("30d"))
     }
 
-    /// D8: 80/20 — headline gauge is the named best account (20); tightest surface is 80.
-    func testD8_eightyTwentyHeadlineIsBestAccountTightestIsMax() {
+    /// D8, superseded by WP-3 (2026-10-28 Bible §3 AC3): the quota hero and the menu-bar
+    /// "Tightest quota" read one definition. With accounts at 80% and 20%, both say 80%
+    /// and name the busy account; the old best-account (20%) hero is gone.
+    func testD8_eightyTwentyHeroAndMenuBothNameTheTightestAccount() {
         let vm = DashboardViewModel()
         vm.snapshots = [claudeEightyTwenty()]
 
-        let gauge = vm.overviewHeadlineGauge
-        XCTAssertEqual(gauge?.accountLabel, "best")
-        XCTAssertEqual(gauge?.usedPercent, 20)
         XCTAssertEqual(vm.tightestAccountPressure?.usedPercent, 80)
         XCTAssertEqual(vm.tightestAccountPressure?.accountLabel, "busy")
+        XCTAssertEqual(vm.tightestAccountPressure?.providerName, "Claude Code")
+        XCTAssertEqual(vm.tightestAccountPressure?.namesAccount, true)
     }
 
-    /// D8: an extra Codex 50 must not replace the named best-account gauge or hide the 80.
-    func testD8_codexFiftyDoesNotReplaceBestAccountOrHideTightest() {
+    /// D8: an extra Codex 50 must not hide the 80.
+    func testD8_codexFiftyDoesNotHideTightest() {
         let vm = DashboardViewModel()
         vm.snapshots = [
             claudeEightyTwenty(),
             provider(.codex, name: "Codex", today: 40, windowUsed: 50),
         ]
 
-        XCTAssertEqual(vm.overviewHeadlineGauge?.accountLabel, "best")
-        XCTAssertEqual(vm.overviewHeadlineGauge?.usedPercent, 20)
         XCTAssertEqual(vm.tightestAccountPressure?.usedPercent, 80)
+        XCTAssertEqual(vm.tightestAccountPressure?.providerID, .claudeCode)
     }
 
     /// D12: today 10 vs 30-day 1000 vs previous 100 is +900% of the ranged total, not of today.

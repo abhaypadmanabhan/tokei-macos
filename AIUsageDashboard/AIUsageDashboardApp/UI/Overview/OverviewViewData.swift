@@ -149,15 +149,15 @@ extension OverviewView {
         switch metric {
         case .usage: return mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—"
         case .quota:
-            guard let gauge = viewModel.overviewHeadlineGauge else { return "—" }
-            return "\(Int(round(gauge.usedPercent)))%"
+            guard let reading = viewModel.tightestAccountPressure else { return "—" }
+            return "\(Int(round(reading.usedPercent)))%"
         }
     }
 
     var heroNumericValue: Double? {
         switch metric {
         case .usage: return mergedToday.totalTokens.map(Double.init)
-        case .quota: return viewModel.overviewHeadlineGauge?.usedPercent
+        case .quota: return viewModel.tightestAccountPressure?.usedPercent
         }
     }
 
@@ -167,11 +167,14 @@ extension OverviewView {
             let count = activeAgentCount
             return "tokens today across \(count) active agent\(count == 1 ? "" : "s") · incl. cache"
         case .quota:
-            guard let gauge = viewModel.overviewHeadlineGauge else { return "No live quota connected yet." }
-            if gauge.accountID != nil {
-                return "\(gauge.accountLabel) — the account with the most headroom."
+            // The same reading the menu bar calls "Tightest quota", named in full.
+            guard let reading = viewModel.tightestAccountPressure else {
+                return viewModel.gaugeUtilizations.isEmpty
+                    ? "No live quota reading yet."
+                    : "No current reading: what's saved is estimated or past its reset."
             }
-            return "\(gauge.accountLabel) live quota."
+            return "\(QuotaWindowName.owner(of: reading)), \(QuotaWindowName.phrase(of: reading))"
+                + " — the tightest live quota."
         }
     }
 
@@ -212,9 +215,9 @@ extension OverviewView {
     }
 
     /// Published windows of visible providers only (D13). The quota hero does not use this
-    /// as a "tightest" claim — see `overviewHeadlineGauge`.
+    /// as a "tightest" claim — see `DashboardViewModel.tightestAccountPressure`.
     var tightestWindow: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization.filter {
+        MaxxerMath.tightestWindow(in: viewModel.gaugeUtilizations.filter {
             visibleProviders.contains($0.providerID)
         })
     }
@@ -222,7 +225,7 @@ extension OverviewView {
     /// Each provider reduced to its tightest (highest-used) live window.
     var tightestByProvider: [ProviderID: Utilization] {
         var result: [ProviderID: Utilization] = [:]
-        for util in viewModel.utilization {
+        for util in viewModel.gaugeUtilizations {
             if let existing = result[util.providerID] {
                 if util.usedPercent > existing.usedPercent { result[util.providerID] = util }
             } else {
@@ -245,6 +248,6 @@ extension OverviewView {
     /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
     /// opinion on visibility, so the filtering happens here.
     var visibleUtilizations: [Utilization] {
-        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
+        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 }
