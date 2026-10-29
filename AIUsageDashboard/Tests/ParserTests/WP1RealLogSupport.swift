@@ -37,3 +37,16 @@ enum WP1CopilotOracle {
                              encoding: .utf8))
     }
 }
+
+final class WP1CopilotOracleTests: XCTestCase {
+    func testPythonOracleRequiresRealLogsOptInBeforeLaunching() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["TOKEI_REAL_LOGS"] == "1",
+                      "This check exercises the default unit-test mode")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertThrowsError(try WP1CopilotOracle.counts(root: root, cutoff: Date())) { error in
+            XCTAssertTrue(error is XCTSkip, "The opt-in check must run before any Python process")
+        }
+    }
+}
