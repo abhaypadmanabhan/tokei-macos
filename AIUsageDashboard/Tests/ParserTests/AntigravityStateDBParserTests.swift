@@ -65,7 +65,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
 
     func testProviderAvailabilityUsesStateDatabasePresenceOnly() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        let provider = AntigravityProvider(stateDatabaseURL: stateDB)
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []))
 
         var availability = await provider.detectAvailability()
         XCTAssertEqual(availability, .notInstalled)
@@ -78,7 +78,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
     func testProviderReturnsAuthenticatedPlanAndHonestCreditInfoWithoutFabricatedQuota() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())
-        let provider = AntigravityProvider(stateDatabaseURL: stateDB)
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []))
 
         let snapshot = try await provider.fetchSnapshot()
         let capabilities = await provider.capabilities

@@ -13,6 +13,7 @@ public actor AntigravityProvider: UsageProvider {
 
     private let fileManager: FileManager
     private let stateDatabaseURL: URL
+    private let conversationParser: AntigravityConversationParser
     private let parser: AntigravityStateDBParser
     private let quotaClient: AntigravityQuotaClient
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
@@ -21,6 +22,7 @@ public actor AntigravityProvider: UsageProvider {
         fileManager: FileManager = .default,
         stateDatabaseURL: URL? = nil,
         parser: AntigravityStateDBParser = .init(),
+        conversationParser: AntigravityConversationParser = .init(),
         quotaClient: AntigravityQuotaClient? = nil,
         userDefaults: UserDefaults = .standard
     ) {
@@ -28,6 +30,7 @@ public actor AntigravityProvider: UsageProvider {
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/state.vscdb")
         self.parser = parser
+        self.conversationParser = conversationParser
         self.quotaClient = quotaClient ?? AntigravityQuotaClientImpl()
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
@@ -42,6 +45,7 @@ public actor AntigravityProvider: UsageProvider {
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let state = await parser.parse(stateDatabaseURL: stateDatabaseURL)
+        let history = await conversationParser.parse()
         var quotaWindows: [QuotaWindow] = []
 
         if userDefaultsReader.bool(forKey: "antigravityOnlineQuotaEnabled") {
@@ -53,14 +57,24 @@ public actor AntigravityProvider: UsageProvider {
             displayName: displayName,
             authStatus: try await authenticate(),
             quotaWindows: quotaWindows,
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: nil,
-            lifetimeUsage: nil,
-            costUsage: nil,
-            warnings: warnings(from: state, hasLiveQuota: !quotaWindows.isEmpty),
-            lastSyncedAt: Date()
+            todayUsage: history.today,
+            weekUsage: history.week,
+            monthUsage: history.month,
+            lifetimeUsage: history.lifetime,
+            costUsage: costUsage(history),
+            warnings: warnings(from: state, hasLiveQuota: !quotaWindows.isEmpty) + history.warnings,
+            lastSyncedAt: Date(),
+            dailyTotals: history.dailyTotals,
+            dailyModelUsage: history.dailyModelUsage
         )
+    }
+
+    private func costUsage(_ history: AntigravityConversationParser.AggregateUsage) -> CostUsage {
+        let pricing = PricingEngine(table: PricingService.cachedTable())
+        let models = UsageAggregation.sumModels(Array(history.dailyModelUsage.values))
+        let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
+        return amounts.isEmpty ? CostUsage(confidence: .unavailable)
+            : CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)
     }
 
     private func warnings(from state: AntigravityStateDBParser.ParsedState, hasLiveQuota: Bool) -> [ProviderWarning] {
