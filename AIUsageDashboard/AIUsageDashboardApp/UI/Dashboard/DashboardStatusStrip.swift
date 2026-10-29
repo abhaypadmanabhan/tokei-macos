@@ -64,6 +64,13 @@ struct DashboardStatusStrip: View {
     }
 
     private var syncStatusText: String {
+        // Saved numbers from the last run are on screen: say how old they are.
+        if viewModel.showingSavedSnapshots {
+            _ = countdownTick
+            return SavedAgeCopy.statusLine(
+                savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: Date()
+            )
+        }
         if viewModel.isLoading { return "Syncing…" }
         guard let syncedRelative else { return "Not synced yet" }
         return "Synced \(syncedRelative)"

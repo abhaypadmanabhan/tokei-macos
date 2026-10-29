@@ -16,8 +16,16 @@ public final class DashboardViewModel: ObservableObject {
     /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
     @Published public var showingSettings = false
     @Published public var range: UsageRange = .sevenDay
+    /// True while `snapshots` are the ones an earlier run saved and no live sync has landed
+    /// yet. Surfaces say so ("Saved 8 days ago · updating…") instead of passing them off as
+    /// current; cleared the moment live numbers arrive.
+    @Published public private(set) var showingSavedSnapshots = false
+    /// When the shown saved snapshots were last synced (the newest `lastSyncedAt` among
+    /// them); `nil` when not showing saved numbers or no provider stamped a time.
+    @Published public private(set) var savedSnapshotsDate: Date?
 
     private let syncEngine: SyncEngine
+    private let store: UsageStore
     private var calendar: Calendar
     /// Injected clock; internal so the pace extension reads the same "now".
     let now: @Sendable () -> Date
@@ -26,10 +34,12 @@ public final class DashboardViewModel: ObservableObject {
 
     public init(
         syncEngine: SyncEngine = .shared,
+        store: UsageStore = .shared,
         calendar: Calendar = .current,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.syncEngine = syncEngine
+        self.store = store
         self.calendar = calendar
         self.now = now
     }
@@ -41,9 +51,33 @@ public final class DashboardViewModel: ObservableObject {
     public func refresh() async {
         isLoading = true
         errorMessage = nil
-        snapshots = await syncEngine.refreshAll()
-        lastSyncedAt = Date()
+        let live = await syncEngine.refreshAll()
+        applyLive(live)
         isLoading = false
+    }
+
+    /// Shows the numbers the last run saved, at once, while the first live sync (a minute
+    /// or more on a cold launch) reads the logs. Does nothing once live numbers exist. A
+    /// saved quota reading whose reset has passed is shown as unknown, never as current.
+    public func loadSavedSnapshots() async {
+        guard snapshots.isEmpty else { return }
+        let saved = await store.allSnapshots()
+        // A live sync may have landed while the store was read.
+        guard snapshots.isEmpty, !saved.isEmpty else { return }
+        let now = now()
+        let order = Dictionary(uniqueKeysWithValues: ProviderID.allCases.enumerated().map { ($1, $0) })
+        snapshots = saved
+            .map { SavedSnapshotAging.expiringPastResets($0, now: now) }
+            .sorted { (order[$0.providerID] ?? 0) < (order[$1.providerID] ?? 0) }
+        savedSnapshotsDate = saved.compactMap(\.lastSyncedAt).max()
+        showingSavedSnapshots = true
+    }
+
+    private func applyLive(_ live: [ProviderSnapshot]) {
+        snapshots = live
+        lastSyncedAt = Date()
+        showingSavedSnapshots = false
+        savedSnapshotsDate = nil
     }
 
     /// Starts the file watcher and subscribes to sync results so auto-refreshes
@@ -56,10 +90,7 @@ public final class DashboardViewModel: ObservableObject {
             await syncEngine.startAutoSync()
             for await snapshots in stream {
                 guard let self else { return }
-                await MainActor.run {
-                    self.snapshots = snapshots
-                    self.lastSyncedAt = Date()
-                }
+                await MainActor.run { self.applyLive(snapshots) }
             }
         }
     }

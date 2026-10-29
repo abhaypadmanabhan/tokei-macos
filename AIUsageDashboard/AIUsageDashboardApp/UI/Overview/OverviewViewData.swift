@@ -165,7 +165,15 @@ extension OverviewView {
         switch metric {
         case .usage:
             let count = activeAgentCount
-            return "tokens today across \(count) active agent\(count == 1 ? "" : "s") · incl. cache"
+            let agents = "\(count) active agent\(count == 1 ? "" : "s")"
+            guard viewModel.showingSavedSnapshots else { return "tokens today across \(agents) · incl. cache" }
+            // Saved numbers: name the day they describe and say they are being refreshed.
+            let now = Date()
+            let day = SavedAgeCopy.dayPhrase(savedAt: viewModel.savedSnapshotsDate, now: now)
+            let age = SavedAgeCopy.statusLine(
+                savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: now
+            )
+            return "tokens \(day) across \(agents) · incl. cache · \(age.prefix(1).lowercased())\(age.dropFirst())"
         case .quota:
             // The same reading the menu bar calls "Tightest quota", named in full.
             guard let reading = viewModel.tightestAccountPressure else {

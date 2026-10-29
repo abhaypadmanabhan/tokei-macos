@@ -68,8 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
         // and the first sync writes that store.
         AddAgentModel.seedOnFirstLaunchIfNeeded()
-        viewModel.beginAutoSync()
-        Task { await viewModel.refresh() }
+        // The last run's numbers go on screen first (a cold live sync reads every log and
+        // took 66 s on 2026-10-28), labelled as saved until the live sync replaces them.
+        Task {
+            await viewModel.loadSavedSnapshots()
+            viewModel.beginAutoSync()
+            await viewModel.refresh()
+        }
     }
 
     func checkForUpdates() {
