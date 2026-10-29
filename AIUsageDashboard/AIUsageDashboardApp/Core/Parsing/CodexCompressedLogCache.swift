@@ -50,6 +50,8 @@ actor CodexCompressedLogCache {
     // Device + inode make /var and /private/var aliases (and hard links) share the same decode.
     private var entries: [Fingerprint: Outcome] = [:]
 
+    func entryCountForTesting() -> Int { entries.count }
+
     func read(_ url: URL, fingerprint: Fingerprint,
               parseLine: @Sendable (Data) -> CodexLineParseOutcome) -> Lookup {
         if let outcome = entries[fingerprint] {

@@ -140,6 +140,65 @@ final class CodexCompressedRolloutTests: XCTestCase {
         XCTAssertEqual(rebucketed.dailyUsage.keys.first, tokyo.startOfDay(for: reference.addingTimeInterval(-86_400)))
     }
 
+    func testRemovedCompressedFileLeavesSharedCache() async throws {
+        let url = try write("removed.jsonl.zst", fixture())
+        let parser = parser()
+        let original = await parser.parse(logSources: [source(url)])
+        XCTAssertEqual(original.lifetime.totalTokens, 150)
+        let before = await CodexCompressedLogCache.shared.entryCountForTesting()
+        XCTAssertEqual(before, 1)
+        try FileManager.default.removeItem(at: url)
+        let refreshed = await parser.parse(logSources: [])
+        XCTAssertEqual(refreshed.lifetime.totalTokens, 0)
+        let after = await CodexCompressedLogCache.shared.entryCountForTesting()
+        XCTAssertEqual(after, 0, "A removed file must release its shared compressed records")
+    }
+
+    func testPrunesSupersededFingerprintAndPreservesOtherAccount() async throws {
+        let data = try fixture()
+        let url = try write("replaced-cache.jsonl.zst", data)
+        let other = try write("other-account.jsonl.zst", data)
+        let first = parser()
+        let second = parser()
+        _ = await first.parse(logSources: [source(url)])
+        _ = await second.parse(logSources: [source(other)])
+        let original = try XCTUnwrap(CodexCompressedLogCache.Fingerprint.read(url))
+        try data.write(to: url, options: .atomic)
+        XCTAssertNotEqual(CodexCompressedLogCache.Fingerprint.read(url), original)
+        _ = await first.parse(logSources: [source(url)])
+        let count = await CodexCompressedLogCache.shared.entryCountForTesting()
+        XCTAssertEqual(count, 2, "Keep the replacement and the other account, not the superseded fingerprint")
+        let fresh = parser()
+        let reused = await fresh.parse(logSources: [source(other)])
+        XCTAssertEqual(reused.lifetime.totalTokens, 150)
+        let reads = await fresh.fileReadCountForTesting()
+        XCTAssertEqual(reads, 0, "Account slices must not evict each other's existing files")
+    }
+
+    func testTemporaryReadFailureRetriesWithUnchangedFingerprint() async throws {
+        let url = try write("temporary-io.jsonl.zst", fixture())
+        let original = try XCTUnwrap(CodexCompressedLogCache.Fingerprint.read(url))
+        let parser = parser()
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+        XCTAssertThrowsError(try FileHandle(forReadingFrom: url), "This must exercise a real open failure")
+        let failed = await parser.parse(logSources: [source(url)])
+        XCTAssertEqual(failed.lifetime.totalTokens, 0)
+        XCTAssertEqual(failed.warnings.count, 1)
+        XCTAssertEqual(failed.warnings.first?.level, .info)
+        let fresh = self.parser()
+        _ = await fresh.parse(logSources: [source(url)])
+        let freshReads = await fresh.fileReadCountForTesting()
+        XCTAssertEqual(freshReads, 1, "A transient I/O error must not enter the shared cache")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        XCTAssertEqual(CodexCompressedLogCache.Fingerprint.read(url), original)
+        let recovered = await parser.parse(logSources: [source(url)])
+        XCTAssertEqual(recovered.lifetime.totalTokens, 150, "The same parser must retry after I/O recovers")
+        XCTAssertTrue(recovered.warnings.isEmpty)
+        let reads = await parser.fileReadCountForTesting()
+        XCTAssertEqual(reads, 2)
+    }
+
     func testFreshFingerprintDetectsReplacementDespiteStaleSourceDate() async throws {
         let url = try write("replaced.jsonl.zst", fixture())
         let oldDate = try XCTUnwrap(url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
