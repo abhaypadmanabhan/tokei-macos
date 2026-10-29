@@ -41,6 +41,8 @@ public actor CodexJSONLParser {
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
     private var fileReadCount = 0
+    private var compressedDecoderSeconds: TimeInterval = 0
+    private var calendarEpoch = UUID()
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -48,6 +50,7 @@ public actor CodexJSONLParser {
     }
 
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
+        let epoch = calendarEpoch
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
         var dailyModelUsage: [Date: [String: TokenUsage]] = [:]
@@ -61,136 +64,33 @@ public actor CodexJSONLParser {
         var arithmeticOverflowed = false
         var files: [FileUsage] = []
 
-        for source in logSources {
+        for source in CodexRolloutFiles.preferringPlain(logSources) {
             let path = source.url.path
-            let currentMetadata = fileMetadata(of: source.url)
-            let currentModificationDate = source.lastModified ?? currentMetadata.modificationDate
-            let currentSize = currentMetadata.size
-
-            if let cached = fileCache[path],
-               cached.modificationDate == currentModificationDate,
-               cached.byteOffset == currentSize,
-               cached.fileIdentifier == currentMetadata.identifier {
-                apply(
-                    cached.aggregate,
-                    to: &windows,
-                    dailyUsage: &dailyUsage,
-                    hourlyTotals: &hourlyTotals,
-                    latestRateLimits: &latestRateLimits,
-                    deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                    finalTotalsBySession: &finalTotalsBySession,
-                    arithmeticOverflowed: &arithmeticOverflowed
-                )
-                files.append(fileUsage(path: path, aggregate: cached.aggregate))
-                if cached.malformedCount > 0 {
-                    warnings.append(malformedWarning(count: cached.malformedCount, url: source.url))
-                }
-                continue
-            }
-
+            let metadata = fileMetadata(of: source.url)
+            let modified = CodexRolloutFiles.isCompressed(source.url)
+                ? metadata.modificationDate : (source.lastModified ?? metadata.modificationDate)
             do {
-                var incrementalAggregate = FileAggregate.empty
-                let sessionKey = source.sessionID ?? path
-                let parseResult: JSONLParseResult
-
-                if let cached = fileCache[path],
-                   let cachedModificationDate = cached.modificationDate,
-                   let currentModificationDate,
-                   currentModificationDate >= cachedModificationDate,
-                   cached.byteOffset < currentSize,
-                   cached.byteOffset > 0,
-                    cached.fileIdentifier == currentMetadata.identifier,
-                    try continuityTail(at: source.url, endingAt: cached.byteOffset)
-                    == cached.continuityTail {
-                    incrementalAggregate.lastCumulativeUsageBySession =
-                        cached.aggregate.lastCumulativeUsageBySession
-                    incrementalAggregate.currentModel = cached.aggregate.currentModel
-                    incrementalAggregate.currentTier = cached.aggregate.currentTier
-                    fileReadCount += 1
-                    parseResult = try await parseFile(
-                        at: source.url,
-                        startingAtByte: cached.byteOffset,
-                        startingInOversizedRecord: cached.discardingOversizedRecord
-                    ) { [self] record in
-                        self.accumulate(
-                            into: &incrementalAggregate,
-                            record: record,
-                            sessionKey: sessionKey
-                        )
-                    }
-
-                    var updatedAggregate = cached.aggregate
-                    merge(incrementalAggregate, into: &updatedAggregate)
-                    let updatedEntry = FileCacheEntry(
-                        modificationDate: currentModificationDate,
-                        byteOffset: parseResult.finalOffset,
-                        fileIdentifier: currentMetadata.identifier,
-                        continuityTail: try continuityTail(
-                            at: source.url,
-                            endingAt: parseResult.finalOffset
-                        ),
-                        aggregate: updatedAggregate,
-                        malformedCount: cached.malformedCount + parseResult.malformedCount,
-                        discardingOversizedRecord: parseResult.discardingOversizedRecord
-                    )
-                    fileCache[path] = updatedEntry
-                    apply(
-                        updatedEntry.aggregate,
-                        to: &windows,
-                        dailyUsage: &dailyUsage,
-                        hourlyTotals: &hourlyTotals,
-                        latestRateLimits: &latestRateLimits,
-                        deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                        finalTotalsBySession: &finalTotalsBySession,
-                        arithmeticOverflowed: &arithmeticOverflowed
-                    )
-                    files.append(fileUsage(path: path, aggregate: updatedEntry.aggregate))
-                    if updatedEntry.malformedCount > 0 {
-                        warnings.append(malformedWarning(
-                            count: updatedEntry.malformedCount,
-                            url: source.url
-                        ))
-                    }
+                let entry: FileCacheEntry
+                if let cached = fileCache[path], cached.modificationDate == modified,
+                   cached.byteOffset == metadata.size, cached.fileIdentifier == metadata.identifier {
+                    entry = cached
                 } else {
-                    fileReadCount += 1
-                    parseResult = try await parseFile(
-                        at: source.url,
-                        startingAtByte: 0
-                    ) { [self] record in
-                        self.accumulate(
-                            into: &incrementalAggregate,
-                            record: record,
-                            sessionKey: sessionKey
-                        )
-                    }
-
-                    let entry = FileCacheEntry(
-                        modificationDate: currentModificationDate,
-                        byteOffset: parseResult.finalOffset,
-                        fileIdentifier: currentMetadata.identifier,
-                        continuityTail: try continuityTail(
-                            at: source.url,
-                            endingAt: parseResult.finalOffset
-                        ),
-                        aggregate: incrementalAggregate,
-                        malformedCount: parseResult.malformedCount,
-                        discardingOversizedRecord: parseResult.discardingOversizedRecord
-                    )
+                    entry = try await readEntry(source: source, metadata: metadata, modified: modified)
+                    // A calendar update may run while the shared cache actor is awaited.
+                    // Never repopulate freshly invalidated buckets with an older parse epoch.
+                    guard epoch == calendarEpoch else { return await parse(logSources: logSources) }
                     fileCache[path] = entry
-                    apply(
-                        entry.aggregate,
-                        to: &windows,
-                        dailyUsage: &dailyUsage,
-                        hourlyTotals: &hourlyTotals,
-                        latestRateLimits: &latestRateLimits,
-                        deltaReportedTotalTokens: &deltaReportedTotalTokens,
-                        finalTotalsBySession: &finalTotalsBySession,
-                        arithmeticOverflowed: &arithmeticOverflowed
-                    )
-                    files.append(fileUsage(path: path, aggregate: entry.aggregate))
-                    if entry.malformedCount > 0 {
-                        warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
-                    }
+                }
+                apply(
+                    entry.aggregate, to: &windows, dailyUsage: &dailyUsage,
+                    hourlyTotals: &hourlyTotals, latestRateLimits: &latestRateLimits,
+                    deltaReportedTotalTokens: &deltaReportedTotalTokens,
+                    finalTotalsBySession: &finalTotalsBySession, arithmeticOverflowed: &arithmeticOverflowed
+                )
+                files.append(fileUsage(path: path, aggregate: entry.aggregate))
+                if let warning = entry.failureWarning { warnings.append(warning) }
+                if entry.malformedCount > 0 {
+                    warnings.append(malformedWarning(count: entry.malformedCount, url: source.url))
                 }
             } catch {
                 warnings.append(ProviderWarning(
@@ -249,6 +149,73 @@ public actor CodexJSONLParser {
 
     // MARK: - Caching
 
+    private func readEntry(source: LogSource, metadata: FileMetadata, modified: Date?) async throws -> FileCacheEntry {
+        if CodexRolloutFiles.isCompressed(source.url) {
+            return await readCompressedEntry(source: source, metadata: metadata)
+        }
+        let cached = fileCache[source.url.path]
+        let previous: FileCacheEntry?
+        if let cached, let cachedDate = cached.modificationDate, let modified,
+           modified >= cachedDate, cached.byteOffset < metadata.size, cached.byteOffset > 0,
+           cached.fileIdentifier == metadata.identifier,
+           try continuityTail(at: source.url, endingAt: cached.byteOffset) == cached.continuityTail {
+            previous = cached
+        } else { previous = nil }
+        var delta = FileAggregate.empty
+        if let previous {
+            delta.lastCumulativeUsageBySession = previous.aggregate.lastCumulativeUsageBySession
+            delta.currentModel = previous.aggregate.currentModel
+            delta.currentTier = previous.aggregate.currentTier
+        }
+        fileReadCount += 1
+        let result = try await parseFile(
+            at: source.url, startingAtByte: previous?.byteOffset ?? 0,
+            startingInOversizedRecord: previous?.discardingOversizedRecord ?? false
+        ) { record in
+            accumulate(into: &delta, record: record, sessionKey: source.sessionID ?? source.url.path)
+        }
+        var aggregate = previous?.aggregate ?? .empty
+        merge(delta, into: &aggregate)
+        return FileCacheEntry(
+            modificationDate: modified, byteOffset: result.finalOffset, fileIdentifier: metadata.identifier,
+            continuityTail: try continuityTail(at: source.url, endingAt: result.finalOffset),
+            aggregate: aggregate, malformedCount: (previous?.malformedCount ?? 0) + result.malformedCount,
+            discardingOversizedRecord: result.discardingOversizedRecord
+        )
+    }
+
+    private func readCompressedEntry(source: LogSource, metadata: FileMetadata) async -> FileCacheEntry {
+        var entry = FileCacheEntry(modificationDate: metadata.modificationDate, byteOffset: metadata.size,
+                                   fileIdentifier: metadata.identifier, continuityTail: Data(), aggregate: .empty,
+                                   malformedCount: 0, discardingOversizedRecord: false)
+        guard let fingerprint = CodexCompressedLogCache.Fingerprint(
+            size: metadata.size, modified: metadata.modificationDate, inode: metadata.identifier
+        ) else {
+            entry.failureWarning = compressedWarning(source.url, reason: "File fingerprint unavailable")
+            return entry
+        }
+        let lookup = await CodexCompressedLogCache.shared.read(source.url, fingerprint: fingerprint) { data in
+            self.classifyLine(data)
+        }
+        if lookup.readFromDisk { fileReadCount += 1 }
+        switch lookup.outcome {
+        case .decoded(let decoded):
+            for record in decoded.records {
+                accumulate(into: &entry.aggregate, record: record, sessionKey: source.sessionID ?? source.url.path)
+            }
+            entry.aggregate.firstEventAt = decoded.firstEventAt
+            entry.aggregate.lastEventAt = decoded.lastEventAt
+            entry.malformedCount = decoded.malformedCount
+            if lookup.readFromDisk { compressedDecoderSeconds += decoded.decoderSeconds }
+        case .failed(let reason): entry.failureWarning = compressedWarning(source.url, reason: reason)
+        }
+        return entry
+    }
+
+    private func compressedWarning(_ url: URL, reason: String) -> ProviderWarning {
+        ProviderWarning(message: "Skipped compressed Codex rollout \(url.lastPathComponent): \(reason)", level: .info)
+    }
+
     private struct FileCacheEntry {
         var modificationDate: Date?
         var byteOffset: UInt64
@@ -257,6 +224,7 @@ public actor CodexJSONLParser {
         var aggregate: FileAggregate
         var malformedCount: Int
         var discardingOversizedRecord: Bool
+        var failureWarning: ProviderWarning?
     }
 
     private func continuityTail(at url: URL, endingAt byteOffset: UInt64) throws -> Data {
@@ -605,8 +573,11 @@ public actor CodexJSONLParser {
             || self.calendar.minimumDaysInFirstWeek != calendar.minimumDaysInFirstWeek
             || self.calendar.locale?.identifier != calendar.locale?.identifier else { return }
         self.calendar = calendar
+        calendarEpoch = UUID()
         fileCache.removeAll(keepingCapacity: true)
     }
+
+    func compressedDecodeSecondsForTesting() -> TimeInterval { compressedDecoderSeconds }
 
     func fileReadCountForTesting() -> Int {
         fileReadCount
@@ -716,7 +687,10 @@ private enum CodexWindowDuration {
 }
 
 extension CodexJSONLParser {
-    func parseLine(_ data: Data) -> CodexLineParseOutcome {
+    // Preserve the actor-isolated entry point while sharing stateless classification with the process cache.
+    func parseLine(_ data: Data) -> CodexLineParseOutcome { classifyLine(data) }
+
+    nonisolated func classifyLine(_ data: Data) -> CodexLineParseOutcome {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .malformed
         }
@@ -780,7 +754,7 @@ extension CodexJSONLParser {
         }
     }
 
-    private func cumulativeUsageSignature(
+    private nonisolated func cumulativeUsageSignature(
         from info: [String: Any]
     ) -> (isValid: Bool, value: CodexCumulativeUsageSignature?) {
         guard let usage = info["total_token_usage"] as? [String: Any] else {
@@ -807,7 +781,7 @@ extension CodexJSONLParser {
         return (true, hasValue ? signature : nil)
     }
 
-    private func tokenUsage(from json: [String: Any]) -> TokenUsage? {
+    private nonisolated func tokenUsage(from json: [String: Any]) -> TokenUsage? {
         guard let rawInput = CheckedNumericConversion.tokenCount(json["input_tokens"]),
               let rawOutput = CheckedNumericConversion.tokenCount(json["output_tokens"]),
               let cacheRead = CheckedNumericConversion.tokenCount(json["cached_input_tokens"]),
@@ -831,7 +805,7 @@ extension CodexJSONLParser {
         )
     }
 
-    private func rateLimits(from value: Any?, timestamp: Date?) -> CodexRateLimitSnapshot? {
+    private nonisolated func rateLimits(from value: Any?, timestamp: Date?) -> CodexRateLimitSnapshot? {
         guard let timestamp,
               let json = value as? [String: Any] else {
             return nil
@@ -849,7 +823,7 @@ extension CodexJSONLParser {
         )
     }
 
-    private func rateLimit(from value: Any?, eventTimestamp: Date) -> CodexRateLimit? {
+    private nonisolated func rateLimit(from value: Any?, eventTimestamp: Date) -> CodexRateLimit? {
         guard let json = value as? [String: Any] else {
             return nil
         }
@@ -866,7 +840,7 @@ extension CodexJSONLParser {
         )
     }
 
-    private func spendControlLimit(from value: Any?) -> CodexSpendControlLimit? {
+    private nonisolated func spendControlLimit(from value: Any?) -> CodexSpendControlLimit? {
         guard let json = value as? [String: Any] else { return nil }
         return CodexSpendControlLimit(
             limit: json["limit"] as? String,
@@ -877,7 +851,7 @@ extension CodexJSONLParser {
         )
     }
 
-    private func creditsSnapshot(from value: Any?) -> CodexCreditsSnapshot? {
+    private nonisolated func creditsSnapshot(from value: Any?) -> CodexCreditsSnapshot? {
         guard let json = value as? [String: Any] else { return nil }
         return CodexCreditsSnapshot(
             usedPercent: doubleValue(json["used_percent"]),
@@ -886,7 +860,7 @@ extension CodexJSONLParser {
         )
     }
 
-    private func resetBankSnapshot(from value: Any?) -> CodexResetBankSnapshot? {
+    private nonisolated func resetBankSnapshot(from value: Any?) -> CodexResetBankSnapshot? {
         guard let json = value as? [String: Any] else { return nil }
         return CodexResetBankSnapshot(
             available: intValue(json["available"]),
@@ -1138,11 +1112,11 @@ extension CodexJSONLParser {
         return type == .weekly ? "weekly window" : "session window"
     }
 
-    private func intValue(_ value: Any?) -> Int? {
+    private nonisolated func intValue(_ value: Any?) -> Int? {
         CheckedNumericConversion.integer(value)
     }
 
-    private func doubleValue(_ value: Any?) -> Double? {
+    private nonisolated func doubleValue(_ value: Any?) -> Double? {
         if let value = value as? Double {
             return value
         }

@@ -21,6 +21,7 @@ final class CodexCompressedRolloutTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root.appendingPathComponent("sessions"),
                                                withIntermediateDirectories: true)
+        root = root.resolvingSymlinksInPath().standardizedFileURL
         reference = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-29T12:00:00Z"))
         calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
@@ -95,12 +96,17 @@ final class CodexCompressedRolloutTests: XCTestCase {
         damaged[damaged.count - 1] ^= 1
         let bad = try write("bad.jsonl.zst", damaged)
         let parser = parser()
+        let provider = provider(parser)
         for _ in 0..<2 {
-            let parsed = await parser.parse(logSources: [source(bad), source(good)])
-            XCTAssertEqual(parsed.lifetime.totalTokens, 150)
-            XCTAssertEqual(parsed.warnings.count, 1)
-            XCTAssertEqual(parsed.warnings.first?.level, .info)
+            let snapshot = try await provider.fetchSnapshot()
+            XCTAssertEqual(snapshot.lifetimeUsage?.totalTokens, 150)
+            XCTAssertEqual(snapshot.warnings.count, 1)
+            XCTAssertEqual(snapshot.warnings.first?.level, .info)
         }
+        let fresh = self.parser()
+        _ = await fresh.parse(logSources: [source(bad), source(good)])
+        let freshReads = await fresh.fileReadCountForTesting()
+        XCTAssertEqual(freshReads, 1, "The failed compressed fingerprint must be shared across parsers")
         let reads = await parser.fileReadCountForTesting()
         XCTAssertEqual(reads, 2)
     }
@@ -140,6 +146,43 @@ final class CodexCompressedRolloutTests: XCTestCase {
         XCTAssertEqual(replaced.warnings.first?.level, .info)
         let reads = await parser.fileReadCountForTesting()
         XCTAssertEqual(reads, 2)
+    }
+
+    func testConcurrentParsersShareOneDecodeAttempt() async throws {
+        let url = try write("concurrent.jsonl.zst", fixture())
+        let sources = [source(url)]
+        let first = parser()
+        let second = parser()
+        async let left = first.parse(logSources: sources)
+        async let right = second.parse(logSources: sources)
+        let results = await (left, right)
+        XCTAssertEqual(results.0.lifetime.totalTokens, 150)
+        XCTAssertEqual(results.1.lifetime.totalTokens, 150)
+        let reads = await first.fileReadCountForTesting() + second.fileReadCountForTesting()
+        XCTAssertEqual(reads, 1)
+    }
+
+    func testMtimeAndSizeInvalidateWithStaleLogSource() async throws {
+        let url = try write("metadata.jsonl.zst", fixture())
+        let oldDate = try XCTUnwrap(url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        let stale = LogSource(providerID: .codex, url: url, lastModified: oldDate)
+        let parser = parser()
+        _ = await parser.parse(logSources: [stale])
+        let file = try FileHandle(forWritingTo: url)
+        defer { file.closeFile() }
+        let data = try fixture()
+        try file.seek(toOffset: UInt64(data.count - 1))
+        try file.write(contentsOf: Data([data[data.count - 1] ^ 1]))
+        let changedDate = oldDate.addingTimeInterval(1)
+        try FileManager.default.setAttributes([.modificationDate: changedDate], ofItemAtPath: url.path)
+        _ = await parser.parse(logSources: [stale])
+        try file.seekToEnd()
+        try file.write(contentsOf: Data([0]))
+        try FileManager.default.setAttributes([.modificationDate: changedDate], ofItemAtPath: url.path)
+        let failed = await parser.parse(logSources: [stale])
+        XCTAssertEqual(failed.warnings.first?.level, .info)
+        let reads = await parser.fileReadCountForTesting()
+        XCTAssertEqual(reads, 3)
     }
 
     func testRecordCapAndUnterminatedFinalRecordUseSharedFraming() async throws {
