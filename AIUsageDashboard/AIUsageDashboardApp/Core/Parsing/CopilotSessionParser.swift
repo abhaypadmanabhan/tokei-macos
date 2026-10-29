@@ -106,7 +106,9 @@ public actor CopilotSessionParser {
                               week: count == 0 ? .unavailable : result.week,
                               month: count == 0 ? .unavailable : result.month,
                               lifetime: count == 0 ? .unavailable : result.lifetime,
-                              dailyTotals: result.dailyTotals, dailyModelUsage: dailyModels,
+                              dailyTotals: result.dailyTotals,
+                              dailyModelUsage: UsageAggregation.recentModelUsage(
+                                  dailyModels, calendar: calendar, now: reference),
                               warnings: warnings, shutdownCount: count)
     }
 

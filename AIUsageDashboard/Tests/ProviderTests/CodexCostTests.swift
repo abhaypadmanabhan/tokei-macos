@@ -30,6 +30,40 @@ final class CodexCostTests: XCTestCase {
         try content.write(to: sessionDir.appendingPathComponent(name), atomically: true, encoding: .utf8)
     }
 
+    func testCostPricesCurrentCalendarMonthWhileMapRetainsPreviousMonth() async throws {
+        let codex = codexDirectory()
+        let formatter = ISO8601DateFormatter()
+        let reference = try XCTUnwrap(formatter.date(from: "2026-10-29T12:00:00Z"))
+        let rows = ["2026-09-30", "2026-10-01", "2026-11-01"].map { day in
+            """
+            {"type":"event_msg","timestamp":"\(day)T10:00:00Z","payload":{\
+            "type":"token_count","info":{"last_token_usage":{"input_tokens":1000000}}}}
+            """
+        }
+        try writeSession(([#"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#] + rows)
+            .joined(separator: "\n"), codex: codex)
+        let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
+                                     cacheURL: tempDirectory.appendingPathComponent("prices.json"))
+        let provider = CodexProvider(parser: CodexJSONLParser(now: { reference }), codexDirectory: codex,
+                                     pricing: pricing, now: { reference })
+        let snapshot = try await provider.fetchSnapshot()
+        XCTAssertEqual(snapshot.costUsage?.amount, 2)
+        XCTAssertEqual(snapshot.dailyModelUsage?.count, 2)
+        let suite = "ai.padzy.tokei.wp1.addendum.mtd"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let value = try XCTUnwrap(MaxxerValueEngine.scorecard(
+            snapshots: [snapshot], planCosts: MaxxerPlanCostStore(defaults: defaults), now: reference
+        ).providers.first)
+        XCTAssertEqual(value.apiEquivalentUSD, 2)
+    }
+
+    private func fixtureProvider(codex: URL, pricing: PricingService = .shared) throws -> CodexProvider {
+        let reference = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-06T12:00:00Z"))
+        return CodexProvider(parser: CodexJSONLParser(now: { reference }), codexDirectory: codex,
+                             pricing: pricing, now: { reference })
+    }
+
     // MARK: - CodexPricing.estimateCost
 
     func testEstimateCostForKnownModelMatchesExpectedDollarsWithinEpsilon() {
@@ -99,7 +133,7 @@ final class CodexCostTests: XCTestCase {
         try writeSession(lines.joined(separator: "\n"), codex: codex)
         let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
                                      cacheURL: tempDirectory.appendingPathComponent("prices.json"))
-        let provider = CodexProvider(codexDirectory: codex, pricing: pricing)
+        let provider = try fixtureProvider(codex: codex, pricing: pricing)
         let snapshot = try await provider.fetchSnapshot()
         // One million input tokens at standard $2, priority $4, ultrafast $12.
         XCTAssertEqual(try XCTUnwrap(snapshot.costUsage?.amount), 18, accuracy: 0.000001)
@@ -110,9 +144,7 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-4.1"), codex: codex)
 
-        let provider = CodexProvider(
-            codexDirectory: codex
-        )
+        let provider = try fixtureProvider(codex: codex)
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNotNil(snapshot.costUsage)
@@ -128,9 +160,7 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-5.5"), codex: codex)
 
-        let provider = CodexProvider(
-            codexDirectory: codex
-        )
+        let provider = try fixtureProvider(codex: codex)
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNotNil(snapshot.costUsage?.amount)
@@ -142,9 +172,7 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.sessionWithModel(model: "gpt-6-ultra"), codex: codex)
 
-        let provider = CodexProvider(
-            codexDirectory: codex
-        )
+        let provider = try fixtureProvider(codex: codex)
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)
@@ -155,9 +183,7 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try writeSession(CodexFixtures.twoTokenCountEvents(), codex: codex)
 
-        let provider = CodexProvider(
-            codexDirectory: codex
-        )
+        let provider = try fixtureProvider(codex: codex)
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)
@@ -202,7 +228,7 @@ final class CodexCostTests: XCTestCase {
         ].joined(separator: "\n"), codex: codex)
         let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
                                      cacheURL: tempDirectory.appendingPathComponent("prices.json"))
-        let result = try await CodexProvider(codexDirectory: codex, pricing: pricing).fetchSnapshot()
+        let result = try await fixtureProvider(codex: codex, pricing: pricing).fetchSnapshot()
         XCTAssertEqual(result.costUsage?.amount, 2)
         XCTAssertTrue(result.warnings.contains { $0.message.contains("priced models only") })
     }
@@ -211,9 +237,7 @@ final class CodexCostTests: XCTestCase {
         let codex = codexDirectory()
         try FileManager.default.createDirectory(at: codex, withIntermediateDirectories: true)
 
-        let provider = CodexProvider(
-            codexDirectory: codex
-        )
+        let provider = try fixtureProvider(codex: codex)
         let snapshot = try await provider.fetchSnapshot()
 
         XCTAssertNil(snapshot.costUsage?.amount)

@@ -20,6 +20,24 @@ final class AntigravityConversationParserTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testDailyModelMapKeeps92DaysWhileLifetimeRetainsOlderRecords() async throws {
+        let reference = Date(timeIntervalSince1970: 1_793_188_800)
+        let today = calendar.startOfDay(for: reference)
+        let offsets = [-93, -92, -91, -28, 0]
+        let rows = try offsets.map { offset -> Data in
+            let day = try XCTUnwrap(calendar.date(byAdding: .day, value: offset, to: today))
+            return generation(usage(input: 100, response: "day-\(offset)"), at: UInt64(day.timeIntervalSince1970))
+        }
+        try database("window.db", generations: rows, steps: [])
+        let result = await parser().parse()
+        let expected = try Set([-91, -28, 0].map {
+            try XCTUnwrap(calendar.date(byAdding: .day, value: $0, to: today))
+        })
+        XCTAssertEqual(Set(result.dailyModelUsage.keys), expected)
+        XCTAssertEqual(result.lifetime.inputTokens, 500)
+        XCTAssertEqual(result.records.count, 5)
+    }
+
     func testUnionFindBridgesKeysAndUsesMaxBucketsAndDisplayName() async throws {
         let first = usage(input: 100, cached: 200, output: 30, response: "a")
         let bridge = first + text(12, "bridge")
@@ -206,9 +224,9 @@ final class AntigravityConversationParserTests: XCTestCase {
 
     private func generation(_ usage: Data, extras: Data = Data(),
                             display: String = "Gemini 3.5 Flash (Medium)",
-                            slug: String = "gemini-3-flash-a") -> Data {
+                            slug: String = "gemini-3-flash-a", at recordTime: UInt64? = nil) -> Data {
         bytes(1, integer(3, 1020) + text(19, slug) + text(21, display)
-              + bytes(4, usage) + bytes(9, bytes(4, integer(1, timestamp))) + extras)
+              + bytes(4, usage) + bytes(9, bytes(4, integer(1, recordTime ?? timestamp))) + extras)
     }
 
     private func step(_ usage: Data) -> Data {

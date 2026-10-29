@@ -18,6 +18,24 @@ final class CopilotSessionParserTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testDailyModelMapKeeps92DaysWithoutLosingOlderResumeBaseline() async throws {
+        let reference = Date(timeIntervalSince1970: 1_793_188_800)
+        let today = calendar.startOfDay(for: reference)
+        let offsets = [-93, -92, -91, -28, 0]
+        let rows = try offsets.enumerated().map { index, offset in
+            let day = try XCTUnwrap(calendar.date(byAdding: .day, value: offset, to: today))
+            return shutdown(ISO8601DateFormatter().string(from: day), input: (index + 1) * 100, output: 0)
+        }
+        try write(rows.joined(separator: "\n"))
+        let result = await parser().parse()
+        let expected = try Set([-91, -28, 0].map {
+            try XCTUnwrap(calendar.date(byAdding: .day, value: $0, to: today))
+        })
+        XCTAssertEqual(Set(result.dailyModelUsage.keys), expected)
+        XCTAssertEqual(result.lifetime.inputTokens, 500)
+        XCTAssertEqual(result.dailyModelUsage.values.reduce(0) { $0 + ($1["gpt-6.1-sol"]?.inputTokens ?? 0) }, 300)
+    }
+
     func testResumeCountsOnlyDeltaOnShutdownDayAndSeparatesModels() async throws {
         let first = shutdown("2026-10-27T12:00:00Z", input: 100, output: 50)
         let resumed = shutdown("2026-10-28T10:00:00Z", input: 160, output: 70)

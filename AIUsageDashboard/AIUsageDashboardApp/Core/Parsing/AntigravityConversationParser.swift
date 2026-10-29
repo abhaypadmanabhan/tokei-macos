@@ -96,7 +96,9 @@ public actor AntigravityConversationParser {
                               week: records.isEmpty ? .unavailable : values.week,
                               month: records.isEmpty ? .unavailable : values.month,
                               lifetime: records.isEmpty ? .unavailable : values.lifetime,
-                              dailyTotals: values.dailyTotals, dailyModelUsage: models,
+                              dailyTotals: values.dailyTotals,
+                              dailyModelUsage: UsageAggregation.recentModelUsage(
+                                  models, calendar: calendar, now: reference),
                               warnings: warnings, records: records)
     }
 }

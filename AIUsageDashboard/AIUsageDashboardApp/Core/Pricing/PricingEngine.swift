@@ -24,6 +24,14 @@ public struct PricingEngine: Sendable {
 }
 
 extension UsageAggregation {
+    /// Keep today and the preceding 91 calendar days; apply at output time so caches survive midnight.
+    static func recentModelUsage(_ days: [Date: [String: TokenUsage]], calendar: Calendar,
+                                 now: Date) -> [Date: [String: TokenUsage]] {
+        let today = calendar.startOfDay(for: now)
+        let start = calendar.date(byAdding: .day, value: -91, to: today) ?? today
+        return days.filter { $0.key >= start && $0.key <= today }
+    }
+
     static func mergeModels(_ maps: [[Date: [String: TokenUsage]]]) -> [Date: [String: TokenUsage]] {
         maps.reduce(into: [:]) { result, days in
             for (day, models) in days {

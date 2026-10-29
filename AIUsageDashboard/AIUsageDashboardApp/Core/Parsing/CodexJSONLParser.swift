@@ -41,7 +41,6 @@ public actor CodexJSONLParser {
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
     private var fileReadCount = 0
-    private var modelUsageMonth: DateInterval?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -51,7 +50,6 @@ public actor CodexJSONLParser {
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
-        prepareModelUsageMonth(referenceDate)
         var dailyModelUsage: [Date: [String: TokenUsage]] = [:]
         var lifetimeModelUsage: [String: TokenUsage] = [:]
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
@@ -236,7 +234,7 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyUsage: dailyUsage,
-            dailyModelUsage: dailyModelUsage,
+            dailyModelUsage: UsageAggregation.recentModelUsage(dailyModelUsage, calendar: calendar, now: referenceDate),
             lifetimeModelUsage: lifetimeModelUsage,
             dailyTotals: snapshot.dailyTotals,
             todayStart: calendar.startOfDay(for: referenceDate),
@@ -378,8 +376,7 @@ public actor CodexJSONLParser {
     }
 
     private func accumulateModelUsage(_ usage: TokenUsage, day: Date, into aggregate: inout FileAggregate) {
-        guard let month = modelUsageMonth, day >= month.start, day < month.end,
-              (usage.totalTokens ?? 0) > 0 else { return }
+        guard (usage.totalTokens ?? 0) > 0 else { return }
         let model = aggregate.currentModel + aggregate.currentTier
         let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
         aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
@@ -458,14 +455,6 @@ public actor CodexJSONLParser {
         }
         if let lastEventAt = incremental.lastEventAt {
             aggregate.lastEventAt = max(aggregate.lastEventAt ?? lastEventAt, lastEventAt)
-        }
-    }
-
-    private func prepareModelUsageMonth(_ referenceDate: Date) {
-        let month = calendar.dateInterval(of: .month, for: referenceDate)
-        if month != modelUsageMonth {
-            modelUsageMonth = month
-            fileCache.removeAll(keepingCapacity: true)
         }
     }
 

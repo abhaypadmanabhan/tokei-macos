@@ -6,7 +6,7 @@ public actor ClaudeJSONLParser {
         public let week: TokenUsage
         public let month: TokenUsage
         public let lifetime: TokenUsage
-        /// Tokens per calendar day (start-of-day key) per served model, current month only.
+        /// Tokens per calendar day (start-of-day key) per served model, rolling 92 days.
         public let dailyModelUsage: [Date: [String: TokenUsage]]
         /// Total tokens per calendar day (start-of-day key) for records with timestamps.
         public let dailyTotals: [Date: Int]
@@ -24,7 +24,7 @@ public actor ClaudeJSONLParser {
     var fileCache: [String: FileCacheEntry] = [:]
     private var fileCacheGeneration: UInt64 = 0
     private var allocationCache: AllocationCache?
-    var modelUsageMonth: DateInterval?
+    private(set) var lastParseStats = ParseStats()
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -55,12 +55,6 @@ public actor ClaudeJSONLParser {
     /// was billed, so ownership is deterministic: the lexicographically first account id.
     func parse(accountLogSources: [AccountLogSources]) async -> AccountParseResult {
         invalidateCacheIfEffectiveCalendarChanged()
-        let month = calendar.dateInterval(of: .month, for: now())
-        if month != modelUsageMonth {
-            modelUsageMonth = month
-            fileCache.removeAll(keepingCapacity: true)
-            didMutateFileCache()
-        }
         var stats = ParseStats()
         let prepared = await prepare(accountLogSources, stats: &stats)
 
@@ -96,6 +90,7 @@ public actor ClaudeJSONLParser {
             return (account.id, makeAggregate(from: aggregate, warnings: warnings))
         })
 
+        lastParseStats = stats
         stats.emit(
             sources: accountLogSources.flatMap(\.logSources).count,
             cacheSize: fileCache.count,
@@ -284,7 +279,8 @@ public actor ClaudeJSONLParser {
         from aggregate: FileAggregate,
         warnings: [ProviderWarning]
     ) -> AggregateUsage {
-        var windows = UsageWindows(calendar: calendar, referenceDate: now())
+        let reference = now()
+        var windows = UsageWindows(calendar: calendar, referenceDate: reference)
         var hourlyTotals: [Date: Int] = [:]
         apply(aggregate, to: &windows, hourlyTotals: &hourlyTotals)
         let snapshot = windows.snapshot()
@@ -293,7 +289,8 @@ public actor ClaudeJSONLParser {
             week: snapshot.week,
             month: snapshot.month,
             lifetime: snapshot.lifetime,
-            dailyModelUsage: aggregate.dailyModelUsage,
+            dailyModelUsage: UsageAggregation.recentModelUsage(
+                aggregate.dailyModelUsage, calendar: calendar, now: reference),
             dailyTotals: snapshot.dailyTotals,
             hourlyTotals: hourlyTotals.isEmpty ? nil : hourlyTotals,
             warnings: warnings

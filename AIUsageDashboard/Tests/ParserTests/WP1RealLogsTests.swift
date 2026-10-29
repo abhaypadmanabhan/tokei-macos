@@ -9,8 +9,11 @@ final class WP1RealLogsTests: XCTestCase {
         let accounts = try claudeAccounts()
         XCTAssertFalse(accounts.isEmpty)
         let parsed = await ClaudeJSONLParser(calendar: calendar, now: { reference }).parse(accountLogSources: accounts)
-        let models = UsageAggregation.sumModels(UsageAggregation.mergeModels(parsed.byAccountID.values
-            .map(\.dailyModelUsage)).filter { $0.key <= reference }.map(\.value))
+        let days = UsageAggregation.mergeModels(parsed.byAccountID.values.map(\.dailyModelUsage))
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: reference))
+        let models = UsageAggregation.sumModels(days.filter {
+            $0.key >= month.start && $0.key <= reference
+        }.map(\.value))
         let pricing = PricingEngine(table: PricingService.cachedTable())
         var before = 0.0
         var after = 0.0
@@ -31,6 +34,9 @@ final class WP1RealLogsTests: XCTestCase {
                      locale: Locale(identifier: "en_US_POSIX"), before, after, after - before)
               + " one_hour_tokens=\(oneHour) unpriced_models=\(unpriced)"
               + " files=\(accounts.flatMap(\.logSources).count)")
+        print(String(format: "CLAUDE_MTD last_run_usd=11973.717715 gap_since_last_run_usd=%.6f",
+                     locale: Locale(identifier: "en_US_POSIX"), after - 11_973.717715))
+        try assertAndPrintDayCoverage("CLAUDE", days: days, reference: reference)
         XCTAssertGreaterThan(oneHour, 0)
         XCTAssertGreaterThan(after, before)
     }
@@ -39,7 +45,10 @@ final class WP1RealLogsTests: XCTestCase {
         try requireRealLogsOptIn()
         let parsed = await AntigravityConversationParser().parse()
         let output = (parsed.lifetime.outputTokens ?? 0) + (parsed.lifetime.reasoningTokens ?? 0)
-        let models = UsageAggregation.sumModels(Array(parsed.dailyModelUsage.values))
+        // The research oracle covers lifetime history, including days outside the chart window.
+        let models = UsageAggregation.sumModels(parsed.records.map { record in
+            [record.model ?? "antigravity-model-\(record.modelID)": record.tokens]
+        })
         let pricing = PricingEngine(table: PricingService.cachedTable())
         let cost = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }.reduce(0, +)
         let files = AntigravityConversationFiles.discover(AntigravityConversationFiles.defaultRoots()).files.count
@@ -47,6 +56,7 @@ final class WP1RealLogsTests: XCTestCase {
               + " input=\(parsed.lifetime.inputTokens ?? 0) cached=\(parsed.lifetime.cacheReadTokens ?? 0)"
               + " output=\(output) reasoning=\(parsed.lifetime.reasoningTokens ?? 0)"
               + String(format: " usd=%.6f", locale: Locale(identifier: "en_US_POSIX"), cost))
+        try assertAndPrintDayCoverage("ANTIGRAVITY", days: parsed.dailyModelUsage, reference: Date())
         XCTAssertTrue(parsed.warnings.isEmpty)
         if parsed.records.count == 1_587 {
             XCTAssertEqual(parsed.lifetime.inputTokens, 12_191_150)
@@ -79,6 +89,63 @@ final class WP1RealLogsTests: XCTestCase {
         print("COPILOT_WARNINGS count=\(parsed.warnings.count)")
         XCTAssertGreaterThan(parsed.shutdownCount, 0)
         XCTAssertEqual(swift, python)
+        try assertAndPrintDayCoverage("COPILOT", days: parsed.dailyModelUsage, reference: reference)
+    }
+
+    func testCodexMonthToDateMatchesProviderAndValueWith92DayHistory() async throws {
+        try requireRealLogsOptIn()
+        let reference = Date()
+        let parser = CodexJSONLParser(now: { reference })
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "ai.padzy.tokei.wp1.real.codex.mtd"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: CodexProvider.liveQuotaEnabledKey)
+        let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
+                                     cacheURL: directory.appendingPathComponent("prices.json"))
+        let provider = CodexProvider(parser: parser, pricing: pricing, now: { reference }, userDefaults: defaults)
+        let snapshot = try await provider.fetchSnapshot()
+        let days = try XCTUnwrap(snapshot.dailyModelUsage)
+        let month = try XCTUnwrap(Calendar.current.dateInterval(of: .month, for: reference))
+        // The old month-only map is the projection used before expanding retention.
+        let monthModels = UsageAggregation.sumModels(days.filter {
+            $0.key >= month.start && $0.key <= reference
+        }.map(\.value))
+        var expected = 0.0
+        var unpriced = 0
+        for (model, usage) in monthModels where (usage.totalTokens ?? 0) > 0 {
+            if let cost = await pricing.cost(model: model, tokens: usage) {
+                expected += cost
+            } else { unpriced += 1 }
+        }
+        let amount = try XCTUnwrap(snapshot.costUsage?.amount)
+        let value = try XCTUnwrap(MaxxerValueEngine.scorecard(
+            snapshots: [snapshot], planCosts: MaxxerPlanCostStore(defaults: defaults),
+            now: reference, pricing: PricingEngine()
+        ).providers.first?.apiEquivalentUSD)
+        XCTAssertEqual(amount, expected, accuracy: 0.000001)
+        XCTAssertEqual(value, expected, accuracy: 0.000001)
+        print(String(format: "CODEX_MTD usd=%.6f month_only_projection_usd=%.6f projection_gap_usd=%.6f",
+                     locale: Locale(identifier: "en_US_POSIX"), amount, expected, amount - expected)
+              + " unpriced_models=\(unpriced) prior_run_usd=not_recorded")
+        try assertAndPrintDayCoverage("CODEX", days: days, reference: reference)
+    }
+
+    private func assertAndPrintDayCoverage(_ provider: String, days: [Date: [String: TokenUsage]],
+                                           reference: Date) throws {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: reference)
+        let start = try XCTUnwrap(calendar.date(byAdding: .day, value: -91, to: today))
+        XCTAssertTrue(days.keys.allSatisfy { $0 >= start && $0 <= today })
+        XCTAssertLessThanOrEqual(days.count, 92)
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.dateFormat = "yyyy-MM-dd"
+        let first = days.keys.min().map { formatter.string(from: $0) } ?? "none"
+        let last = days.keys.max().map { formatter.string(from: $0) } ?? "none"
+        print("\(provider)_MODEL_DAYS count=\(days.count) first=\(first) last=\(last)")
     }
 
     /// A focused post-fix inventory check: no log or SQLite contents are read.
