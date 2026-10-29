@@ -79,7 +79,8 @@ struct CooldownStore: Sendable {
     /// Reads the persisted cooldown, or `nil` on any missing/corrupt file.
     func read() -> Cooldown? {
         guard let data = try? Data(contentsOf: cooldownURL) else { return nil }
-        return try? Self.decoder.decode(Cooldown.self, from: data)
+        guard let cooldown = try? Self.decoder.decode(Cooldown.self, from: data) else { return nil }
+        return Cooldown(until: min(cooldown.until, now().addingTimeInterval(maxCooldownInterval)))
     }
 
     /// Removes the persisted cooldown file, ignoring any filesystem error.
