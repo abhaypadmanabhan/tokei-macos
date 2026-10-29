@@ -48,7 +48,7 @@ public actor UsageStore {
     private func persist() {
         let today = DateHelpers.startOfToday()
         if let oldest = Calendar.current.date(byAdding: .day, value: -399, to: today) {
-            dailyUsages = dailyUsages.filter { $0.key.day >= oldest && $0.key.day <= today }
+            dailyUsages = dailyUsages.filter { $0.key.day >= oldest }
         }
         let container = PersistenceContainer(snapshots: snapshots, dailyUsages: dailyUsages)
 

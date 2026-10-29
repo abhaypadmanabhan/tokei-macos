@@ -83,6 +83,28 @@ final class UsageStoreWriteTests: XCTestCase {
         XCTAssertTrue(try link.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == true)
     }
 
+    func testRetentionKeepsLaterDayBucketAfterTimezoneChange() async throws {
+        let store = UsageStore(directory: tempDirectory)
+        await store.save(snapshot: makeSnapshot(todayInput: 7))
+        let url = tempDirectory.appendingPathComponent("usage-store.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var entries = try XCTUnwrap(object["dailyUsages"] as? [Any])
+        var key = try XCTUnwrap(entries[0] as? [String: Any])
+        var usage = try XCTUnwrap(entries[1] as? [String: Any])
+        let laterBucket = Calendar.current.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
+        key["day"] = laterBucket.timeIntervalSinceReferenceDate
+        usage["date"] = laterBucket.timeIntervalSinceReferenceDate
+        entries.append(contentsOf: [key, usage])
+        object["dailyUsages"] = entries
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        let reloaded = UsageStore(directory: tempDirectory)
+        await reloaded.save(snapshots: [])
+        let saved = UsageStore(directory: tempDirectory)
+        let history = await saved.dailyHistory(providerID: .claudeCode)
+        XCTAssertEqual(history.count, 2)
+        XCTAssertTrue(history.contains { $0.date == laterBucket })
+    }
+
     func testSecureWriterReplacesPrivatelyAndRejectsLinkedDirectory() throws {
         let file = tempDirectory.appendingPathComponent("private.json")
         try Data("old".utf8).write(to: file)
