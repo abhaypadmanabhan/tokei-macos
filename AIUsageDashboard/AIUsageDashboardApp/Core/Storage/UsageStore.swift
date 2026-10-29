@@ -23,6 +23,11 @@ public actor UsageStore {
             self.directory = appSupport.appendingPathComponent("AIUsageDashboard", isDirectory: true)
         }
         self.fileName = fileName
+        do {
+            try SecureFileWriter.hardenExistingDirectory(at: self.directory)
+        } catch {
+            Self.logger.error("Failed to secure usage directory: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private var fileURL: URL {
@@ -32,11 +37,6 @@ public actor UsageStore {
     private func ensureLoaded() {
         guard !didLoad else { return }
         didLoad = true
-        do {
-            try SecureFileWriter.hardenExistingDirectory(at: directory)
-        } catch {
-            Self.logger.error("Failed to secure usage directory: \(error.localizedDescription, privacy: .public)")
-        }
         if let data = try? Data(contentsOf: fileURL),
            let container = try? JSONDecoder().decode(PersistenceContainer.self, from: data) {
             snapshots = container.snapshots

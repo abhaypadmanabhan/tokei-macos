@@ -97,4 +97,13 @@ final class UsageStoreWriteTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path).sorted(),
                        ["linked", "private.json"])
     }
+
+    func testConstructionHardensFilesBeforeAnyStoreRead() throws {
+        let file = tempDirectory.appendingPathComponent("old-cache.json")
+        try Data("{}".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        _ = UsageStore(directory: tempDirectory)
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(mode?.intValue, 0o600)
+    }
 }

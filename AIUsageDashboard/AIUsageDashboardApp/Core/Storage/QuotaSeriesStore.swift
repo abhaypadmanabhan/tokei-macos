@@ -42,6 +42,7 @@ public actor QuotaSeriesStore {
         self.fileName = fileName
         self.retentionLimit = max(1, retentionLimit)
         self.perSeriesRetentionLimit = max(1, perSeriesRetentionLimit)
+        try? SecureFileWriter.hardenExistingDirectory(at: self.directory)
     }
 
     public func append(from snapshots: [ProviderSnapshot]) {
@@ -104,7 +105,6 @@ public actor QuotaSeriesStore {
     private func ensureLoaded() {
         guard !didLoad else { return }
         didLoad = true
-        try? SecureFileWriter.hardenExistingDirectory(at: directory)
         guard let data = try? Data(contentsOf: fileURL),
               let container = try? Self.decoder.decode(QuotaSeriesContainer.self, from: data) else {
             return
