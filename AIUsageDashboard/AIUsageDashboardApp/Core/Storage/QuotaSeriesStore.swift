@@ -20,6 +20,7 @@ public actor QuotaSeriesStore {
     private let perSeriesRetentionLimit: Int
     private var samples: [QuotaSample] = []
     private var didLoad = false
+    private var lastWrittenData: Data?
 
     public init(
         now: @escaping @Sendable () -> Date = { Date() },
@@ -60,8 +61,7 @@ public actor QuotaSeriesStore {
             }
         }
 
-        guard didAppend else { return }
-        enforceRetentionLimit()
+        if didAppend { enforceRetentionLimit() }
         persist()
     }
 
@@ -87,11 +87,13 @@ public actor QuotaSeriesStore {
     private func ensureLoaded() {
         guard !didLoad else { return }
         didLoad = true
+        try? SecureFileWriter.hardenExistingDirectory(at: directory)
         guard let data = try? Data(contentsOf: fileURL),
               let container = try? Self.decoder.decode(QuotaSeriesContainer.self, from: data) else {
             return
         }
         samples = container.samples.sorted { $0.sampledAt < $1.sampledAt }
+        lastWrittenData = data
         enforceRetentionLimit()
     }
 
@@ -121,27 +123,19 @@ public actor QuotaSeriesStore {
     private func persist() {
         let container = QuotaSeriesContainer(version: 1, samples: samples)
         guard let data = try? Self.encoder.encode(container) else { return }
-
-        let fileManager = FileManager.default
-        let tempURL = directory.appendingPathComponent(".\(fileName).\(UUID().uuidString).tmp")
-
+        guard data != lastWrittenData else { return }
         do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: tempURL, options: [])
-            if fileManager.fileExists(atPath: fileURL.path) {
-                _ = try fileManager.replaceItemAt(fileURL, withItemAt: tempURL)
-            } else {
-                try fileManager.moveItem(at: tempURL, to: fileURL)
-            }
+            try SecureFileWriter.write(data, to: fileURL)
+            lastWrittenData = data
         } catch {
-            try? fileManager.removeItem(at: tempURL)
+            // Keep the previous bytes so a later append retries the failed write.
         }
     }
 
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
 

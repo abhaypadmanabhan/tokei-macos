@@ -1,5 +1,20 @@
 import Foundation
 
+extension CodingUserInfoKey {
+    static let ignoringSyncTime = CodingUserInfoKey(rawValue: "usageStoreIgnoringSyncTime")!
+}
+
+private extension KeyedEncodingContainer {
+    mutating func encodeSortedDates<Value: Encodable>(_ values: [Date: Value]?, forKey key: Key) throws {
+        guard let values else { return }
+        var pairs = nestedUnkeyedContainer(forKey: key)
+        for date in values.keys.sorted() {
+            try pairs.encode(date)
+            try pairs.encode(values[date])
+        }
+    }
+}
+
 // MARK: - Raw-representable enums
 
 extension ProviderID: Codable {}
@@ -70,10 +85,12 @@ extension ProviderSnapshot: Codable {
         try container.encodeIfPresent(lifetimeUsage, forKey: .lifetimeUsage)
         try container.encodeIfPresent(costUsage, forKey: .costUsage)
         try container.encode(warnings, forKey: .warnings)
-        try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
-        try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
-        try container.encodeIfPresent(hourlyTotals, forKey: .hourlyTotals)
-        try container.encodeIfPresent(dailyModelUsage, forKey: .dailyModelUsage)
+        if encoder.userInfo[.ignoringSyncTime] as? Bool != true {
+            try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
+        }
+        try container.encodeSortedDates(dailyTotals, forKey: .dailyTotals)
+        try container.encodeSortedDates(hourlyTotals, forKey: .hourlyTotals)
+        try container.encodeSortedDates(dailyModelUsage, forKey: .dailyModelUsage)
         try container.encodeIfPresent(accounts, forKey: .accounts)
         try container.encodeIfPresent(headlineAccountID, forKey: .headlineAccountID)
     }
@@ -120,7 +137,7 @@ extension ProviderAccountUsage: Codable {
         try container.encode(label, forKey: .label)
         try container.encode(quotaWindows, forKey: .quotaWindows)
         try container.encode(todayUsage, forKey: .todayUsage)
-        try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
+        try container.encodeSortedDates(dailyTotals, forKey: .dailyTotals)
         if !configDirectories.isEmpty {
             try container.encode(configDirectories, forKey: .configDirectories)
         }
