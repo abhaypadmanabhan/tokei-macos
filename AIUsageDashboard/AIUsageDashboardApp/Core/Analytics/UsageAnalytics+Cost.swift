@@ -89,7 +89,10 @@ extension UsageAnalytics {
             rangeUSD: trend.isEmpty ? nil : trend.map(\.usd).reduce(0, +),
             pricedFrom: pricedFrom,
             rangeStartsBeforePricing: pricedFrom.map { from in bounds.start.map { $0 < from } ?? true } ?? false,
-            delta: costDelta(days: days, range: range, pricedFrom: pricedFrom, calendar: calendar, today: today),
+            delta: costDelta(
+                days: days, range: range, calendar: calendar, today: today,
+                histories: snapshots.map { Set(($0.dailyModelUsage ?? [:]).keys.map { calendar.startOfDay(for: $0) }) }
+            ),
             trend: trend,
             providers: providerCosts(snapshots: snapshots, perProvider: perProvider, inRange: inRange)
         )
@@ -138,19 +141,20 @@ extension UsageAnalytics {
         return points
     }
 
-    /// Like for like, as the token delta: complete days only, and only when both periods
-    /// lie wholly on or after `pricedFrom` (a gap is not a cheap week).
+    /// Like for like, as the token delta: complete days only, and only when every agent priced
+    /// in those days is priced from the earlier period's first day (a gap is not a cheap week).
     private static func costDelta(
         days: [Date: CostDay],
         range: UsageRange,
-        pricedFrom: Date?,
         calendar: Calendar,
-        today: Date
+        today: Date,
+        histories: [Set<Date>]
     ) -> Double? {
-        guard let count = dayCount(for: range), let pricedFrom,
+        guard let count = dayCount(for: range),
               let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
               let previousStart = dayBounds(.previousDays(count), calendar: calendar, today: yesterday).start,
-              previousStart >= pricedFrom else { return nil }
+              histories.contains(where: { !$0.isEmpty }),
+              historiesCover(histories, from: previousStart, to: yesterday) else { return nil }
         let cents = { (bounds: (start: Date?, end: Date)) -> Int in
             let usd = days.filter { day, _ in day >= (bounds.start ?? day) && day <= bounds.end }
                 .values.map(\.usd).reduce(0, +)
@@ -182,6 +186,17 @@ extension UsageAnalytics {
             }
         }
         return result
+    }
+
+    /// Whether every history with data between `start` and `end` began on or before `start`. One
+    /// that begins inside the period is only partly recorded there (Claude Code deletes old
+    /// logs), so comparing totals across it would invent a change: the 30-day Overview read
+    /// "▲ 2175.9%" because another agent's history reached back further. Days are start-of-day.
+    static func historiesCover(_ histories: [Set<Date>], from start: Date, to end: Date) -> Bool {
+        histories.allSatisfy { days in
+            guard let first = days.min(), days.contains(where: { $0 >= start && $0 <= end }) else { return true }
+            return first <= start
+        }
     }
 
     /// First and last day of `range` relative to `today`; `start` is `nil` for all time.

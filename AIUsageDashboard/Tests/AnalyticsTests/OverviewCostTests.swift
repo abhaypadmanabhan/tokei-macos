@@ -104,6 +104,24 @@ final class OverviewCostTests: XCTestCase {
         XCTAssertNil(summary([snapshot(.claudeCode, models: models, totals: totals)]).delta)
     }
 
+    /// Per agent, as for tokens: Claude priced from 14 days ago at $1 a day, Codex priced only
+    /// from 10 days ago at $0.50 a day. The old rule (earliest priced day anywhere) compared
+    /// $10.50 with $8.50; Codex's earlier week is not priced through, so no change is claimed.
+    func testEveryAgentMustBePricedThroughTheEarlierPeriod() {
+        var claude: [Date: [String: TokenUsage]] = [:], codex: [Date: [String: TokenUsage]] = [:]
+        for offset in 1...14 { claude[day(offset * -1)] = ["beta": input(1_000_000)] }
+        for offset in 1...10 { codex[day(offset * -1)] = ["beta": input(500_000)] }
+        let totals = { (models: [Date: [String: TokenUsage]]) in
+            models.mapValues { $0.values.compactMap(\.totalTokens).reduce(0, +) }
+        }
+        let both = [
+            snapshot(.claudeCode, models: claude, totals: totals(claude)),
+            snapshot(.codex, models: codex, totals: totals(codex))
+        ]
+        XCTAssertNil(summary(both).delta)
+        XCTAssertNotNil(summary([both[0]]).delta, "Claude alone is priced through both weeks")
+    }
+
     /// Cline's logs carry each request's API cost: shown as reported, all time, not added to the
     /// priced total. Cursor's cost is the billed amount, not an API estimate: no price data.
     func testReportedCostIsLabelledAndBilledCostIsNotUsed() {

@@ -226,17 +226,20 @@ public final class DashboardViewModel: ObservableObject {
 
     /// Like for like: the last N complete days against the N before them. Today's part-day is
     /// in neither side (a part-day set against a full day always reads as a drop); `nil` for
-    /// lifetime and custom ranges, or when the recorded history starts after the earlier
-    /// period does: Claude Code deletes old logs, and a half-recorded month read "▲ 2175.9%".
+    /// lifetime and custom ranges, or when any agent counted in those days is recorded only
+    /// from partway through the earlier period (`UsageAnalytics.historiesCover`).
     public var overviewDelta: Double? {
         guard let days = UsageAnalytics.dayCount(for: range),
               let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))
         else { return nil }
         let totals = overviewDailyTotals
+        let histories = visibleSnapshots.map { snapshot in
+            Set(UsageAnalytics.normalizedDailyTotals(snapshot.dailyTotals ?? [:], calendar: calendar)
+                .filter { $0.value > 0 }.keys)
+        }
         let previousBounds = UsageAnalytics.dayBounds(.previousDays(days), calendar: calendar, today: yesterday)
-        guard let firstRecorded = UsageAnalytics.normalizedDailyTotals(totals, calendar: calendar)
-                .filter({ $0.value > 0 }).keys.min(),
-              let previousStart = previousBounds.start, firstRecorded <= previousStart else { return nil }
+        guard let previousStart = previousBounds.start,
+              UsageAnalytics.historiesCover(histories, from: previousStart, to: yesterday) else { return nil }
         let previous = UsageAnalytics.filteredDailyTotals(
             totals, range: .previousDays(days), calendar: calendar, now: yesterday
         )

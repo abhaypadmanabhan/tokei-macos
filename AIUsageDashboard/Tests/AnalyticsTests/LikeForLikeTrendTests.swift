@@ -66,6 +66,32 @@ final class LikeForLikeTrendTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(model(totals).overviewDelta), 50, accuracy: 1e-9)
     }
 
+    /// The real case behind "▲ 2175.9%": one agent's history reaches back (Cursor, from May)
+    /// while the busiest one starts partway through the earlier period (Claude Code, logs
+    /// deleted). Claude 100 a day from 14 days ago; Codex 50 a day from only 10 days ago. The
+    /// old rule compared 1,050 with 850 (+23.5%); Codex's earlier week is not fully recorded.
+    func testEveryAgentMustBeRecordedThroughTheEarlierPeriod() throws {
+        var claude: [Date: Int] = [:], codex: [Date: Int] = [:]
+        for offset in 1...14 { claude[day(-offset)] = 100 }
+        for offset in 1...10 { codex[day(-offset)] = 50 }
+        let model = model(claude)
+        model.snapshots.append(ProviderSnapshot(
+            providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+            todayUsage: TokenUsage(inputTokens: 0, confidence: .exact),
+            weekUsage: TokenUsage(inputTokens: 0, confidence: .exact), dailyTotals: codex
+        ))
+        XCTAssertNil(model.overviewDelta)
+
+        // Codex recorded from the earlier week's first day too: 700 + 350 against 700 + 350, flat.
+        for offset in 11...14 { codex[day(-offset)] = 50 }
+        model.snapshots[1] = ProviderSnapshot(
+            providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+            todayUsage: TokenUsage(inputTokens: 0, confidence: .exact),
+            weekUsage: TokenUsage(inputTokens: 0, confidence: .exact), dailyTotals: codex
+        )
+        XCTAssertEqual(try XCTUnwrap(model.overviewDelta), 0, accuracy: 1e-9)
+    }
+
     func testNoEarlierPeriodMeansNoDelta() {
         XCTAssertNil(model([day(0): 10, day(-1): 20]).overviewDelta)
     }
