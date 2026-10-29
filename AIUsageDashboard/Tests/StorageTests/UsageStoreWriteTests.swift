@@ -106,4 +106,29 @@ final class UsageStoreWriteTests: XCTestCase {
         let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(mode?.intValue, 0o600)
     }
+
+    func testRepeatedObservationDoesNotRewriteButChangedQuotaKeepsFreshObservation() async throws {
+        func snapshot(used: Double, observed: TimeInterval) -> ProviderSnapshot {
+            ProviderSnapshot(
+                providerID: .cursor, displayName: "Cursor", authStatus: .authenticated,
+                quotaWindows: [QuotaWindow(providerID: .cursor, type: .monthly, used: used, limit: 100,
+                                           confidence: .providerReported, source: "fixture",
+                                           observedAt: Date(timeIntervalSince1970: observed))],
+                todayUsage: .unavailable, weekUsage: .unavailable
+            )
+        }
+        let store = UsageStore(directory: tempDirectory)
+        await store.save(snapshot: snapshot(used: 20, observed: 100))
+        let url = tempDirectory.appendingPathComponent("usage-store.json")
+        let marker = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: marker], ofItemAtPath: url.path)
+        await store.save(snapshot: snapshot(used: 20, observed: 200))
+        let unchanged = try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
+        XCTAssertEqual(unchanged, marker)
+        await store.save(snapshot: snapshot(used: 21, observed: 300))
+        let reloaded = UsageStore(directory: tempDirectory)
+        let window = await reloaded.snapshot(providerID: .cursor)?.quotaWindows.first
+        XCTAssertEqual(window?.used, 21)
+        XCTAssertEqual(window?.observedAt, Date(timeIntervalSince1970: 300))
+    }
 }

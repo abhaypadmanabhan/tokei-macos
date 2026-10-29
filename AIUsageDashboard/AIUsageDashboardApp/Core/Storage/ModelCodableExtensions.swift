@@ -313,7 +313,10 @@ extension QuotaWindow: Codable {
         try container.encode(source, forKey: .source)
         try container.encodeIfPresent(label, forKey: .label)
         try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
-        try container.encodeIfPresent(observedAt, forKey: .observedAt)
+        // A repeated observation updates in-memory freshness, but alone is not new stored content.
+        if encoder.userInfo[.ignoringSyncTime] as? Bool != true {
+            try container.encodeIfPresent(observedAt, forKey: .observedAt)
+        }
         try container.encodeIfPresent(windowDuration, forKey: .windowDuration)
     }
 }
