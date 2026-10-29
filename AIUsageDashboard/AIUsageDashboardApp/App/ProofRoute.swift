@@ -23,6 +23,7 @@ enum ProofRoute {
     static var route: String? { UserDefaults.standard.string(forKey: "TokeiProofRoute") }
 
     static var wantsQuotaLens: Bool { route == "overview.quota" }
+    static var isTour: Bool { UserDefaults.standard.string(forKey: "TokeiProofTour") != nil }
     static var wantsPopover: Bool { route == "popover" }
     static var scrollsDrillIn: Bool { route?.hasSuffix(".scrolled") == true }
 
@@ -56,6 +57,9 @@ enum ProofRoute {
     private struct TourStep {
         let name: String
         var window = "Tokei"
+        /// Run again just before the capture: a live sync during the step replaces snapshots
+        /// and with them any injected fixture (tour run 2026-10-29: Value lost its extra usage).
+        var keep: () -> Void = {}
         let show: () -> Void
     }
 
@@ -69,7 +73,7 @@ enum ProofRoute {
         func pause(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
         var waited = 0.0
         let awaitingLive = { viewModel.showingSavedSnapshots || viewModel.isLoading || viewModel.lastSyncedAt == nil }
-        while awaitingLive() && waited < 300 {
+        while awaitingLive() && waited < 600 {
             await pause(0.5)
             waited += 0.5
         }
@@ -79,6 +83,8 @@ enum ProofRoute {
             await pause(0.8)
             step.show()
             await pause(2.5)
+            step.keep()
+            await pause(0.6)
             try? "\(index + 1) \(step.name) \(step.window)\n".write(to: marker, atomically: true, encoding: .utf8)
             await pause(3.0)
         }
@@ -94,32 +100,39 @@ enum ProofRoute {
             NotificationCenter.default.post(name: name, object: object)
         }
         return [
-            TourStep(name: "02-after-live-sync") {},
+            TourStep(name: "02-after-live-sync") { navigator.select(.overview, viewModel: viewModel) },
             TourStep(name: "03-overview-usage-7d") {
-                navigator.select(.overview, viewModel: viewModel)
                 viewModel.range = .sevenDay
                 post(metricNotification, "usage")
             },
             TourStep(name: "04-overview-usage-30d") { viewModel.range = .thirtyDay },
-            TourStep(name: "05-overview-quota") {
+            TourStep(name: "05-overview-cost-7d") {
+                viewModel.range = .sevenDay
+                post(metricNotification, "cost")
+            },
+            TourStep(name: "06-overview-cost-30d") { viewModel.range = .thirtyDay },
+            TourStep(name: "07-overview-quota") {
                 viewModel.range = .sevenDay
                 post(metricNotification, "quota")
             },
-            TourStep(name: "06-claude-drillin-top") {
+            TourStep(name: "08-claude-drillin-top", keep: { injectExtraUsage(into: viewModel) }, show: {
                 injectExtraUsage(into: viewModel)
                 navigator.open(.claudeCode, viewModel: viewModel)
-            },
-            TourStep(name: "07-claude-drillin-scrolled") {
+            }),
+            TourStep(name: "09-claude-drillin-scrolled", keep: {
+                injectExtraUsage(into: viewModel)
+                injectFastTierModel(into: viewModel)
+            }, show: {
                 injectExtraUsage(into: viewModel)
                 injectFastTierModel(into: viewModel)
                 post(scrollNotification)
-            },
-            TourStep(name: "08-value") {
+            }),
+            TourStep(name: "10-value", keep: { injectExtraUsage(into: viewModel) }, show: {
                 injectExtraUsage(into: viewModel)
                 navigator.select(.value, viewModel: viewModel)
-            },
-            TourStep(name: "09-settings") { viewModel.showingSettings = true },
-            TourStep(name: "10-menubar-popover", window: "Menu bar popover") {
+            }),
+            TourStep(name: "11-settings") { viewModel.showingSettings = true },
+            TourStep(name: "12-menubar-popover", window: "Menu bar popover") {
                 viewModel.showingSettings = false
                 post(popoverNotification)
             }
@@ -127,8 +140,9 @@ enum ProofRoute {
     }
 
     /// Another app can cover the window during the long wait for the live sync. Covered, the
-    /// dashboard draws a plain fill and its proof hooks are not in the view tree (tour run
-    /// 2026-10-29: steps 02-09 blank, no popover), so each stop first brings it forward.
+    /// dashboard draws a plain fill and its proof hooks leave the view tree (tour run
+    /// 2026-10-29: steps 02-09 blank, no popover), so each stop first brings it forward, and
+    /// during a tour `WindowVisibilityMonitor` reports the window visible regardless.
     @MainActor
     private static func bringDashboardForward() {
         NSApp.activate()
@@ -149,67 +163,6 @@ enum ProofRoute {
                 navigator.open(id, viewModel: viewModel)
             }
         }
-    }
-
-    // MARK: Fixtures
-
-    /// `-TokeiProofFixture extraUsage`: adds the §4.3 window from the saved real response
-    /// (`tasks/research/claude-usage-response.json`: 2152 of 5000 minor USD, disabled,
-    /// out_of_credits) to Claude, so the row can be captured before the network lane lands
-    /// it. Adds it once; the first live sync replaces it.
-    @MainActor
-    private static func injectExtraUsage(into viewModel: DashboardViewModel) {
-        viewModel.snapshots = viewModel.snapshots.map { snapshot in
-            guard snapshot.providerID == .claudeCode, ExtraUsageCopy.window(in: snapshot) == nil else {
-                return snapshot
-            }
-            let extra = QuotaWindow(
-                providerID: .claudeCode, type: .credits, used: 21.52, limit: 50, remaining: 28.48,
-                confidence: .providerReported,
-                source: "api.anthropic.com/api/oauth/usage extra_usage disabled out_of_credits (proof fixture)",
-                label: "Extra usage", bucketKey: ExtraUsageCopy.bucketKey
-            )
-            return replacing(snapshot, quotaWindows: snapshot.quotaWindows + [extra])
-        }
-    }
-
-    /// Re-keys this month's least-used Claude model the way WP-1 stores fast-mode tokens
-    /// (`<model>@fast`), so "Value by model" can be captured showing the base name and the
-    /// tier word before WP-1 lands. This branch has no `@fast` rate, so that row reads "no
-    /// public rate". Once only; the first live sync replaces it.
-    @MainActor
-    private static func injectFastTierModel(into viewModel: DashboardViewModel) {
-        viewModel.snapshots = viewModel.snapshots.map { snapshot in
-            guard snapshot.providerID == .claudeCode, let days = snapshot.dailyModelUsage else { return snapshot }
-            let monthStart = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? .distantPast
-            var tokens: [String: Int] = [:]
-            for (day, models) in days where day >= monthStart {
-                for (model, usage) in models { tokens[model, default: 0] += usage.totalTokens ?? 0 }
-            }
-            guard !tokens.keys.contains(where: { ModelKeyName($0).tier != nil }),
-                  let least = tokens.min(by: { $0.value < $1.value })?.key else { return snapshot }
-            let rekeyed = days.mapValues { models in
-                Dictionary(uniqueKeysWithValues: models.map { ($0.key == least ? least + "@fast" : $0.key, $0.value) })
-            }
-            return replacing(snapshot, dailyModelUsage: rekeyed)
-        }
-    }
-
-    private static func replacing(
-        _ snapshot: ProviderSnapshot,
-        quotaWindows: [QuotaWindow]? = nil,
-        dailyModelUsage: [Date: [String: TokenUsage]]? = nil
-    ) -> ProviderSnapshot {
-        ProviderSnapshot(
-            providerID: snapshot.providerID, displayName: snapshot.displayName,
-            authStatus: snapshot.authStatus, quotaWindows: quotaWindows ?? snapshot.quotaWindows,
-            todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
-            monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage,
-            costUsage: snapshot.costUsage, warnings: snapshot.warnings,
-            lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
-            hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: dailyModelUsage ?? snapshot.dailyModelUsage,
-            accounts: snapshot.accounts, headlineAccountID: snapshot.headlineAccountID
-        )
     }
 
     // MARK: Menu self-test
@@ -309,6 +262,69 @@ enum ProofRoute {
             characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: keyCode
         ) else { return }
         NSApp.sendEvent(event)
+    }
+}
+
+extension ProofRoute {
+    // MARK: Fixtures
+
+    /// `-TokeiProofFixture extraUsage`: adds the §4.3 window from the saved real response
+    /// (`tasks/research/claude-usage-response.json`: 2152 of 5000 minor USD, disabled,
+    /// out_of_credits) to Claude, so the row can be captured before the network lane lands
+    /// it. Adds it once; the first live sync replaces it.
+    @MainActor
+    private static func injectExtraUsage(into viewModel: DashboardViewModel) {
+        viewModel.snapshots = viewModel.snapshots.map { snapshot in
+            guard snapshot.providerID == .claudeCode, ExtraUsageCopy.window(in: snapshot) == nil else {
+                return snapshot
+            }
+            let extra = QuotaWindow(
+                providerID: .claudeCode, type: .credits, used: 21.52, limit: 50, remaining: 28.48,
+                confidence: .providerReported,
+                source: "api.anthropic.com/api/oauth/usage extra_usage disabled out_of_credits (proof fixture)",
+                label: "Extra usage", bucketKey: ExtraUsageCopy.bucketKey
+            )
+            return replacing(snapshot, quotaWindows: snapshot.quotaWindows + [extra])
+        }
+    }
+
+    /// Re-keys this month's least-used Claude model the way WP-1 stores fast-mode tokens
+    /// (`<model>@fast`), so "Value by model" can be captured showing the base name and the
+    /// tier word before WP-1 lands. This branch has no `@fast` rate, so that row reads "no
+    /// public rate". Once only; the first live sync replaces it.
+    @MainActor
+    private static func injectFastTierModel(into viewModel: DashboardViewModel) {
+        viewModel.snapshots = viewModel.snapshots.map { snapshot in
+            guard snapshot.providerID == .claudeCode, let days = snapshot.dailyModelUsage else { return snapshot }
+            let monthStart = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? .distantPast
+            var tokens: [String: Int] = [:]
+            for (day, models) in days where day >= monthStart {
+                for (model, usage) in models { tokens[model, default: 0] += usage.totalTokens ?? 0 }
+            }
+            guard !tokens.keys.contains(where: { ModelKeyName($0).tier != nil }),
+                  let least = tokens.min(by: { $0.value < $1.value })?.key else { return snapshot }
+            let rekeyed = days.mapValues { models in
+                Dictionary(uniqueKeysWithValues: models.map { ($0.key == least ? least + "@fast" : $0.key, $0.value) })
+            }
+            return replacing(snapshot, dailyModelUsage: rekeyed)
+        }
+    }
+
+    private static func replacing(
+        _ snapshot: ProviderSnapshot,
+        quotaWindows: [QuotaWindow]? = nil,
+        dailyModelUsage: [Date: [String: TokenUsage]]? = nil
+    ) -> ProviderSnapshot {
+        ProviderSnapshot(
+            providerID: snapshot.providerID, displayName: snapshot.displayName,
+            authStatus: snapshot.authStatus, quotaWindows: quotaWindows ?? snapshot.quotaWindows,
+            todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
+            monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage,
+            costUsage: snapshot.costUsage, warnings: snapshot.warnings,
+            lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: dailyModelUsage ?? snapshot.dailyModelUsage,
+            accounts: snapshot.accounts, headlineAccountID: snapshot.headlineAccountID
+        )
     }
 }
 #endif
