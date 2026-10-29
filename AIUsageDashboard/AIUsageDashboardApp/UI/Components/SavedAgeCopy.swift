@@ -33,4 +33,12 @@ enum SavedAgeCopy {
         formatter.setLocalizedDateFormatFromTemplate("EEEdMMM")
         return "on \(formatter.string(from: savedAt))"
     }
+
+    /// One popover Tokens row: the agent's figure for today, or "—" while the numbers on screen
+    /// are an earlier day's (a row has no room to name that day), and what VoiceOver says.
+    static func todayRow(name: String, tokens: Int?, todayIsUnknown: Bool) -> (value: String, spoken: String) {
+        guard !todayIsUnknown else { return ("—", "\(name), today's tokens not known yet") }
+        let value = TokenFormatter.format(tokens)
+        return (value, "\(name), \(value) tokens today")
+    }
 }

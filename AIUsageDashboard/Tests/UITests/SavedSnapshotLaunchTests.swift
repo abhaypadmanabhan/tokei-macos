@@ -101,6 +101,38 @@ final class SavedSnapshotLaunchTests: XCTestCase {
         XCTAssertTrue(model.todayIsUnknown)
     }
 
+    /// S4: the popover's per-agent Tokens rows follow the same rule as its headline. An earlier
+    /// day's save reads "—" and VoiceOver says the figure is not known yet; a save from earlier
+    /// today reads the number.
+    func testMenuBarTokenRowsHideAnEarlierDaysTotal() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let store = UsageStore(directory: directory)
+        await store.save(snapshots: [savedClaude()])
+        let model = DashboardViewModel(store: store, calendar: calendar, now: { Self.now })
+        await model.loadSavedSnapshots()
+        let claude = try XCTUnwrap(model.snapshots.first)
+        let row = SavedAgeCopy.todayRow(
+            name: claude.displayName, tokens: claude.todayUsage.totalTokens, todayIsUnknown: model.todayIsUnknown
+        )
+        XCTAssertEqual(row.value, "—")
+        XCTAssertEqual(row.spoken, "Claude Code, today's tokens not known yet")
+        let live = SavedAgeCopy.todayRow(name: "Codex", tokens: 12_000, todayIsUnknown: false)
+        XCTAssertEqual(live.value, "12K")
+        XCTAssertEqual(live.spoken, "Codex, 12K tokens today")
+
+        // The popover's rows must go through that guard (Codex review r1 S4 found them reading
+        // the saved total directly).
+        let menuBar = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("AIUsageDashboardApp/UI/MenuBar/MenuBarView.swift")
+        let source = try String(contentsOf: menuBar, encoding: .utf8)
+        let tokenRow = try XCTUnwrap(source.range(of: "private func tokenRow(")).upperBound
+        let body = source[tokenRow...].prefix(1_200)
+        XCTAssertTrue(body.contains("SavedAgeCopy.todayRow("), "token rows bypass the today guard")
+        XCTAssertFalse(body.contains("tokens today\")"), "token rows build their own VoiceOver text")
+    }
+
     func testTodayIsKnownWhenSavedEarlierToday() async {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!

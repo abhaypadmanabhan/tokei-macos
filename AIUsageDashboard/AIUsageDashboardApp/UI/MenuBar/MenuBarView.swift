@@ -285,7 +285,11 @@ struct MenuBarView: View {
     }
 
     private func tokenRow(_ snapshot: ProviderSnapshot) -> some View {
-        HStack(spacing: 9) {
+        // Same rule as the headline: an earlier day's saved total is not today's.
+        let row = SavedAgeCopy.todayRow(
+            name: snapshot.displayName, tokens: snapshot.todayUsage.totalTokens, todayIsUnknown: viewModel.todayIsUnknown
+        )
+        return HStack(spacing: 9) {
             ProviderBrandMark.tinted(snapshot.providerID, size: 18)
             Text(snapshot.displayName)
                 .font(.sans(size: 12.5))
@@ -293,14 +297,17 @@ struct MenuBarView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
-            Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
+            Text(row.value)
                 .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
-                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
+                .rollingNumber(
+                    viewModel.todayIsUnknown ? nil : snapshot.todayUsage.totalTokens.map(Double.init),
+                    reduceMotion: reduceMotion
+                )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
+        .accessibilityLabel(row.spoken)
     }
 
     /// Quota mode: glyph + a threshold-coloured fill bar + reset countdown — no
