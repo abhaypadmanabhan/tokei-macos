@@ -125,6 +125,30 @@ final class GeminiUsageClientTests: XCTestCase {
 
     // MARK: - End-to-end flow
 
+    func testSecondRefreshWithinTenMinutesMakesNoRequests() async throws {
+        writeCredentials(expiryOffset: 3600)
+        GeminiRoutingMockURLProtocol.enqueue(url: GeminiUsageClientImpl.loadCodeAssistURL,
+                                             json: GeminiFixtures.loadCodeAssistJSON, status: 200)
+        GeminiRoutingMockURLProtocol.enqueue(url: GeminiUsageClientImpl.retrieveUserQuotaURL,
+                                             json: GeminiFixtures.retrieveUserQuotaUsedPercentJSON, status: 200)
+        let client = makeClient(clientSecret: nil)
+        _ = try await client.fetchQuotaWindows()
+        _ = try await client.fetchQuotaWindows()
+        XCTAssertEqual(GeminiRoutingMockURLProtocol.hits.count, 2)
+    }
+
+    func testRateLimitPersistsCooldownAcrossClientRecreation() async throws {
+        writeCredentials(expiryOffset: 3600)
+        GeminiRoutingMockURLProtocol.enqueue(url: GeminiUsageClientImpl.loadCodeAssistURL,
+                                             json: "{}", status: 429)
+        await assertThrows(.httpStatus(429)) { _ = try await self.makeClient(clientSecret: nil).fetchQuotaWindows() }
+        await assertThrows(.cooldownActive) { _ = try await self.makeClient(clientSecret: nil).fetchQuotaWindows() }
+        XCTAssertEqual(GeminiRoutingMockURLProtocol.hits.count, 1)
+        let url = tempDirectory.appendingPathComponent("cooldown.json")
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
+    }
+
     func testValidTokenSkipsRefreshAndReturnsWindows() async throws {
         writeCredentials(expiryOffset: 3600) // still valid
         GeminiRoutingMockURLProtocol.enqueue(url: GeminiUsageClientImpl.loadCodeAssistURL,
@@ -224,7 +248,8 @@ final class GeminiUsageClientTests: XCTestCase {
             credentialsFileURL: credentialsURL,
             now: { self.fixedNow },
             clientID: "test-client-id",
-            clientSecret: clientSecret
+            clientSecret: clientSecret,
+            cooldownURL: tempDirectory.appendingPathComponent("cooldown.json")
         )
     }
 

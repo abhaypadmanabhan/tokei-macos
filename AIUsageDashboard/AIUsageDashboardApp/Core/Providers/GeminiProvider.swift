@@ -15,13 +15,16 @@ public actor GeminiProvider: UsageProvider {
     private let fileManager: FileManager
     private let credentialsFileURL: URL
     private let quotaClient: any QuotaProvider
+    private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
         fileManager: FileManager = .default,
         credentialsFileURL: URL? = nil,
-        quotaClient: (any QuotaProvider)? = nil
+        quotaClient: (any QuotaProvider)? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
         let credentialsURL = credentialsFileURL
             ?? fileManager.homeDirectoryForCurrentUser
                 .appendingPathComponent(".gemini/oauth_creds.json")
@@ -40,6 +43,12 @@ public actor GeminiProvider: UsageProvider {
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         guard fileManager.fileExists(atPath: credentialsFileURL.path) else {
             return snapshot(authStatus: .unauthenticated, windows: [], warnings: [notSignedInWarning])
+        }
+
+        guard userDefaultsReader.bool(forKey: "geminiNetworkUsageEnabled", defaultValue: true) else {
+            return snapshot(authStatus: .authenticated, windows: [], warnings: [ProviderWarning(
+                message: "Gemini network quota is off. Enable it in Settings to show quota.", level: .info
+            )])
         }
 
         do {

@@ -47,7 +47,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     private let sleep: @Sendable (TimeInterval) async -> Void
 
     public init(
-        urlSession: URLSession = .shared,
+        urlSession: URLSession? = nil,
         cooldownURL: URL? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         sleep: @escaping @Sendable (TimeInterval) async -> Void = { interval in
@@ -65,13 +65,13 @@ public actor CursorUsageClientImpl: CursorUsageClient {
     }
 
     internal init(
-        urlSession: URLSession,
+        urlSession: URLSession?,
         explicitCooldownURL: URL?,
         storageDirectory: URL?,
         now: @escaping @Sendable () -> Date,
         sleep: @escaping @Sendable (TimeInterval) async -> Void
     ) {
-        self.urlSession = urlSession
+        self.urlSession = urlSession ?? UsageHTTPSession.make()
         self.explicitCooldownURL = explicitCooldownURL
         let directory = storageDirectory ?? Self.defaultStorageDirectory()
         self.storageDirectory = directory
@@ -112,7 +112,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             // SECURITY: the session cookie leaves the process only as this header, over TLS.
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
             request.setValue("https://www.cursor.com/settings", forHTTPHeaderField: "Referer")
-            request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(UsageHTTPSession.userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue(accept, forHTTPHeaderField: "Accept")
 
             let (data, response) = try await urlSession.data(for: request)
@@ -221,10 +221,6 @@ public actor CursorUsageClientImpl: CursorUsageClient {
         string: "https://cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens"
     )!
     private static let usageSummaryURL = URL(string: "https://cursor.com/api/usage-summary")!
-    // A desktop browser UA — the dashboard endpoints reject an empty/curl agent.
-    private static let userAgent =
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private static let logger = Logger(subsystem: "ai.padzy.tokei", category: "CursorUsageClient")
     private static let maxAttempts = 3
 }

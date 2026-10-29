@@ -7,7 +7,7 @@ final class ClaudeUsageDecoderTests: XCTestCase {
 
         let windows = try ClaudeUsageClientImpl.decodeQuotaWindows(data, providerID: .claudeCode)
 
-        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows.count, 4)
 
         let session = try XCTUnwrap(windows.first { $0.type == .session })
         XCTAssertEqual(session.used, 8)
@@ -30,7 +30,7 @@ final class ClaudeUsageDecoderTests: XCTestCase {
         XCTAssertEqual(scoped.bucketKey, "weekly_scoped:Fable")
         XCTAssertEqual(scoped.resetAt, isoDate("2026-07-13T02:00:00.476071+00:00"))
 
-        XCTAssertFalse(windows.contains { $0.type == .credits })
+        XCTAssertTrue(windows.contains { $0.bucketKey == "claude_extra_usage" })
     }
 
     private func isoDate(_ value: String) -> Date? {
@@ -218,7 +218,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
 
         let windows = try await client.fetchQuotaWindows()
 
-        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows.count, 4)
         let request = try XCTUnwrap(MockClaudeURLProtocol.requests.last)
         XCTAssertEqual(request.url?.absoluteString, "https://api.anthropic.com/api/oauth/usage")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mock-access-token")

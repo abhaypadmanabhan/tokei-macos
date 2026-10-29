@@ -143,8 +143,7 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
         let cached = CachedQuota(timestamp: now(), rawPayload: data)
         guard let encoded = try? JSONEncoder().encode(cached) else { return }
         do {
-            try FileManager.default.createDirectory(at: cacheFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try encoded.write(to: cacheFileURL, options: .atomic)
+            try SecureFileWriter.write(encoded, to: cacheFileURL)
         } catch {}
     }
 
