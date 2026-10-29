@@ -847,37 +847,55 @@ final class ValueByModelParserTests: XCTestCase {
         XCTAssertEqual(reads, 2)
     }
 
-    func testModelMapsAreMonthBoundedAndRebuildAtMonthRollover() async throws {
+    func testModelMapsKeep92DaysAcrossMonthRolloverWithoutReparsing() async throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
-        let october = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 20)))
-        let november = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 11, day: 2)))
-        var clock = october
+        let formatter = ISO8601DateFormatter()
+        func date(_ day: String) throws -> Date {
+            try XCTUnwrap(formatter.date(from: day + "T12:00:00Z"))
+        }
+        var clock = try date("2026-10-31")
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let claudeURL = root.appendingPathComponent("claude.jsonl")
         let codexURL = root.appendingPathComponent("codex.jsonl")
-        let claudeRows = claude("a", "claude-opus-5-5", 10) + "\n"
-            + claude("b", "claude-opus-5-5", 20).replacingOccurrences(
-                of: "2026-10-20T10:00:00Z", with: "2026-11-01T00:00:00Z"
-            )
-        let codexRows = context("gpt-6-sol") + "\n" + codex(10) + "\n"
-            + codex(20).replacingOccurrences(of: "2026-10-20T10:00:00Z", with: "2026-11-01T00:00:00Z")
-        try claudeRows.write(to: claudeURL, atomically: true, encoding: .utf8)
-        try codexRows.write(to: codexURL, atomically: true, encoding: .utf8)
+        let days = ["2026-07-30", "2026-08-01", "2026-08-02", "2026-10-31", "2026-11-01"]
+        let claudeRows = days.enumerated().map { index, day in
+            claude("id-\(index)", "claude-opus-5-5", 10).replacingOccurrences(
+                of: "2026-10-20T10:00:00Z", with: day + "T10:00:00Z")
+        }
+        let codexRows = days.map { day in
+            codex(10).replacingOccurrences(of: "2026-10-20T10:00:00Z", with: day + "T10:00:00Z")
+        }
+        try (claudeRows.joined(separator: "\n") + "\n").write(to: claudeURL, atomically: true, encoding: .utf8)
+        try ([context("gpt-6-sol")] + codexRows).joined(separator: "\n")
+            .write(to: codexURL, atomically: true, encoding: .utf8)
         let claudeParser = ClaudeJSONLParser(calendar: calendar, now: { clock })
         let codexParser = CodexJSONLParser(calendar: calendar, now: { clock })
         let oldClaude = await claudeParser.parse(logSources: [source(claudeURL, .claudeCode)])
         let oldCodex = await codexParser.parse(logSources: [source(codexURL, .codex)])
-        XCTAssertEqual(oldClaude.dailyModelUsage.count, 1)
-        XCTAssertEqual(oldCodex.dailyModelUsage.count, 1)
-        clock = november
+        let octoberDays = try Set(["2026-08-01", "2026-08-02", "2026-10-31"].map {
+            calendar.startOfDay(for: try date($0))
+        })
+        XCTAssertEqual(Set(oldClaude.dailyModelUsage.keys), octoberDays)
+        XCTAssertEqual(Set(oldCodex.dailyModelUsage.keys), octoberDays)
+        clock = try date("2026-11-01")
         let newClaude = await claudeParser.parse(logSources: [source(claudeURL, .claudeCode)])
         let newCodex = await codexParser.parse(logSources: [source(codexURL, .codex)])
-        XCTAssertEqual(newClaude.dailyModelUsage.values.first?["claude-opus-5-5"]?.inputTokens, 20)
-        XCTAssertEqual(newCodex.dailyModelUsage.values.first?["gpt-6-sol"]?.inputTokens, 20)
-        XCTAssertEqual(newCodex.lifetimeModelUsage["gpt-6-sol"]?.inputTokens, 30)
+        let novemberDays = try Set(["2026-08-02", "2026-10-31", "2026-11-01"].map {
+            calendar.startOfDay(for: try date($0))
+        })
+        XCTAssertEqual(Set(newClaude.dailyModelUsage.keys), novemberDays)
+        XCTAssertEqual(Set(newCodex.dailyModelUsage.keys), novemberDays)
+        let stats = await claudeParser.lastParseStats
+        XCTAssertEqual(stats.fullParses, 0)
+        XCTAssertEqual(stats.bytesRead, 0)
+        XCTAssertEqual(stats.hits, 1)
+        let reads = await codexParser.fileReadCountForTesting()
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(newClaude.lifetime.inputTokens, 50)
+        XCTAssertEqual(newCodex.lifetimeModelUsage["gpt-6-sol"]?.inputTokens, 50)
     }
 
     private func claude(_ id: String, _ model: String, _ input: Int) -> String {

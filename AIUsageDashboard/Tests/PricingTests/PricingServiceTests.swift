@@ -211,13 +211,14 @@ final class PricingServiceTests: XCTestCase {
         let gpt5 = await service.cost(model: "gpt-5", tokens: tokens(input: 1_000_000, output: 0, cacheRead: 0))
         XCTAssertEqual(try XCTUnwrap(gpt5), 1.25, accuracy: 0.000_001) // curated 1.25/M, not fixture 9.99
 
-        // Cache written and slimmed to only the four snake_case cost fields.
+        // Cache written and slimmed to only the five snake_case cost fields.
         let data = try Data(contentsOf: url)
         let raw = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]]
         let deepseekRow = try XCTUnwrap(raw?["deepseek-chat"])
         let allowed: Set<String> = [
             "input_cost_per_token", "output_cost_per_token",
-            "cache_read_input_token_cost", "cache_creation_input_token_cost"
+            "cache_read_input_token_cost", "cache_creation_input_token_cost",
+            "cache_creation_input_token_cost_above_1hr"
         ]
         XCTAssertTrue(Set(deepseekRow.keys).isSubset(of: allowed), "cache row not slimmed: \(deepseekRow.keys)")
         XCTAssertNil(deepseekRow["litellm_provider"])

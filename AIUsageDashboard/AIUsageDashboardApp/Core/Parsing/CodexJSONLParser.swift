@@ -1,3 +1,4 @@
+// Tier handling adapted from T3 Code: codexUsage.ts (MIT; THIRD_PARTY_NOTICES.md).
 import Foundation
 
 public actor CodexJSONLParser {
@@ -40,7 +41,6 @@ public actor CodexJSONLParser {
     /// to reconstruct the global result.
     private var fileCache: [String: FileCacheEntry] = [:]
     private var fileReadCount = 0
-    private var modelUsageMonth: DateInterval?
 
     public init(calendar: Calendar = .current, now: @escaping () -> Date = Date.init) {
         self.calendar = calendar
@@ -50,7 +50,6 @@ public actor CodexJSONLParser {
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
         var warnings: [ProviderWarning] = []
         let referenceDate = now()
-        prepareModelUsageMonth(referenceDate)
         var dailyModelUsage: [Date: [String: TokenUsage]] = [:]
         var lifetimeModelUsage: [String: TokenUsage] = [:]
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
@@ -106,6 +105,7 @@ public actor CodexJSONLParser {
                     incrementalAggregate.lastCumulativeUsageBySession =
                         cached.aggregate.lastCumulativeUsageBySession
                     incrementalAggregate.currentModel = cached.aggregate.currentModel
+                    incrementalAggregate.currentTier = cached.aggregate.currentTier
                     fileReadCount += 1
                     parseResult = try await parseFile(
                         at: source.url,
@@ -234,7 +234,7 @@ public actor CodexJSONLParser {
             month: snapshot.month,
             lifetime: snapshot.lifetime,
             dailyUsage: dailyUsage,
-            dailyModelUsage: dailyModelUsage,
+            dailyModelUsage: UsageAggregation.recentModelUsage(dailyModelUsage, calendar: calendar, now: referenceDate),
             lifetimeModelUsage: lifetimeModelUsage,
             dailyTotals: snapshot.dailyTotals,
             todayStart: calendar.startOfDay(for: referenceDate),
@@ -274,6 +274,7 @@ public actor CodexJSONLParser {
         var dailyUsage: [Date: TokenUsage]
         var dailyModelUsage: [Date: [String: TokenUsage]]
         var lifetimeModelUsage: [String: TokenUsage]
+        var currentTier = ""
         var currentModel: String
         var dailyReportedTotals: [Date: Int]
         var hourlyTotals: [Date: Int]
@@ -317,6 +318,7 @@ public actor CodexJSONLParser {
         if let model = record.model {
             aggregate.currentModel = model.isEmpty ? "unknown" : model
         }
+        if let tier = record.tier { aggregate.currentTier = tier }
         guard record.contributesUsage else { return }
 
         let repeatsCumulativeUsage: Bool
@@ -367,16 +369,15 @@ public actor CodexJSONLParser {
 
     private func accumulateLifetimeModelUsage(_ usage: TokenUsage, into aggregate: inout FileAggregate) {
         guard (usage.totalTokens ?? 0) > 0 else { return }
-        let model = aggregate.currentModel
+        let model = aggregate.currentModel + aggregate.currentTier
         aggregate.lifetimeModelUsage[model] = (
             aggregate.lifetimeModelUsage[model] ?? UsageWindows.emptyUsage(.localParsed)
         ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
     }
 
     private func accumulateModelUsage(_ usage: TokenUsage, day: Date, into aggregate: inout FileAggregate) {
-        guard let month = modelUsageMonth, day >= month.start, day < month.end,
-              (usage.totalTokens ?? 0) > 0 else { return }
-        let model = aggregate.currentModel
+        guard (usage.totalTokens ?? 0) > 0 else { return }
+        let model = aggregate.currentModel + aggregate.currentTier
         let previous = aggregate.dailyModelUsage[day]?[model] ?? UsageWindows.emptyUsage(.localParsed)
         aggregate.dailyModelUsage[day, default: [:]][model] = previous.merging(
             usage, overflowed: &aggregate.arithmeticOverflowed
@@ -457,14 +458,6 @@ public actor CodexJSONLParser {
         }
     }
 
-    private func prepareModelUsageMonth(_ referenceDate: Date) {
-        let month = calendar.dateInterval(of: .month, for: referenceDate)
-        if month != modelUsageMonth {
-            modelUsageMonth = month
-            fileCache.removeAll(keepingCapacity: true)
-        }
-    }
-
     private func collectModelUsage(
         from files: [FileUsage],
         daily: inout [Date: [String: TokenUsage]],
@@ -494,6 +487,7 @@ public actor CodexJSONLParser {
             ).merging(usage, overflowed: &aggregate.arithmeticOverflowed)
         }
         aggregate.currentModel = incremental.currentModel
+        aggregate.currentTier = incremental.currentTier
     }
 
     private func mergeModels(
@@ -635,6 +629,7 @@ struct CodexUsageRecord: Sendable {
     let cumulativeUsageSignature: CodexCumulativeUsageSignature?
     let rateLimits: CodexRateLimitSnapshot?
     var model: String?
+    var tier: String?
 
     func isNewerThan(_ finalTotal: CodexSessionFinalTotal) -> Bool {
         switch (timestamp, finalTotal.timestamp) {
@@ -733,7 +728,12 @@ extension CodexJSONLParser {
               payload["type"] as? String == "token_count" else {
             let model = json["type"] as? String == "turn_context"
                 ? (json["payload"] as? [String: Any])?["model"] as? String : nil
-            guard timestamp != nil || model != nil else { return .skipped }
+            let event = json["payload"] as? [String: Any]
+            let settings = event?["thread_settings"] as? [String: Any]
+            let tier: String? = json["type"] as? String == "event_msg"
+                && event?["type"] as? String == "thread_settings_applied"
+                ? Self.tierSuffix(settings?["service_tier"] as? String) : nil
+            guard timestamp != nil || model != nil || tier != nil else { return .skipped }
             return .usage(CodexUsageRecord(
                 timestamp: timestamp,
                 contributesUsage: false,
@@ -742,7 +742,8 @@ extension CodexJSONLParser {
                 cumulativeReportedTotalTokens: nil,
                 cumulativeUsageSignature: nil,
                 rateLimits: nil,
-                model: model
+                model: model,
+                tier: tier
             ))
         }
 
@@ -769,6 +770,14 @@ extension CodexJSONLParser {
             cumulativeUsageSignature: cumulativeSignature,
             rateLimits: rateLimits(from: payload["rate_limits"], timestamp: timestamp)
         ))
+    }
+
+    private static func tierSuffix(_ tier: String?) -> String {
+        switch tier {
+        case "priority", "fast": return "@priority"
+        case "ultrafast": return "@ultrafast"
+        default: return ""
+        }
     }
 
     private func cumulativeUsageSignature(
