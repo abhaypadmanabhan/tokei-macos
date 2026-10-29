@@ -79,8 +79,7 @@ public actor CodexJSONLParser {
                     // A calendar update may run while the shared cache actor is awaited.
                     // Never repopulate freshly invalidated buckets with an older parse epoch.
                     guard epoch == calendarEpoch else { return await parse(logSources: logSources) }
-                    if entry.cacheable { fileCache[path] = entry }
-                    else { fileCache.removeValue(forKey: path) }
+                    fileCache[path] = entry.cacheable ? entry : nil
                 }
                 apply(
                     entry.aggregate, to: &windows, dailyUsage: &dailyUsage,
