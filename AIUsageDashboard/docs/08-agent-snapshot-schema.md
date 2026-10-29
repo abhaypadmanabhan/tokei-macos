@@ -322,6 +322,7 @@ framework.
 tokei status
 tokei status --json
 tokei mcp
+tokei guard --provider codex --min-headroom 15
 tokei version
 ```
 
@@ -333,11 +334,24 @@ The newline-delimited JSON-RPC server exposes exactly two read-only tools:
 
 | Tool | Result in `content[0].text` |
 |---|---|
-| `get_usage` | Full snapshot with reader-side `stale` and `ageSeconds`. |
+| `get_usage` | Snapshot with reader-side `stale` and `ageSeconds`; optional `provider` filters to one known provider ID. |
 | `get_route_recommendation` | Flat recommendation plus `generatedAt`, `ageSeconds`, `validUntil`, and `stale`. |
 
-Both tool descriptions document the account contract and quota status codes. The
-server performs no network or credential access.
+Both tools publish a title and read-only, idempotent, closed-world annotations.
+The handshake echoes a supported revision (`2025-06-18`, `2025-03-26`, `2024-11-05`),
+otherwise selects `2025-06-18`. Only that newest revision publishes `outputSchema`
+and successful `structuredContent`; the equivalent compact JSON text block remains
+for all clients. Invalid provider IDs/types and extra arguments return `-32602`.
+A filtered usage response omits the cross-provider aggregate and recommendation.
+The server performs no network or credential access, and closed stdout exits cleanly.
+
+`tokei guard [--provider P] [--min-headroom N]` prints one line and exits 0 for
+fresh eligible headroom at least N (default 15), 1 below N, 69 for stale, missing,
+expired, or unavailable quota, and 64 for bad arguments. Without `--provider` it
+uses the recommended provider/account and requires an unexpired recommendation.
+Only accounts with `quota.status == eligible`, unexpired `quota.validUntil`, and a
+fresh official binding reading qualify. Single-account adapters without account
+eligibility metadata return 69. The command never refreshes quota or contacts a provider.
 
 ## 7. Registration
 
