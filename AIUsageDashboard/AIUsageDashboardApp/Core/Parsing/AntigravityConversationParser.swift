@@ -17,7 +17,7 @@ public actor AntigravityConversationParser {
         let parsed: AntigravityConversationDatabase?
     }
     private let roots: [URL]
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: @Sendable () -> Date
     private let copier: @Sendable (URL, URL) throws -> Void
     private var cache: [URL: CacheEntry] = [:]
@@ -35,6 +35,12 @@ public actor AntigravityConversationParser {
 
     public func hasLocalHistory() -> Bool {
         !AntigravityConversationFiles.discover(roots).files.isEmpty
+    }
+
+    public func updateCalendar(_ calendar: Calendar) {
+        guard self.calendar != calendar else { return }
+        self.calendar = calendar
+        cache.removeAll(keepingCapacity: true)
     }
 
     public func parse() -> AggregateUsage {

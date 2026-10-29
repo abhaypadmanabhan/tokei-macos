@@ -283,3 +283,47 @@ private final class CopyCalls: @unchecked Sendable {
     var count: Int { lock.withLock { value } }
     func increment() { lock.withLock { value += 1 } }
 }
+
+extension AntigravityConversationParserTests {
+    func testProviderCalendarChangeRebuildsDayKeysMonthCostAndCache() async throws {
+        let formatter = ISO8601DateFormatter()
+        let reference = try XCTUnwrap(formatter.date(from: "2026-10-01T03:00:00Z"))
+        let rows = try ["2026-09-30T00:30:00Z", "2026-10-01T00:30:00Z"].enumerated().map { index, value in
+            generation(usage(input: 1_000_000, output: 10, response: "zone-\(index)"),
+                       at: UInt64(try XCTUnwrap(formatter.date(from: value)).timeIntervalSince1970))
+        }
+        try database("zone.db", generations: rows, steps: [])
+        let calls = CopyCalls()
+        let history = AntigravityConversationParser(roots: [directory], calendar: calendar, now: { reference },
+                                                   copier: { source, destination in
+            calls.increment()
+            try SQLiteSidecarCopy.copyDatabase(from: source, to: destination, using: .default)
+        })
+        let suite = "ai.padzy.tokei.wp1.antigravity.zone"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
+                                          conversationParser: history, userDefaults: defaults,
+                                          calendar: calendar, now: { reference })
+        let initial = try await provider.fetchSnapshot()
+        XCTAssertEqual(try XCTUnwrap(initial.costUsage?.amount), 1.50009, accuracy: 0.000001)
+        _ = try await provider.fetchSnapshot()
+        XCTAssertEqual(calls.count, 1)
+        let candidate: any UsageProvider = provider
+        let aware = try XCTUnwrap(candidate as? any CalendarAwareProvider)
+        var pacific = calendar
+        pacific.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        await aware.updateCalendar(pacific)
+        let updated = try await provider.fetchSnapshot()
+        let expected = try Set([29, 30].map { day in
+            try XCTUnwrap(pacific.date(from: DateComponents(year: 2026, month: 9, day: day)))
+        })
+        XCTAssertEqual(Set(try XCTUnwrap(updated.dailyModelUsage).keys), expected)
+        XCTAssertEqual(try XCTUnwrap(updated.costUsage?.amount), 3.00018, accuracy: 0.000001)
+        XCTAssertEqual(calls.count, 2)
+        await aware.updateCalendar(pacific)
+        _ = try await provider.fetchSnapshot()
+        XCTAssertEqual(calls.count, 2, "The same calendar must retain the rebuilt cache")
+    }
+}

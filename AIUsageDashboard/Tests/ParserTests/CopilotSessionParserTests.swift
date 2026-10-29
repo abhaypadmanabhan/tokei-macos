@@ -293,3 +293,40 @@ private final class CopilotReadCalls: @unchecked Sendable {
     var count: Int { lock.withLock { value } }
     func increment() { lock.withLock { value += 1 } }
 }
+
+extension CopilotSessionParserTests {
+    func testProviderCalendarChangeRebuildsDayKeysMonthCostAndCache() async throws {
+        let reference = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-01T03:00:00Z"))
+        try write(shutdown("2026-09-30T00:30:00Z", input: 1_000_000, output: 0) + "\n"
+                  + shutdown("2026-10-01T00:30:00Z", input: 2_000_000, output: 0))
+        let calls = CopilotReadCalls()
+        let parser = CopilotSessionParser(sessionStateDirectory: directory, calendar: calendar, now: { reference },
+                                          chunkReader: { handle in
+            calls.increment()
+            return try handle.read(upToCount: 64 * 1024)
+        })
+        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser,
+                                       calendar: calendar, now: { reference })
+        let initial = try await provider.fetchSnapshot()
+        XCTAssertEqual(initial.costUsage?.amount, 2)
+        let initialReads = calls.count
+        XCTAssertGreaterThan(initialReads, 0)
+        _ = try await provider.fetchSnapshot()
+        XCTAssertEqual(calls.count, initialReads)
+        let candidate: any UsageProvider = provider
+        let aware = try XCTUnwrap(candidate as? any CalendarAwareProvider)
+        var pacific = calendar
+        pacific.timeZone = try XCTUnwrap(TimeZone(identifier: "America/Los_Angeles"))
+        await aware.updateCalendar(pacific)
+        let updated = try await provider.fetchSnapshot()
+        let expected = try Set([29, 30].map { day in
+            try XCTUnwrap(pacific.date(from: DateComponents(year: 2026, month: 9, day: day)))
+        })
+        XCTAssertEqual(Set(try XCTUnwrap(updated.dailyModelUsage).keys), expected)
+        XCTAssertEqual(updated.costUsage?.amount, 4)
+        XCTAssertEqual(calls.count, initialReads * 2)
+        await aware.updateCalendar(pacific)
+        _ = try await provider.fetchSnapshot()
+        XCTAssertEqual(calls.count, initialReads * 2, "The same calendar must retain the rebuilt cache")
+    }
+}

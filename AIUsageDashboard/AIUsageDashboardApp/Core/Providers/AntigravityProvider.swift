@@ -50,6 +50,11 @@ public actor AntigravityProvider: UsageProvider {
         fileManager.fileExists(atPath: stateDatabaseURL.path) ? .authenticated : .unknown
     }
 
+    public func updateCalendar(_ calendar: Calendar) async {
+        self.calendar = calendar
+        await conversationParser.updateCalendar(calendar)
+    }
+
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let fetchedAt = now()
         let state = fileManager.fileExists(atPath: stateDatabaseURL.path)
@@ -119,3 +124,5 @@ public actor AntigravityProvider: UsageProvider {
         return warnings
     }
 }
+
+extension AntigravityProvider: CalendarAwareProvider {}

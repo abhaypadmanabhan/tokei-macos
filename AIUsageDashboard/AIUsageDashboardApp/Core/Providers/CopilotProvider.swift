@@ -96,6 +96,11 @@ public actor CopilotProvider: UsageProvider {
         await detectAvailability() == .installed ? .unknown : .unauthenticated
     }
 
+    public func updateCalendar(_ calendar: Calendar) async {
+        self.calendar = calendar
+        await sessionParser.updateCalendar(calendar)
+    }
+
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let fetchedAt = now()
         let history = await sessionParser.parse()
@@ -145,3 +150,5 @@ public actor CopilotProvider: UsageProvider {
         return name == "github.copilot" || name.hasPrefix("github.copilot-")
     }
 }
+
+extension CopilotProvider: CalendarAwareProvider {}

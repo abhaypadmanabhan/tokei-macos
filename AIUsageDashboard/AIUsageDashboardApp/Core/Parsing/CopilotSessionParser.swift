@@ -23,7 +23,7 @@ public actor CopilotSessionParser {
         let malformed: Int
     }
     private let root: URL
-    private let calendar: Calendar
+    private var calendar: Calendar
     private let now: @Sendable () -> Date
     private let chunkReader: @Sendable (FileHandle) throws -> Data?
     private var cache: [URL: CachedFile] = [:]
@@ -36,6 +36,12 @@ public actor CopilotSessionParser {
         self.calendar = calendar
         self.now = now
         self.chunkReader = chunkReader ?? { try $0.read(upToCount: 64 * 1024) }
+    }
+
+    public func updateCalendar(_ calendar: Calendar) {
+        guard self.calendar != calendar else { return }
+        self.calendar = calendar
+        cache.removeAll(keepingCapacity: true)
     }
 
     public func parse() -> AggregateUsage {
