@@ -116,15 +116,39 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.costUsage?.amount ?? 0, 1234.62, accuracy: 0.01)
         XCTAssertEqual(snapshot.costUsage?.currency, "USD")
 
+        XCTAssertEqual(snapshot.quotaWindows.count, 2)
+        XCTAssertEqual(snapshot.quotaWindows.map(\.used), [40, 45])
+        XCTAssertEqual(snapshot.quotaWindows.map(\.remaining), [60, 55])
+        XCTAssertEqual(snapshot.quotaWindows.map(\.label), ["Cursor models", "Other models"])
+        XCTAssertEqual(snapshot.quotaWindows.map(\.bucketKey), ["cursor_auto", "cursor_api"])
+        for quota in snapshot.quotaWindows {
+            XCTAssertEqual(quota.type, .monthly)
+            XCTAssertEqual(quota.limit, 100)
+            XCTAssertEqual(quota.confidence, .providerReported)
+            XCTAssertNotNil(quota.resetAt)
+            XCTAssertEqual(quota.observedAt, referenceNow)
+        }
+    }
+
+    func testOnlyOverallUsagePublishesOneWindowWithExistingPlanLabel() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
+        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 0, composerAccepted: 0))
+        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
+        let summary = """
+        {"membershipType":"pro","billingCycleEnd":"2026-07-31T00:00:00.000Z",
+         "individualUsage":{"plan":{"totalPercentUsed":42.5}}}
+        """
+        let client = MockCursorUsageClient(
+            csv: .success(CursorFixtures.usageEventsCSV), summary: .success(Data(summary.utf8))
+        )
+        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
+
         XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        let quota = snapshot.quotaWindows[0]
-        XCTAssertEqual(quota.type, .monthly)
+        let quota = try XCTUnwrap(snapshot.quotaWindows.first)
         XCTAssertEqual(quota.used, 42.5)
-        XCTAssertEqual(quota.limit, 100)
-        XCTAssertEqual(quota.confidence, .providerReported)
+        XCTAssertEqual(quota.remaining, 57.5)
         XCTAssertEqual(quota.label, "Pro (active)")
-        XCTAssertNotNil(quota.resetAt)
-        // A3: provider quota freshness is the successful response time.
+        XCTAssertNil(quota.bucketKey)
         XCTAssertEqual(quota.observedAt, referenceNow)
     }
 
