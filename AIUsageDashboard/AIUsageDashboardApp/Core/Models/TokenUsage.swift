@@ -81,6 +81,10 @@ public struct TokenUsage: Sendable {
     public let outputTokens: Int?
     public let cacheReadTokens: Int?
     public let cacheCreationTokens: Int?
+    /// The part of `cacheCreationTokens` written with Claude's 1-hour cache TTL, which is
+    /// billed at a higher rate than the default 5-minute TTL. A subset, never an extra
+    /// bucket: `totalTokens` does not add it. `nil` when the source does not split TTLs.
+    public let cacheCreation1hTokens: Int?
     public let reasoningTokens: Int?
     public var totalTokens: Int? {
         var overflowed = false
@@ -99,6 +103,7 @@ public struct TokenUsage: Sendable {
         outputTokens: Int? = nil,
         cacheReadTokens: Int? = nil,
         cacheCreationTokens: Int? = nil,
+        cacheCreation1hTokens: Int? = nil,
         reasoningTokens: Int? = nil,
         confidence: MetricConfidence
     ) {
@@ -106,6 +111,7 @@ public struct TokenUsage: Sendable {
         self.outputTokens = outputTokens
         self.cacheReadTokens = cacheReadTokens
         self.cacheCreationTokens = cacheCreationTokens
+        self.cacheCreation1hTokens = cacheCreation1hTokens
         self.reasoningTokens = reasoningTokens
         self.confidence = confidence
     }
@@ -139,6 +145,11 @@ public struct TokenUsage: Sendable {
                 other.cacheCreationTokens ?? 0,
                 overflowed: &overflowed
             ),
+            cacheCreation1hTokens: mergedSubset(
+                cacheCreation1hTokens,
+                other.cacheCreation1hTokens,
+                overflowed: &overflowed
+            ),
             reasoningTokens: TokenArithmetic.adding(
                 reasoningTokens ?? 0,
                 other.reasoningTokens ?? 0,
@@ -148,6 +159,13 @@ public struct TokenUsage: Sendable {
         )
         _ = merged.totalTokens(overflowed: &overflowed)
         return merged
+    }
+
+    /// A TTL split stays `nil` only when neither side reported one, so a merge never
+    /// invents a split that no source made.
+    private func mergedSubset(_ lhs: Int?, _ rhs: Int?, overflowed: inout Bool) -> Int? {
+        if lhs == nil, rhs == nil { return nil }
+        return TokenArithmetic.adding(lhs ?? 0, rhs ?? 0, overflowed: &overflowed)
     }
 
     private func minConfidence(_ a: MetricConfidence, _ b: MetricConfidence) -> MetricConfidence {
@@ -170,6 +188,7 @@ enum UsageAggregation {
             outputTokens: total(\.outputTokens),
             cacheReadTokens: total(\.cacheReadTokens),
             cacheCreationTokens: total(\.cacheCreationTokens),
+            cacheCreation1hTokens: total(\.cacheCreation1hTokens),
             reasoningTokens: total(\.reasoningTokens),
             confidence: usages.first { $0.totalTokens != nil }?.confidence ?? .unavailable
         )

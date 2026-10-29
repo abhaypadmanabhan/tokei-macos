@@ -138,6 +138,7 @@ extension TokenUsage: Codable {
         case outputTokens
         case cacheReadTokens
         case cacheCreationTokens
+        case cacheCreation1hTokens
         case reasoningTokens
         case confidence
     }
@@ -148,6 +149,7 @@ extension TokenUsage: Codable {
         outputTokens = try container.decodeIfPresent(Int.self, forKey: .outputTokens)
         cacheReadTokens = try container.decodeIfPresent(Int.self, forKey: .cacheReadTokens)
         cacheCreationTokens = try container.decodeIfPresent(Int.self, forKey: .cacheCreationTokens)
+        cacheCreation1hTokens = try container.decodeIfPresent(Int.self, forKey: .cacheCreation1hTokens)
         reasoningTokens = try container.decodeIfPresent(Int.self, forKey: .reasoningTokens)
         confidence = try container.decode(MetricConfidence.self, forKey: .confidence)
     }
@@ -158,6 +160,7 @@ extension TokenUsage: Codable {
         try container.encodeIfPresent(outputTokens, forKey: .outputTokens)
         try container.encodeIfPresent(cacheReadTokens, forKey: .cacheReadTokens)
         try container.encodeIfPresent(cacheCreationTokens, forKey: .cacheCreationTokens)
+        try container.encodeIfPresent(cacheCreation1hTokens, forKey: .cacheCreation1hTokens)
         try container.encodeIfPresent(reasoningTokens, forKey: .reasoningTokens)
         try container.encode(confidence, forKey: .confidence)
     }
