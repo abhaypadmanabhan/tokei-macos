@@ -13,7 +13,7 @@ enum TokeiCLI {
     /// the `cli-version-sync` gate fails the commit when the two drift — this string
     /// silently reported 0.7.0 from a 0.7.1 build and cost real debugging time, because
     /// `tokei version` is the first thing you check when diagnosing which binary is live.
-    static let version = "0.10.0"
+    static let version = "0.11.0"
 }
 
 func printUsage(to handle: FileHandle = .standardOutput) {

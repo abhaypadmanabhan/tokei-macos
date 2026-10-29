@@ -3,6 +3,61 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.11.0] — 2026-10-29
+
+Build 11. Accurate numbers, dollars on the main screen, a lighter footprint, safer network calls and a
+richer agent surface. Audit trail: `tasks/patch-bibles/2026-10-28.md` (measurements, five work
+packages, Abhay's overnight answers), `tasks/reports/2026-10-28-wp{1,2,3,4}.result.md`,
+`tasks/reports/2026-10-29-wp5.result.md`, `tasks/reports/release-2026-10-29.md`. Research:
+`tasks/research/2026-10-28-{t3-delta,public-survey,repo-audit}.md`. Every package was reviewed by a
+different model family than its author (Codex ↔ Claude), two to three rounds each.
+
+### Fixed — numbers
+- **Codex compressed logs were invisible.** Recent Codex CLIs store older rollouts as `.jsonl.zst`;
+  Tokei read only `.jsonl`, so Codex tokens and value were undercounted (audited Mac: October showed
+  $190 instead of about $2,048). A bounded pure-Swift port of zstd's BSD educational decoder reads them
+  (1,649 real files byte-identical to `zstd -dc`; October within 0.03 % of an independent recount).
+  The first sync after launch takes longer while it decodes; later refreshes are unchanged.
+- **Claude 1-hour cache writes** are priced at their real rate (2x input) instead of the 5-minute 1.25x
+  (audited Mac: +$885.77 this month).
+- **Fast / priority tiers** (Codex `service_tier`, Claude `usage.speed`) are priced at their tier rates.
+- Copilot's dotted Claude ids (`claude-sonnet-4.6`) price correctly.
+
+### Added
+- **Cost view on Overview**: today's API-equivalent value, a daily dollar chart over 7/30/90 days,
+  dollars per agent. Unpriced days are gaps, never $0; a change is shown only when both periods are
+  fully priced. Per-model history now covers a rolling 92 days.
+- **Run-out forecast** on every quota gauge ("Runs out ~3:40 PM, 6 h before reset" / "Lasts to reset").
+- **Antigravity token counts and value** from its local conversation databases.
+- **GitHub Copilot CLI token counts** from its session logs (a resumed session counts once).
+- **Claude extra usage** (overage budget) in the drill-in and on Value; never counted as quota.
+- **Cursor model allowances** shown as separate windows ("Cursor models" / "Other models").
+- **Settings**: alert levels per tool, a warning before a quota runs out, Gemini quota switch, Open at login.
+- **Keyboard**: ⌘1/⌘2/⌘3 tabs, ⌘[ and Esc back, ⌘R sync, all in the menus.
+- **Agents**: MCP protocol negotiation (2025-06-18 / 2025-03-26 / 2024-11-05), tool titles and read-only
+  annotations, `outputSchema` + `structuredContent`, compact text, a `provider` filter on `get_usage`,
+  pace and run-out forecast on every snapshot window; `tokei guard [--provider P] [--min-headroom N]`
+  (exit 0 room, 1 below, 69 no fresh reading).
+
+### Changed
+- Launch shows the last saved numbers at once, with their age, instead of a blank page while logs load.
+- No eyebrow text: no small uppercase or letter-spaced labels anywhere in the app (a test fails on one).
+- Overview folds agents with no usage into one line and compares like for like.
+- Quota rows say why they have no reading instead of "FETCHING…"; one definition of "tightest quota".
+- Gemini quota is checked at most every 10 minutes and backs off on 429 (still on by default).
+
+### Performance and files
+- Cursor's state database is no longer copied on every refresh when unchanged (up to ~28 GB/h of temp
+  writes while active on the audited Mac).
+- Saved files are rewritten only when their contents change; quota history is compact and per account.
+- Low Power Mode stretches the idle refresh to 30 minutes; file changes still refresh at once.
+
+### Security
+- Tokei's files are 0600 in a 0700 folder, hardened at launch; symlinks are not followed.
+- Network sessions keep no disk cache and refuse redirects to another host or port.
+- SQLite copies open in defensive mode and refuse virtual tables; stored cooldowns are clamped.
+- Third-party notices (T3 Code MIT, CodexBar MIT, zstd BSD) ship inside the app.
+
 ## [0.10.0] — 2026-10-20
 
 Build 10. Adopts T3 Code v2's usage-measurement techniques where Tokei's own numbers were off.
