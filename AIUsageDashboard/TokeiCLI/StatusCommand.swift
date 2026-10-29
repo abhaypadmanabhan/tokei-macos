@@ -6,7 +6,9 @@ enum StatusCommand {
         do {
             let snapshot = try reader.read()
             if json {
-                let data = try AgentSnapshot.makeEncoder().encode(snapshot)
+                let encoder = AgentSnapshot.makeEncoder()
+                encoder.outputFormatting.insert(.prettyPrinted)
+                let data = try encoder.encode(snapshot)
                 guard let text = String(bytes: data, encoding: .utf8) else {
                     FileHandle.standardError.write(Data("tokei: failed to encode snapshot as UTF-8\n".utf8))
                     return 1

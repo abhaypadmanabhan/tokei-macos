@@ -1,5 +1,6 @@
 import Foundation
 import CoreFoundation
+import Darwin
 
 // The `tokei` target compiles Core/Agent/AgentSnapshot.swift directly and does NOT link
 // the Core framework (it must stay standalone). The AIUsageDashboardCoreTests bundle
@@ -22,13 +23,15 @@ import AIUsageDashboardCore
 ///
 /// Protocol messages are line-delimited JSON; logs/diagnostics go to stderr so they
 /// never corrupt the protocol stream on stdout.
-struct MCPServer {
-    static let protocolVersion = "2024-11-05"
+final class MCPServer {
+    static let protocolVersion = "2025-06-18"
+    static let supportedVersions = ["2025-06-18", "2025-03-26", "2024-11-05"]
+    private(set) var negotiatedVersion = MCPServer.protocolVersion
     static let serverName = "tokei"
     static let oversizedFrameMessage = "Invalid Request: frame exceeds 1048576 bytes."
     private static let maximumDiagnosticNameBytes = 128
 
-    private enum ToolName: String {
+    enum ToolName: String {
         case usage = "get_usage"
         case routeRecommendation = "get_route_recommendation"
     }
@@ -44,7 +47,7 @@ struct MCPServer {
     init(
         reader: SnapshotReader = SnapshotReader(),
         version: String,
-        output: @escaping (Data) -> Void = { FileHandle.standardOutput.write($0) }
+        output: @escaping (Data) -> Void = MCPServer.writeStandardOutput
     ) {
         self.reader = reader
         self.version = version
@@ -147,7 +150,7 @@ struct MCPServer {
     private func dispatch(_ request: Request) {
         switch request.method {
         case "initialize":
-            respond(id: request.id, result: initializeResult())
+            respond(id: request.id, result: initializeResult(params: request.object["params"]))
         case "notifications/initialized", "notifications/cancelled":
             respond(id: request.id, result: [:])
         case "ping":
@@ -156,8 +159,8 @@ struct MCPServer {
             respond(id: request.id, result: ["tools": toolDefinitions()])
         case "tools/call":
             switch validateToolCall(params: request.object["params"]) {
-            case let .valid(name):
-                respond(id: request.id, result: toolCallResult(name: name))
+            case let .valid(name, provider):
+                respond(id: request.id, result: toolCallResult(name: name, provider: provider))
             case let .invalid(message):
                 if !request.isNotification {
                     send(errorResponse(id: request.id, code: -32602, message: message))
@@ -194,17 +197,12 @@ struct MCPServer {
 
     // MARK: - initialize
 
-    /// Always answer with the version we actually implement, never the one the client
-    /// asked for. That is the whole of MCP version negotiation: if the server doesn't
-    /// support the requested revision it responds with one it does, and the client
-    /// decides whether to continue. Erroring instead is a hard-fail against every
-    /// client on a newer spec revision — Claude Code 2.1.x requests `2025-11-25` and
-    /// got `-32602: Unsupported protocol version`, so `claude mcp add tokei` registered
-    /// fine and then never connected. Echoing the client's value back would be the
-    /// opposite bug (claiming support we don't have); returning our own is neither.
-    private func initializeResult() -> [String: Any] {
-        [
-            "protocolVersion": Self.protocolVersion,
+    private func initializeResult(params: Any?) -> [String: Any] {
+        let requested = (params as? [String: Any])?["protocolVersion"] as? String
+        negotiatedVersion = requested.flatMap { Self.supportedVersions.contains($0) ? $0 : nil }
+            ?? Self.protocolVersion
+        return [
+            "protocolVersion": negotiatedVersion,
             "capabilities": ["tools": [String: Any]()],
             "serverInfo": ["name": Self.serverName, "version": version],
             "instructions": Self.instructions
@@ -213,52 +211,18 @@ struct MCPServer {
 
     // MARK: - tools/list
 
-    private func toolDefinitions() -> [[String: Any]] {
-        let emptyInput: [String: Any] = [
-            "type": "object",
-            "properties": [String: Any](),
-            "additionalProperties": false
-        ]
-        return [
-            [
-                "name": ToolName.usage.rawValue,
-                // Trigger first, payload second: an agent decides whether to call from the
-                // opening clause, so "when" has to lead. Same reason `instructions` exists.
-                "description": "Call when you need the full quota picture across the user's AI "
-                    + "coding tools rather than a single routing verdict — to report what they "
-                    + "have left, to size a job against the current window, or to compare two "
-                    + "specific providers. Returns per-provider quota windows (used %, reset "
-                    + "time, confidence, source), aggregate utilization, token counts, and "
-                    + "timestamps. Includes a `stale` flag when the data is old or Tokei isn't "
-                    + "running. " + Self.accountContract + " Read-only; no network or credentials.",
-                "inputSchema": emptyInput
-            ],
-            [
-                "name": ToolName.routeRecommendation.rawValue,
-                "description": "Call this BEFORE you spawn, delegate to, or orchestrate another "
-                    + "coding agent or subagent, and before any long, parallel, or fan-out run "
-                    + "that will consume a provider's quota — routing work to a provider about "
-                    + "to hit its limit wastes the run. Returns which provider to route new work "
-                    + "to (least-utilized), which to avoid (at or over 85% of a limit), and the "
-                    + "reason, with generatedAt, ageSeconds, validUntil, and stale metadata. "
-                    + Self.accountContract + " Cheap and read-only: prefer calling it over guessing.",
-                "inputSchema": emptyInput
-            ]
-        ]
+    private func filtered(_ snapshot: AgentSnapshot, provider: String?) -> AgentSnapshot {
+        guard let provider else { return snapshot }
+        return AgentSnapshot(schemaVersion: snapshot.schemaVersion, generatedAt: snapshot.generatedAt,
+                             providers: snapshot.providers.filter { $0.id == provider },
+                             aggregateUtilizationPercent: nil, recommendation: nil,
+                             stale: snapshot.stale, ageSeconds: snapshot.ageSeconds)
     }
-
-    private static let accountContract = "Accounts use `accountID`, an opaque provider-scoped "
-        + "identity that is stable across machines for known identities; `accounts[].id` is a "
-        + "legacy locator; feature-detect `accountID` and `target`. An older helper in front of "
-        + "a newer app is a lossy proxy. Pass `recommendation.target.selector.env` as the "
-        + "environment map to the process API; never concatenate it into a shell string. "
-        + "`quota.status` is `eligible`, `expiredCredentials`, `cooldown`, `disabled`, "
-        + "`requestFailed`, `noQuotaSource`, or `unknown`; only `eligible` is positive headroom."
 
     // MARK: - tools/call
 
     private enum ToolCallValidation {
-        case valid(ToolName)
+        case valid(ToolName, provider: String?)
         case invalid(String)
     }
 
@@ -272,22 +236,32 @@ struct MCPServer {
         guard let tool = ToolName(rawValue: name) else {
             return .invalid("Unknown tool: \(Self.boundedDiagnosticName(name))")
         }
+        let arguments: [String: Any]
         if let value = params["arguments"] {
-            guard let arguments = value as? [String: Any], arguments.isEmpty else {
-                return .invalid(
-                    "Invalid arguments for \(Self.boundedDiagnosticName(name)): expected an empty object."
-                )
-            }
+            guard let object = value as? [String: Any] else { return .invalid("Arguments must be an object.") }
+            arguments = object
+        } else {
+            arguments = [:]
         }
-        return .valid(tool)
+        guard Set(arguments.keys).isSubset(of: tool == .usage ? ["provider"] : []) else {
+            return .invalid("Unknown tool argument.")
+        }
+        var provider: String?
+        if let value = arguments["provider"] {
+            guard let name = value as? String, SnapshotReader.providerIDs.contains(name) else {
+                return .invalid("Unknown provider.")
+            }
+            provider = name
+        }
+        return .valid(tool, provider: provider)
     }
 
-    private func toolCallResult(name: ToolName) -> [String: Any] {
+    private func toolCallResult(name: ToolName, provider: String?) -> [String: Any] {
         do {
             let snapshot = try reader.read()
             switch name {
             case .usage:
-                return textContent(try encode(snapshot), warning: staleWarning(snapshot))
+                return textContent(try encode(filtered(snapshot, provider: provider)), warning: staleWarning(snapshot))
             case .routeRecommendation:
                 return textContent(try recommendationText(snapshot), warning: staleWarning(snapshot))
             }
@@ -359,10 +333,12 @@ private extension MCPServer {
         if let warning {
             content.append(["type": "text", "text": warning])
         }
-        return [
-            "content": content,
-            "isError": isError
-        ]
+        var result: [String: Any] = ["content": content, "isError": isError]
+        if negotiatedVersion == Self.protocolVersion, !isError,
+           let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] {
+            result["structuredContent"] = object
+        }
+        return result
     }
 }
 
@@ -383,5 +359,20 @@ private extension MCPServer {
         var line = data
         line.append(0x0A) // newline-delimited transport
         output(line)
+    }
+}
+
+private extension MCPServer {
+    static func writeStandardOutput(_ data: Data) {
+        data.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(STDOUT_FILENO, base.advanced(by: offset), bytes.count - offset)
+                if count > 0 { offset += count } else if count < 0, errno == EINTR { continue } else {
+                    exit(errno == EPIPE ? 0 : 74)
+                }
+            }
+        }
     }
 }

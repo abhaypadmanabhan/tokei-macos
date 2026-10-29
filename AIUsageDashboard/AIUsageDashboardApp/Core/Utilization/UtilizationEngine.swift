@@ -37,7 +37,8 @@ public enum UtilizationEngine {
         // "missing" (partial coverage) — distinct from a provider that has no quota
         // concept at all, which simply isn't counted.
         let hasMissingQuotaProvider = snapshots.contains { snapshot in
-            !snapshot.quotaWindows.isEmpty && peakByProvider[snapshot.providerID] == nil
+            snapshot.quotaWindows.contains { !$0.isInformationalCredits }
+                && peakByProvider[snapshot.providerID] == nil
         }
 
         let peaks = Array(peakByProvider.values)
@@ -56,7 +57,7 @@ public enum UtilizationEngine {
     // MARK: - Per-window mapping
 
     private static func utilization(from window: QuotaWindow, plan: String?) -> Utilization? {
-        guard let percent = usedPercent(from: window) else { return nil }
+        guard !window.isInformationalCredits, let percent = usedPercent(from: window) else { return nil }
         return Utilization(
             providerID: window.providerID,
             window: window.type,
@@ -108,4 +109,9 @@ public enum UtilizationEngine {
         case .exact: return 4
         }
     }
+}
+
+extension QuotaWindow {
+    /// Claude overage is a monetary balance, not a binding rate limit.
+    var isInformationalCredits: Bool { bucketKey == "claude_extra_usage" }
 }

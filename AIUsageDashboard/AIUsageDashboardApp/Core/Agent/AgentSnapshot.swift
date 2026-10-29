@@ -87,9 +87,10 @@ public struct AccountSelector: Codable, Sendable, Equatable {
 /// machine-readable contract that the `tokei` helper reads and that the
 /// `AgentSnapshotWriter` produces after every refresh.
 ///
-/// SECURITY INVARIANT: this schema carries **only** percentages, token counts, and
-/// timestamps — never a token, cookie, bearer, or any credential. Both the writer
-/// and any reviewer must keep it that way; it is a file other processes can read.
+/// SECURITY INVARIANT (docs/08): percentages, token counts, timestamps, bounded status
+/// codes, opaque account IDs, human labels, local profile paths and allowlisted process
+/// environment selectors are allowed. Never credentials, tokens, cookies, bearers, emails,
+/// raw provider identities, arbitrary diagnostics or provider responses.
 ///
 /// The same source file is compiled into the Core framework (so the writer can
 /// produce it) and directly into the `tokei` CLI target (so it can decode it without
@@ -267,6 +268,9 @@ public struct AgentWindow: Codable, Sendable, Equatable {
     public let observedAt: Date?
     public let label: String?
     public let bucketKey: String?
+    public let windowSeconds: TimeInterval?
+    public let pace: AgentWindowPace?
+    public let forecast: AgentWindowForecast?
 
     public init(
         type: String,
@@ -276,7 +280,10 @@ public struct AgentWindow: Codable, Sendable, Equatable {
         source: String,
         observedAt: Date? = nil,
         label: String? = nil,
-        bucketKey: String? = nil
+        bucketKey: String? = nil,
+        windowSeconds: TimeInterval? = nil,
+        pace: AgentWindowPace? = nil,
+        forecast: AgentWindowForecast? = nil
     ) {
         self.type = type
         self.usedPercent = usedPercent
@@ -286,6 +293,33 @@ public struct AgentWindow: Codable, Sendable, Equatable {
         self.observedAt = observedAt
         self.label = label
         self.bucketKey = bucketKey
+        self.windowSeconds = windowSeconds
+        self.pace = pace
+        self.forecast = forecast
+    }
+}
+
+/// Optional additive v1 fields; old snapshots decode without them.
+public struct AgentWindowPace: Codable, Sendable, Equatable {
+    public let state: String
+    public let elapsedPercent: Double
+    public let deltaPoints: Double
+
+    public init(state: String, elapsedPercent: Double, deltaPoints: Double) {
+        self.state = state
+        self.elapsedPercent = elapsedPercent
+        self.deltaPoints = deltaPoints
+    }
+}
+
+public struct AgentWindowForecast: Codable, Sendable, Equatable {
+    /// Open string vocabulary so an older helper can relay a future forecast kind.
+    public let kind: String
+    public let runsOutAt: Date?
+
+    public init(kind: String, runsOutAt: Date? = nil) {
+        self.kind = kind
+        self.runsOutAt = runsOutAt
     }
 }
 
@@ -363,7 +397,7 @@ public extension AgentSnapshot {
     static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
 

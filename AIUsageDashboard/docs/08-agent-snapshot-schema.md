@@ -10,7 +10,8 @@ The v1 surface is read-only: the app atomically writes a snapshot and the bundle
 - **Path:** `~/Library/Application Support/AIUsageDashboard/agent-snapshot.json`
 - **Writer:** `AgentSnapshotWriter`, after each `SyncEngine.refreshAll()` cycle.
 - **Write contract:** atomic replacement; a reader sees the old complete file or the
-  new complete file, never a torn intermediate file.
+  new complete file, never a torn intermediate file. `SecureFileWriter` creates the directory
+  with mode 0700 and replaces files with mode 0600; JSON is compact.
 - **Schema version:** `1`. The account additions are optional additive fields, not a
   breaking shape change.
 
@@ -245,6 +246,18 @@ fixture data, not a claim about the current machine.
 | `observedAt` | When the reading was taken; use this for reading freshness. |
 | `label` | Optional provider display label for a bucket. |
 | `bucketKey` | Optional stable identity separating multiple same-type buckets. |
+| `windowSeconds` | Optional full duration, reported or inferred from a fixed-length window type. |
+| `pace.state` | `ahead`, `onPace`, or `behind`, comparing used share with elapsed share. |
+| `pace.elapsedPercent` | Elapsed share of the window, clamped to 0–100. |
+| `pace.deltaPoints` | Used percent minus elapsed percent. Positive means faster consumption. |
+| `forecast.kind` | String: writers emit `lastsToReset`, `runsOut`, `exhausted`, or `tooEarly`; readers preserve unknown future strings. |
+| `forecast.runsOutAt` | UTC ISO8601 projection, present only for `runsOut`. |
+
+Pace and forecast are computed at `generatedAt`; they do not refresh the provider reading.
+Unknown duration/reset/used values omit both. A projection is `tooEarly` before 5% of
+the window passes. Claude's `claude_extra_usage` credits are informational: never paced,
+never an account's binding window, and excluded from routing, utilization totals/aggregates, and threshold alerts. Their bounded `source`
+label carries USD, enabled/disabled and the recognized `out_of_credits` reason.
 
 ### Recommendation
 
@@ -287,7 +300,7 @@ when the file itself is stale, `content[1]` may carry a human warning.
 
 - Optional fields are omitted when absent. Missing `accountID`, `selector`, `quota`,
   `headlineAccountID`, `target`, `avoidAccounts`, `validUntil`, `label`, or
-  `bucketKey` means unknown/unsupported, never a default value.
+  `bucketKey`, `windowSeconds`, `pace`, or `forecast` means unknown/unsupported, never a default value.
 - Consumers must feature-detect `accountID` and `target`; `schemaVersion == 1` alone
   does not prove the producer is account-aware.
 - `accounts[].id` keeps its legacy path meaning. Do not silently reinterpret it as an
@@ -309,22 +322,42 @@ framework.
 tokei status
 tokei status --json
 tokei mcp
+tokei guard --provider codex --min-headroom 15
 tokei version
 ```
 
 Missing, unreadable, and malformed snapshots exit 3, 4, and 5 respectively for
 `status`; stale reads still exit 0 and identify themselves. `TOKEI_SNAPSHOT_PATH`
-may point the helper at a fixture.
+may point the helper at a fixture. `status --json` remains pretty-printed; the snapshot
+file and MCP text are compact.
 
 The newline-delimited JSON-RPC server exposes exactly two read-only tools:
 
 | Tool | Result in `content[0].text` |
 |---|---|
-| `get_usage` | Full snapshot with reader-side `stale` and `ageSeconds`. |
+| `get_usage` | Snapshot with reader-side `stale` and `ageSeconds`; optional `provider` filters to one known provider ID. |
 | `get_route_recommendation` | Flat recommendation plus `generatedAt`, `ageSeconds`, `validUntil`, and `stale`. |
 
-Both tool descriptions document the account contract and quota status codes. The
-server performs no network or credential access.
+Both tools publish a title and read-only, idempotent, closed-world annotations.
+The handshake echoes a supported revision (`2025-06-18`, `2025-03-26`, `2024-11-05`),
+otherwise selects `2025-06-18`. Only that newest revision publishes `outputSchema`
+and successful `structuredContent`; the equivalent compact JSON text block remains
+for all clients. Invalid provider IDs/types and extra arguments return `-32602`.
+A filtered usage response omits the cross-provider aggregate and recommendation.
+The server performs no network or credential access, and closed stdout exits cleanly.
+
+`tokei guard [--provider P] [--min-headroom N]` prints one line and exits 0 for
+fresh eligible headroom at least N (default 15), 1 below N, 69 for stale, missing,
+expired, or unavailable quota, and 64 for bad arguments. Without `--provider` it
+uses the recommended provider/account and requires an unexpired recommendation.
+Providers with account rows use `quota.status == eligible`, unexpired `quota.validUntil`,
+and a fresh official binding reading. Providers without account rows use their provider-level
+rate windows: all must be official, observed within the snapshot's 600-second validity
+(with up to 60 seconds of future clock skew), and not past a reported reset. Their headroom
+is `100 - max(usedPercent)`. `claude_extra_usage` is informational and never binds the check.
+Missing/stale/unconfirmed readings return 69 with the failed check named in the message.
+The same rule applies to an explicit provider and a provider-only `recommendation.routeTo`.
+The command never refreshes quota or contacts a provider.
 
 ## 7. Registration
 

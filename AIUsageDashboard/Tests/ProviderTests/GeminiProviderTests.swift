@@ -97,6 +97,26 @@ final class GeminiProviderTests: XCTestCase {
         XCTAssertTrue(providers.contains { $0.id == .gemini })
     }
 
+    func testNetworkToggleDefaultsOnAndOffMakesNoQuotaCalls() async throws {
+        writeCredentials()
+        let suite = "ai.AIUsageDashboard.GeminiNetworkPolicyTests"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let key = "geminiNetworkUsageEnabled"
+        defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
+        defer { defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain) }
+        let client = CountingGeminiQuotaClient()
+        let provider = GeminiProvider(credentialsFileURL: credentialsURL, quotaClient: client, userDefaults: defaults)
+        _ = try await provider.fetchSnapshot()
+        let initialCount = await client.calls
+        XCTAssertEqual(initialCount, 1, "unset is ON")
+        defaults.setVolatileDomain([key: false], forName: UserDefaults.argumentDomain)
+        let snapshot = try await provider.fetchSnapshot()
+        let finalCount = await client.calls
+        XCTAssertEqual(finalCount, 1)
+        XCTAssertTrue(snapshot.quotaWindows.isEmpty)
+        XCTAssertTrue(snapshot.warnings.contains { $0.message.contains("off") })
+    }
+
     // MARK: - Helpers
 
     private var credentialsURL: URL {
@@ -106,6 +126,14 @@ final class GeminiProviderTests: XCTestCase {
     private func writeCredentials() {
         let json = GeminiFixtures.credentialsJSON(expiryDateMillis: Date().timeIntervalSince1970 * 1000 + 3_600_000)
         try? Data(json.utf8).write(to: credentialsURL)
+    }
+}
+
+private actor CountingGeminiQuotaClient: QuotaProvider {
+    private(set) var calls = 0
+    func fetchQuotaWindows() async throws -> [QuotaWindow] {
+        calls += 1
+        return []
     }
 }
 

@@ -148,7 +148,9 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     ///     no opinion on visibility.
     ///   - now: current instant, injected so the age gate is deterministic.
     public func evaluate(_ utilizations: [Utilization], now: Date) -> RouteDecision {
-        let peaks = Self.peaks(in: utilizations)
+        let peaks = Self.peaks(in: utilizations.filter {
+            !($0.providerID == .claudeCode && $0.window == .credits)
+        })
         guard !peaks.isEmpty else { return .empty }
 
         // Step 4 — computed from EVERY peak, trusted or not (see the asymmetry note).

@@ -132,7 +132,7 @@ final class MCPServerTests: XCTestCase {
     XCTAssertNil(response["error"], "a newer client revision must never be an error")
     let result = try XCTUnwrap(response["result"] as? [String: Any])
     XCTAssertEqual(result["protocolVersion"] as? String, MCPServer.protocolVersion)
-    XCTAssertEqual(result["protocolVersion"] as? String, "2024-11-05")
+    XCTAssertEqual(result["protocolVersion"] as? String, "2025-06-18")
     XCTAssertNotEqual(result["protocolVersion"] as? String, "2025-11-25")
   }
 
@@ -275,7 +275,8 @@ final class MCPServerTests: XCTestCase {
     XCTAssertFalse(text.hasPrefix("⚠︎"), "no warning banner on a fresh read")
     XCTAssertFalse(text.contains("Tokei data is stale"))
     // The payload itself still carries the flag — that is the structured half.
-    XCTAssertTrue(text.contains("\"stale\" : false"))
+    let payload = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: Data(text.utf8))
+    XCTAssertEqual(payload.stale, false)
   }
 
 }

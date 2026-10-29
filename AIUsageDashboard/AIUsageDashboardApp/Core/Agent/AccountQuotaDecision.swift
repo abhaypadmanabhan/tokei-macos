@@ -25,7 +25,8 @@ public struct AccountQuotaDecision: Sendable {
         }
 
         let candidates = account.quotaWindows.enumerated().compactMap { index, window -> (Int, Utilization)? in
-            guard let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
+            guard !window.isInformationalCredits,
+                  let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
             return (index, Utilization(
                 providerID: providerID,
                 window: window.type,
@@ -113,7 +114,8 @@ public struct AccountQuotaDecision: Sendable {
         policy: RouteTargetPolicy
     ) -> Bool {
         let applicableWindowCount = windows.count { window in
-            providerID != .codex
+            guard !window.isInformationalCredits else { return false }
+            return providerID != .codex
                 || window.type == .weekly
                 || UtilizationEngine.usedPercent(from: window) != nil
         }

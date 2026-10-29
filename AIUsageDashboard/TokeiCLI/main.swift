@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// The `tokei` helper — a read-only companion to the Tokei app that exposes the quota
 /// snapshot to orchestrating agents (issue #57). It reads ONLY the snapshot file: no
@@ -21,6 +22,7 @@ func printUsage(to handle: FileHandle = .standardOutput) {
 
     USAGE:
       tokei status [--json]   Print the current usage snapshot (table, or raw JSON)
+      tokei guard [--provider P] [--min-headroom N]  Exit 0 when fresh headroom meets N (default 15)
       tokei mcp               Run the stdio MCP server (2 tools: get_usage, get_route_recommendation)
       tokei help              Show this help
       tokei version           Print the version
@@ -39,7 +41,10 @@ switch arguments.first {
 case "status":
     let wantsJSON = arguments.dropFirst().contains("--json")
     exit(StatusCommand.run(json: wantsJSON))
+case "guard":
+    exit(GuardCommand.run(arguments: Array(arguments.dropFirst())))
 case "mcp":
+    signal(SIGPIPE, SIG_IGN)
     MCPServer(version: TokeiCLI.version).run()
     exit(0)
 case "help", "--help", "-h":
