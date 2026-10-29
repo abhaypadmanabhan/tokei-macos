@@ -95,6 +95,7 @@ targets:
     sources:
       - path: Tests
         excludes:
+          - Fixtures/*.py
           - Fixtures/Zstd/generate.py
       # Pure UI-layer math (pace notch + tightest-window selection) lives under
       # UI/ per the WP-3 scope, but is a dependency-free function over the frozen

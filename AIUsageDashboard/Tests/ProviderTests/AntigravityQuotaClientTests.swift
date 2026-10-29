@@ -119,6 +119,7 @@ final class AntigravityQuotaClientTests: XCTestCase {
 
         let provider = AntigravityProvider(
             stateDatabaseURL: stateDB,
+            conversationParser: .init(roots: []),
             quotaClient: NoProcessAntigravityQuotaClient(),
             userDefaults: userDefaults
         )

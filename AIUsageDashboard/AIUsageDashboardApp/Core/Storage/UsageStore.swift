@@ -12,6 +12,7 @@ public actor UsageStore {
     private let directory: URL
     private let fileName: String
     private var didLoad = false
+    private var lastWrittenContent: Data?
 
     public init(directory: URL? = nil, fileName: String = "usage-store.json") {
         if let directory {
@@ -22,6 +23,11 @@ public actor UsageStore {
             self.directory = appSupport.appendingPathComponent("AIUsageDashboard", isDirectory: true)
         }
         self.fileName = fileName
+        do {
+            try SecureFileWriter.hardenExistingDirectory(at: self.directory)
+        } catch {
+            Self.logger.error("Failed to secure usage directory: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private var fileURL: URL {
@@ -35,54 +41,35 @@ public actor UsageStore {
            let container = try? JSONDecoder().decode(PersistenceContainer.self, from: data) {
             snapshots = container.snapshots
             dailyUsages = container.dailyUsages
+            lastWrittenContent = try? Self.encoder(ignoringSyncTime: true).encode(container)
         }
     }
 
+    // Saved lastSyncedAt/observedAt mean last content change; WP-3 hydration must preserve their age.
     private func persist() {
+        let today = DateHelpers.startOfToday()
+        if let oldest = Calendar.current.date(byAdding: .day, value: -399, to: today) {
+            dailyUsages = dailyUsages.filter { $0.key.day >= oldest }
+        }
         let container = PersistenceContainer(snapshots: snapshots, dailyUsages: dailyUsages)
 
         let data: Data
         do {
-            data = try JSONEncoder().encode(container)
-        } catch {
-            Self.logger.error("Failed to encode usage store: \(error.localizedDescription, privacy: .public)")
-            return
-        }
-
-        do {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            Self.logger.error("Failed to create usage store directory: \(error.localizedDescription, privacy: .public)")
-            return
-        }
-
-        let tempURL = directory.appendingPathComponent(fileName + ".tmp")
-        do {
-            try data.write(to: tempURL, options: .atomic)
-
-            let fileExisted = FileManager.default.fileExists(atPath: fileURL.path)
-            if !fileExisted {
-                // Create a placeholder with restricted permissions so the atomic
-                // replace below yields a new file that is readable only by the owner.
-                guard FileManager.default.createFile(
-                    atPath: fileURL.path,
-                    contents: nil,
-                    attributes: [.posixPermissions: 0o600]
-                ) else {
-                    Self.logger.error("Failed to create usage store placeholder")
-                    try? FileManager.default.removeItem(at: tempURL)
-                    return
-                }
-            }
-
-            _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: tempURL)
+            let content = try Self.encoder(ignoringSyncTime: true).encode(container)
+            guard content != lastWrittenContent else { return }
+            data = try Self.encoder().encode(container)
+            try SecureFileWriter.write(data, to: fileURL)
+            lastWrittenContent = content
         } catch {
             Self.logger.error("Failed to persist usage store: \(error.localizedDescription, privacy: .public)")
-            try? FileManager.default.removeItem(at: tempURL)
         }
+    }
+
+    private static func encoder(ignoringSyncTime: Bool = false) -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.userInfo[.ignoringSyncTime] = ignoringSyncTime
+        return encoder
     }
 
     private func upsertDailyUsage(from snapshot: ProviderSnapshot) {
@@ -137,10 +124,27 @@ public actor UsageStore {
 private struct PersistenceContainer: Codable {
     var snapshots: [ProviderID: ProviderSnapshot]
     var dailyUsages: [DailyUsageKey: DailyUsage]
-}
 
+    private enum CodingKeys: String, CodingKey { case snapshots, dailyUsages }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        var storedSnapshots = container.nestedUnkeyedContainer(forKey: .snapshots)
+        for key in snapshots.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            try storedSnapshots.encode(key)
+            try storedSnapshots.encode(snapshots[key])
+        }
+        var history = container.nestedUnkeyedContainer(forKey: .dailyUsages)
+        let keys = dailyUsages.keys.sorted {
+            ($0.providerID.rawValue, $0.day) < ($1.providerID.rawValue, $1.day)
+        }
+        for key in keys {
+            try history.encode(key)
+            try history.encode(dailyUsages[key])
+        }
+    }
+}
 private struct DailyUsageKey: Hashable, Codable {
     let providerID: ProviderID
     let day: Date
 }
-

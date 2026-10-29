@@ -1,7 +1,8 @@
 import Foundation
 
-public struct QuotaSample: Codable, Equatable, Sendable {
+public struct QuotaSample: Equatable, Sendable {
     public let providerID: ProviderID
+    public let accountID: String?
     public let windowType: QuotaWindowType
     public let bucketKey: String
     public let usedPercent: Double
@@ -12,6 +13,7 @@ public struct QuotaSample: Codable, Equatable, Sendable {
 
     public init(
         providerID: ProviderID,
+        accountID: String? = nil,
         windowType: QuotaWindowType,
         bucketKey: String,
         usedPercent: Double,
@@ -21,6 +23,7 @@ public struct QuotaSample: Codable, Equatable, Sendable {
         sampledAt: Date
     ) {
         self.providerID = providerID
+        self.accountID = accountID
         self.windowType = windowType
         self.bucketKey = bucketKey
         self.usedPercent = usedPercent
@@ -32,13 +35,15 @@ public struct QuotaSample: Codable, Equatable, Sendable {
 }
 
 extension QuotaSample {
-    init?(window: QuotaWindow, sampledAt: Date) {
-        guard let limit = window.limit, limit > 0 else { return nil }
+    init?(window: QuotaWindow, accountID: String? = nil, sampledAt: Date) {
+        guard let limit = window.limit, limit.isFinite, limit > 0 else { return nil }
         guard let used = window.used ?? window.remaining.map({ limit - $0 }) else { return nil }
+        guard used.isFinite else { return nil }
 
         let usedPercent = min(100, max(0, used / limit * 100))
         self.init(
             providerID: window.providerID,
+            accountID: accountID,
             windowType: window.type,
             bucketKey: window.bucketKey ?? "\(window.providerID.rawValue)_\(window.type.rawValue)",
             usedPercent: usedPercent,
@@ -51,6 +56,7 @@ extension QuotaSample {
 
     func isSameSeries(as other: QuotaSample) -> Bool {
         providerID == other.providerID &&
+            accountID == other.accountID &&
             windowType == other.windowType &&
             bucketKey == other.bucketKey
     }

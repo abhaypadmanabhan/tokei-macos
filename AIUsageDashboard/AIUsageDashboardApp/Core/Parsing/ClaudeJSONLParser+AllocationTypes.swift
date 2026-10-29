@@ -59,21 +59,19 @@ extension ClaudeJSONLParser {
         multiplier: Int,
         into aggregate: inout FileAggregate
     ) {
-        if let month = modelUsageMonth, day >= month.start, day < month.end {
-            let modelUsage = adjusted(
-                aggregate.dailyModelUsage[day]?[record.model] ?? UsageWindows.emptyUsage(.localParsed),
-                by: record,
-                multiplier: multiplier,
-                overflowed: &aggregate.arithmeticOverflowed
-            )
-            if modelUsage.totalTokens == 0 {
-                aggregate.dailyModelUsage[day]?.removeValue(forKey: record.model)
-                if aggregate.dailyModelUsage[day]?.isEmpty == true {
-                    aggregate.dailyModelUsage.removeValue(forKey: day)
-                }
-            } else {
-                aggregate.dailyModelUsage[day, default: [:]][record.model] = modelUsage
+        let modelUsage = adjusted(
+            aggregate.dailyModelUsage[day]?[record.model] ?? UsageWindows.emptyUsage(.localParsed),
+            by: record,
+            multiplier: multiplier,
+            overflowed: &aggregate.arithmeticOverflowed
+        )
+        if modelUsage.totalTokens == 0 {
+            aggregate.dailyModelUsage[day]?.removeValue(forKey: record.model)
+            if aggregate.dailyModelUsage[day]?.isEmpty == true {
+                aggregate.dailyModelUsage.removeValue(forKey: day)
             }
+        } else {
+            aggregate.dailyModelUsage[day, default: [:]][record.model] = modelUsage
         }
     }
 
@@ -87,4 +85,33 @@ extension ClaudeJSONLParser {
             }
         }
     }
+
+    func adjusted(
+        _ usage: TokenUsage,
+        by record: ClaudeUsageRecord,
+        multiplier: Int,
+        overflowed: inout Bool
+    ) -> TokenUsage {
+        func adjustedComponent(_ current: Int, _ value: Int) -> Int {
+            let contribution = TokenArithmetic.multiplied(value, by: multiplier, overflowed: &overflowed)
+            return TokenArithmetic.adding(current, contribution, overflowed: &overflowed)
+        }
+
+        let adjusted = TokenUsage(
+            inputTokens: adjustedComponent(usage.inputTokens ?? 0, record.inputTokens),
+            outputTokens: adjustedComponent(usage.outputTokens ?? 0, record.outputTokens),
+            cacheReadTokens: adjustedComponent(usage.cacheReadTokens ?? 0, record.cacheReadInputTokens),
+            cacheCreationTokens: adjustedComponent(
+                usage.cacheCreationTokens ?? 0,
+                record.cacheCreationInputTokens
+            ),
+            cacheCreation1hTokens: usage.cacheCreation1hTokens == nil && record.cacheCreation1hTokens == nil
+                ? nil : adjustedComponent(usage.cacheCreation1hTokens ?? 0, record.cacheCreation1hTokens ?? 0),
+            reasoningTokens: usage.reasoningTokens ?? 0,
+            confidence: .localParsed
+        )
+        _ = adjusted.totalTokens(overflowed: &overflowed)
+        return adjusted
+    }
+
 }
