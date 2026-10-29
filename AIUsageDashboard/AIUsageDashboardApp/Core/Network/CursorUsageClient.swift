@@ -71,7 +71,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
         now: @escaping @Sendable () -> Date,
         sleep: @escaping @Sendable (TimeInterval) async -> Void
     ) {
-        self.urlSession = urlSession ?? UsageHTTPSession.make()
+        self.urlSession = urlSession ?? UsageHTTPSession.shared
         self.explicitCooldownURL = explicitCooldownURL
         let directory = storageDirectory ?? Self.defaultStorageDirectory()
         self.storageDirectory = directory
@@ -112,7 +112,7 @@ public actor CursorUsageClientImpl: CursorUsageClient {
             // SECURITY: the session cookie leaves the process only as this header, over TLS.
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
             request.setValue("https://www.cursor.com/settings", forHTTPHeaderField: "Referer")
-            request.setValue(UsageHTTPSession.userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue(accept, forHTTPHeaderField: "Accept")
 
             let (data, response) = try await urlSession.data(for: request)
@@ -221,6 +221,10 @@ public actor CursorUsageClientImpl: CursorUsageClient {
         string: "https://cursor.com/api/dashboard/export-usage-events-csv?strategy=tokens"
     )!
     private static let usageSummaryURL = URL(string: "https://cursor.com/api/usage-summary")!
+    // Preserve the dashboard's established browser agent; signed-in compatibility is vendor-controlled.
+    private static let userAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private static let logger = Logger(subsystem: "ai.padzy.tokei", category: "CursorUsageClient")
     private static let maxAttempts = 3
 }

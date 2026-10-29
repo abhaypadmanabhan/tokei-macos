@@ -102,6 +102,8 @@ public actor GeminiProvider: UsageProvider {
         switch error {
         case GeminiUsageError.notAuthenticated:
             return notSignedInWarning
+        case GeminiUsageError.cooldownActive:
+            return ProviderWarning(message: error.localizedDescription, level: .info)
         case GeminiUsageError.tokenRefreshUnavailable:
             return ProviderWarning(
                 message: "Gemini access token has expired. Run `gemini` once to refresh it, then Tokei can read quota again.",

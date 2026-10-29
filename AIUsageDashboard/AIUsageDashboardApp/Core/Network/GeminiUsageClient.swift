@@ -2,7 +2,7 @@ import Foundation
 
 public enum GeminiUsageError: LocalizedError, Sendable, Equatable {
     /// A persisted rate-limit backoff is still active.
-    case cooldownActive
+    case cooldownActive(until: Date)
     /// No usable `oauth_creds.json` (missing file, empty, or unparseable) — the user
     /// has not signed in to the Gemini CLI on this machine.
     case notAuthenticated
@@ -21,8 +21,8 @@ public enum GeminiUsageError: LocalizedError, Sendable, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .cooldownActive:
-            "Gemini usage is cooling down after a rate limit."
+        case .cooldownActive(let until):
+            "Gemini is rate-limited. Tokei retries at \(until.formatted(date: .omitted, time: .shortened))."
         case .notAuthenticated:
             "Gemini CLI is not signed in on this machine."
         case .tokenRefreshUnavailable:
@@ -130,7 +130,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         clientSecret: String? = GeminiOAuthConfig.clientSecret,
         cooldownURL: URL? = nil
     ) {
-        self.urlSession = urlSession ?? UsageHTTPSession.make()
+        self.urlSession = urlSession ?? UsageHTTPSession.shared
         self.credentialsFileURL = credentialsFileURL
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".gemini/oauth_creds.json")
@@ -152,7 +152,9 @@ public actor GeminiUsageClientImpl: QuotaProvider {
            cached.windows.allSatisfy({ $0.resetAt.map { $0 > referenceDate } ?? true }) {
             return cached.windows
         }
-        if cooldownStore.isActive(at: referenceDate) { throw GeminiUsageError.cooldownActive }
+        if let cooldown = cooldownStore.read(), cooldown.until > referenceDate {
+            throw GeminiUsageError.cooldownActive(until: cooldown.until)
+        }
         if let inFlight, inFlight.token == credentials.accessToken { return try await inFlight.task.value }
         let task = Task {
             let windows = try await self.fetchUncached(credentials: credentials)

@@ -2,6 +2,8 @@ import Foundation
 
 /// Credentialed usage requests never enter a disk cache or leave their original HTTPS host.
 public enum UsageHTTPSession {
+    static let shared = make()
+
     public static var userAgent: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return "Tokei/\(version)"

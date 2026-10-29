@@ -282,7 +282,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     ) {
-        self.urlSession = urlSession ?? UsageHTTPSession.make()
+        self.urlSession = urlSession ?? UsageHTTPSession.shared
         self.credentialsReader = credentialsReader
         self.cacheURL = cacheURL ?? Self.defaultStorageURL(filename: "claude-usage-cache.json")
         self.cooldownStore = CooldownStore(
@@ -357,11 +357,10 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             }
         }
 
-        if let extra = payload.extraUsage?.window(providerID: providerID) { windows.append(extra) }
-
         guard !windows.isEmpty else {
             throw ClaudeUsageError.unrecognizedResponse
         }
+        if let extra = payload.extraUsage?.window(providerID: providerID) { windows.append(extra) }
         return windows
     }
 

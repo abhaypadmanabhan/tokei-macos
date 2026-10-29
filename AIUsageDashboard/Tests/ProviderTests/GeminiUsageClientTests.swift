@@ -142,7 +142,10 @@ final class GeminiUsageClientTests: XCTestCase {
         GeminiRoutingMockURLProtocol.enqueue(url: GeminiUsageClientImpl.loadCodeAssistURL,
                                              json: "{}", status: 429)
         await assertThrows(.httpStatus(429)) { _ = try await self.makeClient(clientSecret: nil).fetchQuotaWindows() }
-        await assertThrows(.cooldownActive) { _ = try await self.makeClient(clientSecret: nil).fetchQuotaWindows() }
+        let retryAt = ISO8601DateFormatter().date(from: "2026-07-12T12:05:00Z")!
+        await assertThrows(.cooldownActive(until: retryAt)) {
+            _ = try await self.makeClient(clientSecret: nil).fetchQuotaWindows()
+        }
         XCTAssertEqual(GeminiRoutingMockURLProtocol.hits.count, 1)
         let url = tempDirectory.appendingPathComponent("cooldown.json")
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
