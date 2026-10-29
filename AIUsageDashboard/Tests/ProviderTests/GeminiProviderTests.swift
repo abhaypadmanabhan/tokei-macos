@@ -99,17 +99,17 @@ final class GeminiProviderTests: XCTestCase {
 
     func testNetworkToggleDefaultsOnAndOffMakesNoQuotaCalls() async throws {
         writeCredentials()
-        let suite = "ai.AIUsageDashboard.GeminiNetworkPolicyTests"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        // A suite file inside this test's temp directory: never the process-wide argument
+        // domain, which every other test's UserDefaults reads first.
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: tempDirectory.appendingPathComponent("defaults").path))
         let key = "geminiNetworkUsageEnabled"
-        defaults.setVolatileDomain([:], forName: UserDefaults.argumentDomain)
-        defer { defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain) }
+        defer { defaults.removeObject(forKey: key) }
         let client = CountingGeminiQuotaClient()
         let provider = GeminiProvider(credentialsFileURL: credentialsURL, quotaClient: client, userDefaults: defaults)
         _ = try await provider.fetchSnapshot()
         let initialCount = await client.calls
         XCTAssertEqual(initialCount, 1, "unset is ON")
-        defaults.setVolatileDomain([key: false], forName: UserDefaults.argumentDomain)
+        defaults.set(false, forKey: key)
         let snapshot = try await provider.fetchSnapshot()
         let finalCount = await client.calls
         XCTAssertEqual(finalCount, 1)

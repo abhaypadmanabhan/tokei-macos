@@ -108,7 +108,9 @@ final class TightestEligibleReadingTests: XCTestCase {
                 window(.claudeCode, .weekly, used: 12)
             ])
         ])
-        XCTAssertEqual(viewModel.utilization.count, 3)
+        // WP-4 drops informational credits (extra usage) in the engine itself, so only the
+        // two quota windows reach utilization; the gauges then drop the past-reset one.
+        XCTAssertEqual(viewModel.utilization.count, 2)
         XCTAssertEqual(viewModel.gaugeUtilizations.map(\.window), [.weekly])
     }
 }

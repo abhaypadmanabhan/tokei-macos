@@ -18,9 +18,8 @@ final class GeminiCooldownMessageTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let client = GeminiUsageClientImpl(urlSession: session, credentialsFileURL: credentials,
                                             now: { now }, cooldownURL: cooldown)
+        // Unset means on; never touch the process-wide argument domain other tests read.
         let defaults = try XCTUnwrap(UserDefaults(suiteName: directory.appendingPathComponent("defaults").path))
-        defaults.setVolatileDomain(["geminiNetworkUsageEnabled": true], forName: UserDefaults.argumentDomain)
-        defer { defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain) }
         let provider = GeminiProvider(credentialsFileURL: credentials, quotaClient: client, userDefaults: defaults)
         let snapshot = try await provider.fetchSnapshot()
         let message = try XCTUnwrap(snapshot.warnings.first?.message)
