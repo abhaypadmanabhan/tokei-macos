@@ -12,7 +12,10 @@ public struct PricingEngine: Sendable {
         guard let rate = table.resolveRate(for: model) else { return nil }
 
         let input = Double(tokens.inputTokens ?? 0) * rate.inputPerMillion
-        let cacheCreation = Double(tokens.cacheCreationTokens ?? 0) * rate.cacheCreationInputPerMillion
+        let creation = max(0, tokens.cacheCreationTokens ?? 0)
+        let oneHour = min(creation, max(0, tokens.cacheCreation1hTokens ?? 0))
+        let cacheCreation = Double(creation - oneHour) * rate.cacheCreationInputPerMillion
+            + Double(oneHour) * rate.cacheCreation1hInputPerMillion
         let cacheRead = Double(tokens.cacheReadTokens ?? 0) * rate.cachedInputPerMillion
         let output = (Double(tokens.outputTokens ?? 0) + Double(tokens.reasoningTokens ?? 0)) * rate.outputPerMillion
 

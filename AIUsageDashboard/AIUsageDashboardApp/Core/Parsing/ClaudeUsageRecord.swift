@@ -11,6 +11,7 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
     public let inputTokens: Int
     public let outputTokens: Int
     public let cacheReadInputTokens: Int
+    public let cacheCreation1hTokens: Int?
     public let cacheCreationInputTokens: Int
     /// Start of the record's day and hour in the parser's calendar, computed once at parse
     /// time. Allocation re-runs over every cached record on each refresh; recomputing these
@@ -28,10 +29,12 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
         outputTokens: Int,
         cacheReadInputTokens: Int,
         cacheCreationInputTokens: Int,
+        cacheCreation1hTokens: Int? = nil,
         model: String = "unknown",
         day: Date? = nil,
         hour: Date? = nil
     ) {
+        self.cacheCreation1hTokens = cacheCreation1hTokens
         self.model = model
         self.day = day
         self.hour = hour
@@ -65,6 +68,7 @@ public struct ClaudeUsageRecord: Sendable, Equatable {
             outputTokens: outputTokens,
             cacheReadTokens: cacheReadInputTokens,
             cacheCreationTokens: cacheCreationInputTokens,
+            cacheCreation1hTokens: cacheCreation1hTokens,
             confidence: .localParsed
         )
     }

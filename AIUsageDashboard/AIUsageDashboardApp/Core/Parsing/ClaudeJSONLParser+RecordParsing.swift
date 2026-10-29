@@ -1,3 +1,4 @@
+// Tier handling adapted from T3 Code: packages/provider-claude/src/server/claudeUsage.ts (MIT).
 import Foundation
 
 extension ClaudeJSONLParser {
@@ -179,6 +180,9 @@ extension ClaudeJSONLParser {
               ) else {
             return .malformed
         }
+        let cacheCreation = usage["cache_creation"] as? [String: Any]
+        let oneHour = CheckedNumericConversion.optionalTokenCount(cacheCreation?["ephemeral_1h_input_tokens"])
+        guard oneHour.isValid, (oneHour.value ?? 0) <= cacheCreationInputTokens else { return .malformed }
         var totalOverflowed = false
         _ = TokenArithmetic.sum(
             [inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens],
@@ -199,7 +203,8 @@ extension ClaudeJSONLParser {
             outputTokens: outputTokens,
             cacheReadInputTokens: cacheReadInputTokens,
             cacheCreationInputTokens: cacheCreationInputTokens,
-            model: model,
+            cacheCreation1hTokens: oneHour.value,
+            model: usage["speed"] as? String == "fast" ? model + "@fast" : model,
             day: timestamp.map { calendar.startOfDay(for: $0) },
             hour: timestamp.flatMap { UsageWindows.hourStart(for: $0, calendar: calendar) }
         ))

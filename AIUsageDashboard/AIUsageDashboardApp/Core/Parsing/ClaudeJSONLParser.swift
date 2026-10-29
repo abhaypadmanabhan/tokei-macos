@@ -238,32 +238,6 @@ public actor ClaudeJSONLParser {
         if aggregate.hourlyTotals[hour] == 0 { aggregate.hourlyTotals.removeValue(forKey: hour) }
     }
 
-    func adjusted(
-        _ usage: TokenUsage,
-        by record: ClaudeUsageRecord,
-        multiplier: Int,
-        overflowed: inout Bool
-    ) -> TokenUsage {
-        func adjustedComponent(_ current: Int, _ value: Int) -> Int {
-            let contribution = TokenArithmetic.multiplied(value, by: multiplier, overflowed: &overflowed)
-            return TokenArithmetic.adding(current, contribution, overflowed: &overflowed)
-        }
-
-        let adjusted = TokenUsage(
-            inputTokens: adjustedComponent(usage.inputTokens ?? 0, record.inputTokens),
-            outputTokens: adjustedComponent(usage.outputTokens ?? 0, record.outputTokens),
-            cacheReadTokens: adjustedComponent(usage.cacheReadTokens ?? 0, record.cacheReadInputTokens),
-            cacheCreationTokens: adjustedComponent(
-                usage.cacheCreationTokens ?? 0,
-                record.cacheCreationInputTokens
-            ),
-            reasoningTokens: usage.reasoningTokens ?? 0,
-            confidence: .localParsed
-        )
-        _ = adjusted.totalTokens(overflowed: &overflowed)
-        return adjusted
-    }
-
     private func merge(_ incremental: FileAggregate, into aggregate: inout FileAggregate) {
         aggregate.arithmeticOverflowed = aggregate.arithmeticOverflowed
             || incremental.arithmeticOverflowed
