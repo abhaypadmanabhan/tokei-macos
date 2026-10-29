@@ -43,6 +43,16 @@ enum AnalyticsFormat {
         return "excludes \(percent < 1 ? "under 1" : String(Int(percent.rounded())))% of tokens with no price data"
     }
 
+    /// What the Cost chart's frame says when it cannot draw a line (it needs two priced days):
+    /// "No priced days" only when there are none; one priced day is real, just not a line yet.
+    static func costChartEmptyText(pricedDays: Int) -> String? {
+        switch pricedDays {
+        case 0: return "No priced days in this range"
+        case 1: return "Not enough history yet"
+        default: return nil
+        }
+    }
+
     /// "priced from Oct 1": where the priced days start when the range reaches further back.
     static func pricedFrom(_ date: Date) -> String {
         "priced from \(date.formatted(.dateTime.month(.abbreviated).day()))"

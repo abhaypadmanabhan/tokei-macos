@@ -153,13 +153,14 @@ struct OverviewView: View {
             let cost = viewModel.overviewCost
             costComparison(cost)
             // Whole cents, so the token chart draws dollars with the same curve and style.
+            let priced = cost.trend.compactMap { point in
+                point.usd.map { (date: point.date, tokens: Int(($0 * 100).rounded())) }
+            }
             LineTrendChart(
-                points: cost.trend.compactMap { point in
-                    point.usd.map { (date: point.date, tokens: Int(($0 * 100).rounded())) }
-                },
+                points: priced,
                 format: { MaxxerMath.formatUSD(Double($0) / 100) },
                 breaks: cost.trend.filter { $0.usd == nil }.map(\.date),
-                emptyText: "No priced days in this range"
+                emptyText: AnalyticsFormat.costChartEmptyText(pricedDays: priced.count)
             )
             .frame(height: trendHeight)
             .transition(.opacity)

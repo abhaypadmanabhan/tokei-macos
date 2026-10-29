@@ -115,6 +115,8 @@ targets:
       - path: AIUsageDashboardApp/UI/Components/ExtraUsageCopy.swift
       # Tier model keys ("gpt-5.5@priority") read as the base model and a tier word.
       - path: AIUsageDashboardApp/UI/Components/ModelKeyName.swift
+      # Range, change and Cost-chart wording ("No priced days in this range" only with none).
+      - path: AIUsageDashboardApp/UI/Components/AnalyticsFormat.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
       # index, and a chart whose series collide cannot answer the question it exists for.

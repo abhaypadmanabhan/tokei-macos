@@ -191,6 +191,20 @@ final class OverviewCostTests: XCTestCase {
         XCTAssertEqual(cost.providers[.cline], .reportedAllTime(usd: 0))
     }
 
+    /// S6 (Codex review r2): the chart needs two priced days for a line. With none it says so;
+    /// with exactly one, the first day of recorded usage ($3.00 today), "No priced days in this
+    /// range" would be false: it says "Not enough history yet". With two it draws, no message.
+    func testChartWordingForZeroOneAndTwoPricedDays() {
+        let firstDay = summary([snapshot(.claudeCode, models: [day(0): ["alpha": input(1_000_000)]],
+                                         totals: [day(0): 1_000_000])])
+        XCTAssertEqual(firstDay.todayUSD, 3)
+        let pricedDays = firstDay.trend.compactMap(\.usd).count
+        XCTAssertEqual(pricedDays, 1)
+        XCTAssertEqual(AnalyticsFormat.costChartEmptyText(pricedDays: pricedDays), "Not enough history yet")
+        XCTAssertEqual(AnalyticsFormat.costChartEmptyText(pricedDays: 0), "No priced days in this range")
+        XCTAssertNil(AnalyticsFormat.costChartEmptyText(pricedDays: 2))
+    }
+
     /// Cline's logs carry each request's API cost: shown as reported, all time, not added to the
     /// priced total. Cursor's cost is the billed amount, not an API estimate: no price data.
     func testReportedCostIsLabelledAndBilledCostIsNotUsed() {
