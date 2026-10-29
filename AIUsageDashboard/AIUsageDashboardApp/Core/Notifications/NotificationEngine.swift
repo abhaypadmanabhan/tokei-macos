@@ -73,9 +73,9 @@ public actor NotificationEngine {
         isEvaluating = true
         defer { isEvaluating = false }
 
-        let thresholds = Dictionary(uniqueKeysWithValues: snapshots.map {
+        let thresholds = Dictionary(snapshots.map {
             ($0.providerID, Self.thresholds(for: $0.providerID, defaults: userDefaults))
-        })
+        }, uniquingKeysWith: { first, _ in first })
 
         let result = ThresholdEvaluator.evaluate(
             snapshots: snapshots,

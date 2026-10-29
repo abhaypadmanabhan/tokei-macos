@@ -61,6 +61,14 @@ final class NotificationReviewTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(Set<FiredNotificationKey>.self, from: bytes).isEmpty)
     }
 
+    func testDuplicateProvidersDoNotCrashOrDuplicateWarnings() async {
+        let center = ReviewNotificationCenter()
+        let engine = NotificationEngine(notificationCenter: center, clock: ReviewClock(instant), userDefaults: defaults)
+        let reading = snapshot()
+        await engine.evaluateThresholds(for: [reading, reading])
+        XCTAssertEqual(center.requests.count, 1)
+    }
+
 }
 
 private struct ReviewClock: Clock {
