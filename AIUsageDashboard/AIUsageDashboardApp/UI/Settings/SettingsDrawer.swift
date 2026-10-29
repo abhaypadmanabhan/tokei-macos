@@ -331,7 +331,9 @@ private struct PlanCostDrawerRow: View {
                 if !presets.isEmpty {
                     presetMenu
                 }
+                // The field keeps its natural width ("$ 400.00 /mo"); the agent name gives way.
                 priceField
+                    .fixedSize()
             }
 
             if let suggestion {
@@ -370,7 +372,6 @@ private struct PlanCostDrawerRow: View {
             Text("/mo")
                 .font(.mono(size: 10))
                 .foregroundColor(PadzyTheme.ink5)
-                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
@@ -395,18 +396,14 @@ private struct PlanCostDrawerRow: View {
                 }
             }
         } label: {
-            Text("Presets")
-                .font(.sans(size: 12))
+            // A pull-down beside the field, symbol only, so the agent's name keeps the room.
+            Image(systemName: "list.bullet")
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(PadzyTheme.ink3)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                        .stroke(PadzyTheme.border2, lineWidth: 1)
-                )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help("Plan presets")
         .accessibilityLabel("\(displayName) plan presets")
     }
 
