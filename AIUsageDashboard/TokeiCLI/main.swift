@@ -35,7 +35,6 @@ func printUsage(to handle: FileHandle = .standardOutput) {
     handle.write(Data(text.utf8))
 }
 
-signal(SIGPIPE, SIG_IGN)
 let arguments = Array(CommandLine.arguments.dropFirst())
 
 switch arguments.first {
@@ -45,6 +44,7 @@ case "status":
 case "guard":
     exit(GuardCommand.run(arguments: Array(arguments.dropFirst())))
 case "mcp":
+    signal(SIGPIPE, SIG_IGN)
     MCPServer(version: TokeiCLI.version).run()
     exit(0)
 case "help", "--help", "-h":

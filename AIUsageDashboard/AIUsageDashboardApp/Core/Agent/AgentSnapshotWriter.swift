@@ -197,10 +197,10 @@ public actor AgentSnapshotWriter {
 
     private static func publicForecast(_ forecast: QuotaPace.Forecast) -> AgentWindowForecast {
         switch forecast {
-        case .tooEarly: return AgentWindowForecast(kind: .tooEarly)
-        case .lastsToReset: return AgentWindowForecast(kind: .lastsToReset)
-        case .exhausted: return AgentWindowForecast(kind: .exhausted)
-        case .runsOut(let date): return AgentWindowForecast(kind: .runsOut, runsOutAt: date)
+        case .tooEarly: return AgentWindowForecast(kind: "tooEarly")
+        case .lastsToReset: return AgentWindowForecast(kind: "lastsToReset")
+        case .exhausted: return AgentWindowForecast(kind: "exhausted")
+        case .runsOut(let date): return AgentWindowForecast(kind: "runsOut", runsOutAt: date)
         }
     }
 

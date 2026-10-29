@@ -313,13 +313,11 @@ public struct AgentWindowPace: Codable, Sendable, Equatable {
 }
 
 public struct AgentWindowForecast: Codable, Sendable, Equatable {
-    public enum Kind: String, Codable, Sendable {
-        case lastsToReset, runsOut, exhausted, tooEarly
-    }
-    public let kind: Kind
+    /// Open string vocabulary so an older helper can relay a future forecast kind.
+    public let kind: String
     public let runsOutAt: Date?
 
-    public init(kind: Kind, runsOutAt: Date? = nil) {
+    public init(kind: String, runsOutAt: Date? = nil) {
         self.kind = kind
         self.runsOutAt = runsOutAt
     }

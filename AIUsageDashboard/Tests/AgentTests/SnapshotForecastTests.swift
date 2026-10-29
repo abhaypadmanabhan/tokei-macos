@@ -7,11 +7,11 @@ final class SnapshotForecastTests: XCTestCase {
         struct ForecastCase {
             let used: Double
             let seconds: TimeInterval
-            let kind: AgentWindowForecast.Kind
+            let kind: String
         }
-        let cases = [ForecastCase(used: 0, seconds: 9_000, kind: .lastsToReset),
-                     ForecastCase(used: 100, seconds: 9_000, kind: .exhausted),
-                     ForecastCase(used: 5, seconds: 17_900, kind: .tooEarly)]
+        let cases = [ForecastCase(used: 0, seconds: 9_000, kind: "lastsToReset"),
+                     ForecastCase(used: 100, seconds: 9_000, kind: "exhausted"),
+                     ForecastCase(used: 5, seconds: 17_900, kind: "tooEarly")]
         for item in cases {
             let window = QuotaWindow(providerID: .claudeCode, type: .session, used: item.used, limit: 100,
                                      resetAt: now.addingTimeInterval(item.seconds), confidence: .providerReported,
