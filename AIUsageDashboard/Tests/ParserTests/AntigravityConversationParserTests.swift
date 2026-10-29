@@ -285,6 +285,33 @@ private final class CopyCalls: @unchecked Sendable {
 }
 
 extension AntigravityConversationParserTests {
+    func testVirtualStepsTableIsReportedAsUnreadable() async throws {
+        let url = directory.appendingPathComponent("virtual.db")
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
+        let created = ["fts5", "fts4", "fts3"].contains { module in
+            sqlite3_exec(database, "CREATE VIRTUAL TABLE steps USING \(module)(idx, metadata)",
+                         nil, nil, nil) == SQLITE_OK
+        }
+        sqlite3_close(database)
+        guard created else { throw XCTSkip("System SQLite has no FTS module") }
+
+        XCTAssertThrowsError(try AntigravityConversationDatabase.read(url, modifiedAt: Date()))
+        let result = await parser().parse()
+        XCTAssertTrue(result.records.isEmpty)
+        XCTAssertTrue(result.warnings.contains { $0.message == "Some Antigravity history could not be read." })
+    }
+
+    func testSQLiteSnapshotRefusesSymlinkSourceAndRemovesDestination() throws {
+        try database("source.db", generations: [], steps: [])
+        let link = directory.appendingPathComponent("link.db")
+        let snapshot = directory.appendingPathComponent("snapshot.db")
+        try FileManager.default.createSymbolicLink(at: link,
+                                                  withDestinationURL: directory.appendingPathComponent("source.db"))
+        XCTAssertThrowsError(try SQLiteSidecarCopy.copyDatabase(from: link, to: snapshot, using: .default))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshot.path))
+    }
+
     func testProviderCalendarChangeRebuildsDayKeysMonthCostAndCache() async throws {
         let formatter = ISO8601DateFormatter()
         let reference = try XCTUnwrap(formatter.date(from: "2026-10-01T03:00:00Z"))

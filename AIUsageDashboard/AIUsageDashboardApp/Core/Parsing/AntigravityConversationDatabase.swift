@@ -13,7 +13,7 @@ struct AntigravityConversationDatabase: Sendable {
     static func read(_ url: URL, modifiedAt: Date) throws -> Self {
         var handle: OpaquePointer?
         guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
-              let database = handle else {
+              let database = handle, TokeiSQLiteHardenConnection(database) == SQLITE_OK else {
             if let handle { sqlite3_close(handle) }
             throw ReadError.database
         }
@@ -87,6 +87,7 @@ struct AntigravityConversationDatabase: Sendable {
     private static func hasTable(_ name: String, database: OpaquePointer) throws -> Bool {
         var statement: OpaquePointer?
         let sql = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='\(name)'"
+            + " AND sql NOT LIKE 'CREATE VIRTUAL%'"
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw ReadError.database }
         defer { sqlite3_finalize(statement) }
         let result = sqlite3_step(statement)
