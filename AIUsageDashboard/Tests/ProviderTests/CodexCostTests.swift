@@ -31,6 +31,12 @@ final class CodexCostTests: XCTestCase {
     }
 
     func testCostPricesCurrentCalendarMonthWhileMapRetainsPreviousMonth() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        // Provider and Maxxer price with Calendar.current; keep their month in UTC too.
+        let originalTimeZone = NSTimeZone.default
+        NSTimeZone.default = calendar.timeZone
+        defer { NSTimeZone.default = originalTimeZone }
         let codex = codexDirectory()
         let formatter = ISO8601DateFormatter()
         let reference = try XCTUnwrap(formatter.date(from: "2026-10-29T12:00:00Z"))
@@ -44,11 +50,13 @@ final class CodexCostTests: XCTestCase {
             .joined(separator: "\n"), codex: codex)
         let pricing = PricingService(refresher: NoOpPricingTableRefresher(),
                                      cacheURL: tempDirectory.appendingPathComponent("prices.json"))
-        let provider = CodexProvider(parser: CodexJSONLParser(now: { reference }), codexDirectory: codex,
-                                     pricing: pricing, now: { reference })
+        let provider = CodexProvider(parser: CodexJSONLParser(calendar: calendar, now: { reference }),
+                                     codexDirectory: codex, pricing: pricing, now: { reference })
         let snapshot = try await provider.fetchSnapshot()
         XCTAssertEqual(snapshot.costUsage?.amount, 2)
         XCTAssertEqual(snapshot.dailyModelUsage?.count, 2)
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: reference))
+        XCTAssertEqual(snapshot.dailyModelUsage?.filter { month.contains($0.key) }.count, 1)
         let suite = "ai.padzy.tokei.wp1.addendum.mtd"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
