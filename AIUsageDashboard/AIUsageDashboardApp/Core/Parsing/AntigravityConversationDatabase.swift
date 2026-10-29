@@ -49,8 +49,12 @@ struct AntigravityConversationDatabase: Sendable {
     }
 
     private static func modelName(_ message: AntigravityProtobuf, display: Int, slug: Int) throws -> String? {
-        try AntigravityConversationRecord.normalized(message.text(display))
-            ?? AntigravityConversationRecord.normalized(message.text(slug))
+        let displayName = try AntigravityConversationRecord.normalized(message.text(display))
+        let slugName = try AntigravityConversationRecord.normalized(message.text(slug))
+        let table = PricingService.cachedTable()
+        if let displayName, table.resolveRate(for: displayName) != nil { return displayName }
+        if let slugName, table.resolveRate(for: slugName) != nil { return slugName }
+        return displayName ?? slugName
     }
 
     private static func records(

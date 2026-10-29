@@ -36,7 +36,8 @@ public actor AntigravityProvider: UsageProvider {
     }
 
     public func detectAvailability() async -> ProviderAvailability {
-        fileManager.fileExists(atPath: stateDatabaseURL.path) ? .installed : .notInstalled
+        if fileManager.fileExists(atPath: stateDatabaseURL.path) { return .installed }
+        return await conversationParser.hasLocalHistory() ? .installed : .notInstalled
     }
 
     public func authenticate() async throws -> AuthStatus {

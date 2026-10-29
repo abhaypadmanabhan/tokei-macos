@@ -98,6 +98,36 @@ final class AntigravityConversationParserTests: XCTestCase {
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
     }
 
+    func testUnpricedDisplayFallsBackToPricedSlugAndUnknownModelStaysUnpriced() async throws {
+        let known = generation(usage(input: 100, response: "known"),
+                               display: "Future marketing label", slug: "gemini-3.5-flash")
+        let unknown = generation(usage(input: 50, response: "unknown"),
+                                 display: "Future unpriced model", slug: "unknown-model")
+        try database("one.db", generations: [known, unknown], steps: [])
+        let result = await parser().parse()
+        let models = try XCTUnwrap(result.dailyModelUsage.values.first)
+        XCTAssertEqual(models["gemini-3.5-flash"]?.inputTokens, 100)
+        XCTAssertEqual(models["future-unpriced-model"]?.inputTokens, 50)
+        XCTAssertNil(PricingEngine().cost(model: "future-unpriced-model",
+                                         tokens: try XCTUnwrap(models["future-unpriced-model"])))
+    }
+
+    func testCLIConversationHistoryEstablishesAvailabilityWithoutIDEState() async throws {
+        try database("one.db", generations: [generation(usage(input: 100, response: "cli"))], steps: [])
+        let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
+                                          conversationParser: parser())
+        let availability = await provider.detectAvailability()
+        XCTAssertEqual(availability, .installed)
+    }
+
+    func testCrossDatabaseModelLearningAndTransitiveDedupeUseNamedGeneration() async throws {
+        try database("a.db", generations: [], steps: [step(usage(input: 100, response: "shared"))])
+        try database("b.db", generations: [generation(usage(input: 150, response: "shared"))], steps: [])
+        let result = await parser().parse()
+        XCTAssertEqual(result.records.count, 1)
+        XCTAssertEqual(result.dailyModelUsage.values.first?["gemini-3.5-flash"]?.inputTokens, 150)
+    }
+
     private func parser() -> AntigravityConversationParser {
         AntigravityConversationParser(roots: [directory], calendar: calendar,
                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })
@@ -119,8 +149,10 @@ final class AntigravityConversationParserTests: XCTestCase {
         }
     }
 
-    private func generation(_ usage: Data, extras: Data = Data()) -> Data {
-        bytes(1, integer(3, 1020) + text(19, "gemini-3-flash-a") + text(21, "Gemini 3.5 Flash (Medium)")
+    private func generation(_ usage: Data, extras: Data = Data(),
+                            display: String = "Gemini 3.5 Flash (Medium)",
+                            slug: String = "gemini-3-flash-a") -> Data {
+        bytes(1, integer(3, 1020) + text(19, slug) + text(21, display)
               + bytes(4, usage) + bytes(9, bytes(4, integer(1, timestamp))) + extras)
     }
 

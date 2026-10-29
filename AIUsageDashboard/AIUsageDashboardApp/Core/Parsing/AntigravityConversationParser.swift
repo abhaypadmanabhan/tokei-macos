@@ -33,6 +33,10 @@ public actor AntigravityConversationParser {
         }
     }
 
+    public func hasLocalHistory() -> Bool {
+        !AntigravityConversationFiles.discover(roots).files.isEmpty
+    }
+
     public func parse() -> AggregateUsage {
         let discovered = AntigravityConversationFiles.discover(roots)
         var partial = discovered.partial
