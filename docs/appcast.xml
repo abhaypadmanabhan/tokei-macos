@@ -3,13 +3,13 @@
   <channel>
     <title>Tokei</title>
     <item>
-      <title>Tokei 0.10.0</title>
-      <pubDate>Tue, 20 Oct 2026 11:48:30 +0000</pubDate>
-      <sparkle:version>10</sparkle:version>
-      <sparkle:shortVersionString>0.10.0</sparkle:shortVersionString>
+      <title>Tokei 0.11.0</title>
+      <pubDate>Thu, 29 Oct 2026 12:27:18 +0000</pubDate>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>0.11.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/abhaypadmanabhan/tokei-macos/releases/tag/v0.10.0</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/abhaypadmanabhan/tokei-macos/releases/download/v0.10.0/Tokei-0.10.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="gPbePiRIYeYOBSL5MYQ2JKyKncOnlW5DLgoWK31fsFuf3oYYK4lGRIMyrCU6rfxk/DhJbDjSeTL7qI0HMVitCw==" length="6209432" />
+      <sparkle:releaseNotesLink>https://github.com/abhaypadmanabhan/tokei-macos/releases/tag/v0.11.0</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/abhaypadmanabhan/tokei-macos/releases/download/v0.11.0/Tokei-0.11.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="wuL67Dl6ClNDT11oh8ftg9CLafwk7bl9iz7EsqcYVNDfWtvAn7fpXm0vFTEFd4GSOoCEu2eCsoi1QzIUHeL7Cw==" length="6978627" />
     </item>
   </channel>
 </rss>
