@@ -69,8 +69,8 @@ final class CodexCompressedRolloutTests: XCTestCase {
         XCTAssertEqual(Set(sources.compactMap(\.sessionID)), ["plain", "compressed"])
         let first = try await provider.fetchSnapshot()
         let second = try await provider.fetchSnapshot()
-        XCTAssertEqual(first.monthUsage.totalTokens, 300)
-        XCTAssertEqual(second.monthUsage.totalTokens, 300)
+        XCTAssertEqual(first.monthUsage?.totalTokens, 300)
+        XCTAssertEqual(second.monthUsage?.totalTokens, 300)
         let reads = await parser.fileReadCountForTesting()
         XCTAssertEqual(reads, 2)
     }
