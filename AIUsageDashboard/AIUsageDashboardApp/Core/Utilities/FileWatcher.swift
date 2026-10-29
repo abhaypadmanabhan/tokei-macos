@@ -2,18 +2,27 @@ import Foundation
 
 public actor FileWatcher {
     public static let shared = FileWatcher()
-    public static let defaultWatchPaths: [URL] =
-        // One per Claude *config directory* — watching only `~/.claude/projects` meant edits
-        // in the other accounts' logs never triggered a refresh. `flatMap` because accounts
-        // are deduplicated by identity now, so one account can own several directories and
-        // every one of them still has to be watched.
-        ClaudeAccount.discover().flatMap(\.projectsDirectories) + [
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".codex/sessions", isDirectory: true),
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cline/data/sessions", isDirectory: true)
-        ]
-    public static let defaultWatchPath: URL = defaultWatchPaths[0]
+    public static var defaultWatchPaths: [URL] {
+        watchPaths(homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
+    }
+    public static var defaultWatchPath: URL { defaultWatchPaths[0] }
+
+    static func watchPaths(homeDirectory home: URL) -> [URL] {
+        let manager = FileManager.default
+        let gemini = home.appendingPathComponent(".gemini", isDirectory: true)
+        let roots = (try? manager.contentsOfDirectory(at: gemini, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        let optional = roots.filter { $0.lastPathComponent.hasPrefix("antigravity") }
+            .map { $0.appendingPathComponent("conversations", isDirectory: true) } + [
+                home.appendingPathComponent(".copilot/session-state", isDirectory: true)
+            ]
+        return ClaudeAccount.discover(home: home).flatMap(\.projectsDirectories) + [
+            home.appendingPathComponent(".codex/sessions", isDirectory: true),
+            home.appendingPathComponent(".cline/data/sessions", isDirectory: true)
+        ] + optional.filter { url in
+            var directory: ObjCBool = false
+            return manager.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
+        }.sorted { $0.path < $1.path }
+    }
 
     public struct Event: Sendable, Equatable {
         public let path: String
@@ -23,17 +32,31 @@ public actor FileWatcher {
         }
     }
 
-    private let watchedURLs: [URL]
+    private(set) var watchedURLs: [URL]
+    private let pathsProvider: (@Sendable () -> [URL])?
     private let debounceInterval: TimeInterval
+    private let maximumWait: TimeInterval
+    private let sleep: @Sendable (TimeInterval) async throws -> Void
     private var stream: FSEventStreamRef?
     private var context: Unmanaged<FileWatcherContext>?
     private var debounceTask: Task<Void, Never>?
+    private var maximumWaitTask: Task<Void, Never>?
+    private var batchID: UUID?
     private var eventContinuation: AsyncStream<Event>.Continuation
     private var eventStream: AsyncStream<Event>
 
-    public init(paths: [URL] = defaultWatchPaths, debounceInterval: TimeInterval = 2.0) {
-        self.watchedURLs = paths
+    public init(
+        paths: [URL]? = nil, debounceInterval: TimeInterval = 2.0, maximumWait: TimeInterval = 10,
+        sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        },
+        pathsProvider: @escaping @Sendable () -> [URL] = { FileWatcher.defaultWatchPaths }
+    ) {
+        self.watchedURLs = paths ?? pathsProvider()
+        self.pathsProvider = paths == nil ? pathsProvider : nil
         self.debounceInterval = debounceInterval
+        self.maximumWait = maximumWait
+        self.sleep = sleep
         var continuation: AsyncStream<Event>.Continuation!
         self.eventStream = AsyncStream { cont in
             continuation = cont
@@ -50,7 +73,7 @@ public actor FileWatcher {
     }
 
     public func start() {
-        guard stream == nil else { return }
+        guard stream == nil, !watchedURLs.isEmpty else { return }
 
         let context = FileWatcherContext { [weak self] in
             guard let self else { return }
@@ -90,8 +113,11 @@ public actor FileWatcher {
     }
 
     public func stop() {
+        batchID = nil
         debounceTask?.cancel()
         debounceTask = nil
+        maximumWaitTask?.cancel()
+        maximumWaitTask = nil
 
         if let stream = stream {
             FSEventStreamStop(stream)
@@ -104,17 +130,41 @@ public actor FileWatcher {
         context = nil
     }
 
-    private func handleEvents() {
+    public func refreshWatchPaths() {
+        guard let pathsProvider else { return }
+        let paths = pathsProvider()
+        guard paths != watchedURLs else { return }
+        let wasRunning = stream != nil
+        stop()
+        watchedURLs = paths
+        if wasRunning { start() }
+    }
+
+    func handleEvents() {
+        let identifier = batchID ?? UUID()
+        if batchID == nil {
+            batchID = identifier
+            maximumWaitTask = scheduleChange(after: maximumWait, batchID: identifier)
+        }
         debounceTask?.cancel()
-        let interval = debounceInterval
-        debounceTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
-            guard let self, !Task.isCancelled else { return }
-            await self.emitChange()
+        debounceTask = scheduleChange(after: debounceInterval, batchID: identifier)
+    }
+
+    private func scheduleChange(after interval: TimeInterval, batchID: UUID) -> Task<Void, Never> {
+        Task { [weak self, sleep] in
+            do { try await sleep(interval) } catch { return }
+            guard !Task.isCancelled else { return }
+            await self?.emitChange(batchID: batchID)
         }
     }
 
-    private func emitChange() {
+    private func emitChange(batchID: UUID) {
+        guard self.batchID == batchID else { return }
+        self.batchID = nil
+        debounceTask?.cancel()
+        debounceTask = nil
+        maximumWaitTask?.cancel()
+        maximumWaitTask = nil
         eventContinuation.yield(Event(path: watchedURLs.first?.path ?? ""))
     }
 }

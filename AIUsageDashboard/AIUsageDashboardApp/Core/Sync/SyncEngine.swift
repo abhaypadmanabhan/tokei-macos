@@ -78,6 +78,7 @@ public actor SyncEngine {
     }
 
     private func performRefresh() async -> [ProviderSnapshot] {
+        await watcher.refreshWatchPaths()
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
