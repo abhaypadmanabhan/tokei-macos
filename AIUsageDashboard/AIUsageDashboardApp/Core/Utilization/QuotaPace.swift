@@ -18,14 +18,32 @@ public struct QuotaPace: Sendable, Equatable {
         case behind
     }
 
+    /// Where the window ends up at the average burn so far (used share ÷ time elapsed),
+    /// CodexBar's rule (`UsagePace.swift`, MIT): "does this last until the reset, and if
+    /// not, when does it run out?".
+    public enum Forecast: Sendable, Equatable {
+        /// Less than `forecastMinimumElapsedShare` of the window has passed; a projection
+        /// from the first minutes swings wildly, so none is made.
+        case tooEarly
+        /// The window still has room when it resets.
+        case lastsToReset
+        /// Runs out before the reset, at this instant.
+        case runsOut(at: Date)
+        /// Already fully used; it refills at the reset.
+        case exhausted
+    }
+
     /// Half-width of the on-pace band, in percentage points.
     public static let band: Double = 5
+    /// Share of the window (0…1) that must pass before a run-out forecast is made.
+    public static let forecastMinimumElapsedShare: Double = 0.05
 
     /// Used share of the window, 0…100.
     public let usedPercent: Double
     /// Share of the window that has passed, 0…100 — where the elapsed tick sits.
     public let elapsedPercent: Double
     public let state: State
+    public let forecast: Forecast
 
     /// Points between used and elapsed share; positive means ahead of the clock.
     public var delta: Double { usedPercent - elapsedPercent }
@@ -75,10 +93,18 @@ public struct QuotaPace: Sendable, Equatable {
               let duration = Self.duration(for: windowType, reported: windowDuration)
         else { return nil }
 
+        let timeToReset = max(0, resetAt.timeIntervalSince(now))
         let elapsed = (duration - resetAt.timeIntervalSince(now)) / duration * 100
         let used = min(100, max(0, usedPercent))
         self.usedPercent = used
         self.elapsedPercent = min(100, max(0, elapsed))
+        self.forecast = Self.forecast(
+            usedPercent: used,
+            elapsedSeconds: self.elapsedPercent / 100 * duration,
+            duration: duration,
+            timeToReset: timeToReset,
+            now: now
+        )
 
         // The band edge is on pace. `used / limit * 100` carries float noise (55 / 100 * 100
         // is 55.000000000000007), so compare with a tolerance far below any real reading.
@@ -91,5 +117,19 @@ public struct QuotaPace: Sendable, Equatable {
         } else {
             state = .onPace
         }
+    }
+
+    private static func forecast(
+        usedPercent used: Double,
+        elapsedSeconds: TimeInterval,
+        duration: TimeInterval,
+        timeToReset: TimeInterval,
+        now: Date
+    ) -> Forecast {
+        if used >= 100 { return .exhausted }
+        guard elapsedSeconds >= duration * forecastMinimumElapsedShare else { return .tooEarly }
+        guard used > 0 else { return .lastsToReset }
+        let secondsToEmpty = (100 - used) / (used / elapsedSeconds)
+        return secondsToEmpty >= timeToReset ? .lastsToReset : .runsOut(at: now.addingTimeInterval(secondsToEmpty))
     }
 }
