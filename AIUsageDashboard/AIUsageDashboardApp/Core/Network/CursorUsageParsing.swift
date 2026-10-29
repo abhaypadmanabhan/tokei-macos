@@ -207,7 +207,7 @@ public struct CursorUsageSummary: Sendable, Equatable {
     }
 
     /// Prefer the two independent allowances; the combined percentage is not a third pool.
-    public func quotaWindows(observedAt: Date?) -> [QuotaWindow] {
+    public func quotaWindows(observedAt: Date?, fallbackLabel: String? = nil) -> [QuotaWindow] {
         if let autoPercentUsed, let apiPercentUsed {
             return [
                 quotaWindow(percent: autoPercentUsed, label: "Cursor models", bucket: "cursor_auto", at: observedAt),
@@ -215,7 +215,7 @@ public struct CursorUsageSummary: Sendable, Equatable {
             ]
         }
         guard let usedPercent else { return [] }
-        return [quotaWindow(percent: usedPercent, label: membershipType, bucket: nil, at: observedAt)]
+        return [quotaWindow(percent: usedPercent, label: fallbackLabel ?? membershipType, bucket: nil, at: observedAt)]
     }
 
     private func quotaWindow(percent: Double, label: String?, bucket: String?, at observedAt: Date?) -> QuotaWindow {

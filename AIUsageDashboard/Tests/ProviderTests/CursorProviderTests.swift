@@ -5,13 +5,13 @@ import XCTest
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 final class CursorProviderTests: XCTestCase {
-    private var tempDirectory: URL!
+    var tempDirectory: URL!
     private var calendar: Calendar!
-    private var userDefaults: UserDefaults!
+    var userDefaults: UserDefaults!
 
     /// Fixed "now" so the CSV fixture's dates fall into deterministic windows:
     /// today = 2026-07-08, weekStart = 2026-07-02, monthStart = 2026-06-08.
-    private var referenceNow: Date {
+    var referenceNow: Date {
         calendar.date(from: DateComponents(year: 2026, month: 7, day: 8, hour: 12))!
     }
 
@@ -121,35 +121,11 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.map(\.remaining), [60, 55])
         XCTAssertEqual(snapshot.quotaWindows.map(\.label), ["Cursor models", "Other models"])
         XCTAssertEqual(snapshot.quotaWindows.map(\.bucketKey), ["cursor_auto", "cursor_api"])
-        for quota in snapshot.quotaWindows {
-            XCTAssertEqual(quota.type, .monthly)
-            XCTAssertEqual(quota.limit, 100)
-            XCTAssertEqual(quota.confidence, .providerReported)
-            XCTAssertNotNil(quota.resetAt)
-            XCTAssertEqual(quota.observedAt, referenceNow)
-        }
-    }
-
-    func testOnlyOverallUsagePublishesOneWindowWithExistingPlanLabel() async throws {
-        let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        try createStateDatabase(at: stateDB, rows: offlineRows(tabAccepted: 0, composerAccepted: 0))
-        userDefaults.set(true, forKey: "cursorNetworkUsageEnabled")
-        let summary = """
-        {"membershipType":"pro","billingCycleEnd":"2026-07-31T00:00:00.000Z",
-         "individualUsage":{"plan":{"totalPercentUsed":42.5}}}
-        """
-        let client = MockCursorUsageClient(
-            csv: .success(CursorFixtures.usageEventsCSV), summary: .success(Data(summary.utf8))
-        )
-        let snapshot = try await makeProvider(stateDB: stateDB, client: client).fetchSnapshot()
-
-        XCTAssertEqual(snapshot.quotaWindows.count, 1)
-        let quota = try XCTUnwrap(snapshot.quotaWindows.first)
-        XCTAssertEqual(quota.used, 42.5)
-        XCTAssertEqual(quota.remaining, 57.5)
-        XCTAssertEqual(quota.label, "Pro (active)")
-        XCTAssertNil(quota.bucketKey)
-        XCTAssertEqual(quota.observedAt, referenceNow)
+        XCTAssertEqual(snapshot.quotaWindows.map(\.type), [.monthly, .monthly])
+        XCTAssertEqual(snapshot.quotaWindows.map(\.limit), [100, 100])
+        XCTAssertEqual(snapshot.quotaWindows.map(\.confidence), [.providerReported, .providerReported])
+        XCTAssertTrue(snapshot.quotaWindows.allSatisfy { $0.resetAt != nil })
+        XCTAssertEqual(snapshot.quotaWindows.map(\.observedAt), [referenceNow, referenceNow])
     }
 
     func testFlagOnKeepsTokensWhenSummaryFails() async throws {
@@ -238,7 +214,7 @@ final class CursorProviderTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeProvider(
+    func makeProvider(
         stateDB: URL,
         client: CursorUsageClient? = nil,
         fileManager: FileManager = .default
@@ -255,7 +231,7 @@ final class CursorProviderTests: XCTestCase {
         )
     }
 
-    private func offlineRows(tabAccepted: Int, composerAccepted: Int) -> [String: String] {
+    func offlineRows(tabAccepted: Int, composerAccepted: Int) -> [String: String] {
         [
             "cursorAuth/stripeMembershipType": CursorFixtures.proMembership,
             "cursorAuth/stripeSubscriptionStatus": CursorFixtures.activeStatus,
@@ -287,7 +263,7 @@ final class CursorProviderTests: XCTestCase {
         XCTAssertEqual(usage.confidence, .unavailable, file: file, line: line)
     }
 
-    private func createStateDatabase(at url: URL, rows: [String: String]) throws {
+    func createStateDatabase(at url: URL, rows: [String: String]) throws {
         var database: OpaquePointer?
         XCTAssertEqual(
             sqlite3_open_v2(url.path, &database, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE, nil),
@@ -375,7 +351,7 @@ private final class CountingFileManager: FileManager, @unchecked Sendable {
     }
 }
 
-private struct MockCursorUsageClient: CursorUsageClient {
+struct MockCursorUsageClient: CursorUsageClient {
     let csv: Result<String, Error>
     var summary: Result<Data, Error>?
 

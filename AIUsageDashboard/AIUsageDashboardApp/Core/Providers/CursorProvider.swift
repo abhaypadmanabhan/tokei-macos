@@ -76,19 +76,11 @@ public actor CursorProvider: UsageProvider {
                 costUsage = online.cost
                 dailyTotals = online.dailyTotals.isEmpty ? nil : online.dailyTotals
                 hourlyTotals = online.hourlyTotals
-                if let summary = online.summary, let percent = summary.usedPercent {
-                    quotaWindows = [QuotaWindow(
-                        providerID: id,
-                        type: .monthly,
-                        used: percent,
-                        limit: 100,
-                        remaining: max(0, 100 - percent),
-                        resetAt: summary.resetAt,
-                        confidence: .providerReported,
-                        source: "cursor.com/api/usage-summary",
-                        label: state.planLabel ?? summary.membershipType,
-                        observedAt: online.summaryObservedAt
-                    )]
+                if let summary = online.summary {
+                    quotaWindows = summary.quotaWindows(
+                        observedAt: online.summaryObservedAt,
+                        fallbackLabel: state.planLabel
+                    )
                 }
             case .missingSession:
                 warnings.append(ProviderWarning(
