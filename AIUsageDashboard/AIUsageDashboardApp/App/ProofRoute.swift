@@ -12,7 +12,8 @@ import AIUsageDashboardCore
 ///
 /// Routes: `overview.usage`, `overview.quota`, `value`, `agents`, `settings`, `popover`,
 /// `provider.<ProviderID raw value>` and `provider.<raw>.scrolled`. `-TokeiProofFixture
-/// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`).
+/// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`); the tour also
+/// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`).
 enum ProofRoute {
     static let popoverWindowID = "proof-popover"
     static let metricNotification = Notification.Name("TokeiProof.metric")
@@ -92,6 +93,7 @@ enum ProofRoute {
             },
             TourStep(name: "07-claude-drillin-scrolled") {
                 injectExtraUsage(into: viewModel)
+                injectFastTierModel(into: viewModel)
                 post(scrollNotification)
             },
             TourStep(name: "08-value") {
@@ -134,28 +136,60 @@ enum ProofRoute {
     /// `-TokeiProofFixture extraUsage`: adds the §4.3 window from the saved real response
     /// (`tasks/research/claude-usage-response.json`: 2152 of 5000 minor USD, disabled,
     /// out_of_credits) to Claude, so the row can be captured before the network lane lands
-    /// it. The first live sync replaces it.
+    /// it. Adds it once; the first live sync replaces it.
     @MainActor
     private static func injectExtraUsage(into viewModel: DashboardViewModel) {
         viewModel.snapshots = viewModel.snapshots.map { snapshot in
-            guard snapshot.providerID == .claudeCode else { return snapshot }
+            guard snapshot.providerID == .claudeCode, ExtraUsageCopy.window(in: snapshot) == nil else {
+                return snapshot
+            }
             let extra = QuotaWindow(
                 providerID: .claudeCode, type: .credits, used: 21.52, limit: 50, remaining: 28.48,
                 confidence: .providerReported,
                 source: "api.anthropic.com/api/oauth/usage extra_usage disabled out_of_credits (proof fixture)",
                 label: "Extra usage", bucketKey: ExtraUsageCopy.bucketKey
             )
-            return ProviderSnapshot(
-                providerID: snapshot.providerID, displayName: snapshot.displayName,
-                authStatus: snapshot.authStatus, quotaWindows: snapshot.quotaWindows + [extra],
-                todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
-                monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage,
-                costUsage: snapshot.costUsage, warnings: snapshot.warnings,
-                lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
-                hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: snapshot.dailyModelUsage,
-                accounts: snapshot.accounts, headlineAccountID: snapshot.headlineAccountID
-            )
+            return replacing(snapshot, quotaWindows: snapshot.quotaWindows + [extra])
         }
+    }
+
+    /// Re-keys this month's least-used Claude model the way WP-1 stores fast-mode tokens
+    /// (`<model>@fast`), so "Value by model" can be captured showing the base name and the
+    /// tier word before WP-1 lands. This branch has no `@fast` rate, so that row reads "no
+    /// public rate". Once only; the first live sync replaces it.
+    @MainActor
+    private static func injectFastTierModel(into viewModel: DashboardViewModel) {
+        viewModel.snapshots = viewModel.snapshots.map { snapshot in
+            guard snapshot.providerID == .claudeCode, let days = snapshot.dailyModelUsage else { return snapshot }
+            let monthStart = Calendar.current.dateInterval(of: .month, for: Date())?.start ?? .distantPast
+            var tokens: [String: Int] = [:]
+            for (day, models) in days where day >= monthStart {
+                for (model, usage) in models { tokens[model, default: 0] += usage.totalTokens ?? 0 }
+            }
+            guard !tokens.keys.contains(where: { ModelKeyName($0).tier != nil }),
+                  let least = tokens.min(by: { $0.value < $1.value })?.key else { return snapshot }
+            let rekeyed = days.mapValues { models in
+                Dictionary(uniqueKeysWithValues: models.map { ($0.key == least ? least + "@fast" : $0.key, $0.value) })
+            }
+            return replacing(snapshot, dailyModelUsage: rekeyed)
+        }
+    }
+
+    private static func replacing(
+        _ snapshot: ProviderSnapshot,
+        quotaWindows: [QuotaWindow]? = nil,
+        dailyModelUsage: [Date: [String: TokenUsage]]? = nil
+    ) -> ProviderSnapshot {
+        ProviderSnapshot(
+            providerID: snapshot.providerID, displayName: snapshot.displayName,
+            authStatus: snapshot.authStatus, quotaWindows: quotaWindows ?? snapshot.quotaWindows,
+            todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
+            monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage,
+            costUsage: snapshot.costUsage, warnings: snapshot.warnings,
+            lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
+            hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: dailyModelUsage ?? snapshot.dailyModelUsage,
+            accounts: snapshot.accounts, headlineAccountID: snapshot.headlineAccountID
+        )
     }
 
     // MARK: Menu self-test

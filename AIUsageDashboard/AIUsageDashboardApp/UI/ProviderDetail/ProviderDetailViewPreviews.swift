@@ -76,12 +76,14 @@ private func previewSnapshot() -> ProviderSnapshot {
 private let previewClaudeModels = [
     ModelValueRow(model: "claude-opus-5-5", tokens: 1_412_000_000, apiEquivalentUSD: 1_184.20),
     ModelValueRow(model: "claude-sonnet-5-5", tokens: 318_000_000, apiEquivalentUSD: 212.65),
+    ModelValueRow(model: "claude-opus-5-5@fast", tokens: 96_000_000, apiEquivalentUSD: 161.30),
     ModelValueRow(model: "claude-haiku-5-5", tokens: 41_000_000, apiEquivalentUSD: 9.80),
     ModelValueRow(model: "claude-internal-preview", tokens: 2_300_000, apiEquivalentUSD: nil)
 ]
 
 private let previewCodexModels = [
     ModelValueRow(model: "gpt-6.1-sol", tokens: 402_000_000, apiEquivalentUSD: 241.12),
+    ModelValueRow(model: "gpt-6.1-sol@priority", tokens: 88_000_000, apiEquivalentUSD: 132.00),
     ModelValueRow(model: "gpt-6-astra", tokens: 61_000_000, apiEquivalentUSD: 38.40),
     ModelValueRow(model: "codex-auto-review", tokens: 18_000_000, apiEquivalentUSD: nil)
 ]
