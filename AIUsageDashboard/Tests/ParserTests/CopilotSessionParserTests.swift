@@ -18,6 +18,23 @@ final class CopilotSessionParserTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testProviderPricesOnlyCurrentCalendarMonthAndRetainsBothMonths() async throws {
+        let reference = Date()
+        let calendar = Calendar.current
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: reference))
+        let previous = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: month.start))
+        let formatter = ISO8601DateFormatter()
+        try write(shutdown(formatter.string(from: previous), input: 1_000_000, output: 0) + "\n"
+                  + shutdown(formatter.string(from: month.start), input: 2_000_000, output: 0))
+        let parser = CopilotSessionParser(sessionStateDirectory: directory, calendar: calendar, now: { reference })
+        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser,
+                                       calendar: calendar, now: { reference })
+        let snapshot = try await provider.fetchSnapshot()
+        XCTAssertEqual(try XCTUnwrap(snapshot.costUsage?.amount), 2, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.dailyModelUsage?.count, 2)
+        XCTAssertEqual(snapshot.lifetimeUsage?.inputTokens, 2_000_000)
+    }
+
     func testDailyModelMapKeeps92DaysWithoutLosingOlderResumeBaseline() async throws {
         let reference = Date(timeIntervalSince1970: 1_793_188_800)
         let today = calendar.startOfDay(for: reference)

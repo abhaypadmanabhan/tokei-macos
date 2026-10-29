@@ -12,6 +12,8 @@ public actor AntigravityProvider: UsageProvider {
     }
 
     private let fileManager: FileManager
+    private var calendar: Calendar
+    private let now: @Sendable () -> Date
     private let stateDatabaseURL: URL
     private let conversationParser: AntigravityConversationParser
     private let parser: AntigravityStateDBParser
@@ -24,9 +26,13 @@ public actor AntigravityProvider: UsageProvider {
         parser: AntigravityStateDBParser = .init(),
         conversationParser: AntigravityConversationParser = .init(),
         quotaClient: AntigravityQuotaClient? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.fileManager = fileManager
+        self.calendar = calendar
+        self.now = now
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/state.vscdb")
         self.parser = parser
@@ -45,6 +51,7 @@ public actor AntigravityProvider: UsageProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
+        let fetchedAt = now()
         let state = fileManager.fileExists(atPath: stateDatabaseURL.path)
             ? await parser.parse(stateDatabaseURL: stateDatabaseURL)
             : AntigravityStateDBParser.ParsedState()
@@ -64,17 +71,21 @@ public actor AntigravityProvider: UsageProvider {
             weekUsage: history.week,
             monthUsage: history.month,
             lifetimeUsage: history.lifetime,
-            costUsage: costUsage(history),
+            costUsage: costUsage(history, at: fetchedAt),
             warnings: warnings(from: state, hasLiveQuota: !quotaWindows.isEmpty) + history.warnings,
-            lastSyncedAt: Date(),
+            lastSyncedAt: fetchedAt,
             dailyTotals: history.dailyTotals,
             dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
     }
 
-    private func costUsage(_ history: AntigravityConversationParser.AggregateUsage) -> CostUsage {
+    private func costUsage(_ history: AntigravityConversationParser.AggregateUsage, at reference: Date) -> CostUsage {
         let pricing = PricingEngine(table: PricingService.cachedTable())
-        let models = UsageAggregation.sumModels(Array(history.dailyModelUsage.values))
+        let month = calendar.dateInterval(of: .month, for: reference)
+        let models = UsageAggregation.sumModels(history.dailyModelUsage.compactMap { day, models in
+            guard let month, day >= month.start, day <= reference else { return nil }
+            return models
+        })
         let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
         return amounts.isEmpty ? CostUsage(confidence: .unavailable)
             : CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)

@@ -10,6 +10,8 @@ public actor CopilotProvider: UsageProvider {
 
     private let sessionParser: CopilotSessionParser
     private let fileManager: FileManager
+    private var calendar: Calendar
+    private let now: @Sendable () -> Date
     private let installationMarkers: [URL]
     private let extensionDirectories: [URL]
 
@@ -21,9 +23,13 @@ public actor CopilotProvider: UsageProvider {
         fileManager: FileManager = .default,
         installationMarkers: [URL]? = nil,
         extensionDirectories: [URL]? = nil,
-        sessionParser: CopilotSessionParser = .init()
+        sessionParser: CopilotSessionParser = .init(),
+        calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.fileManager = fileManager
+        self.calendar = calendar
+        self.now = now
         self.sessionParser = sessionParser
 
         let home = fileManager.homeDirectoryForCurrentUser
@@ -91,6 +97,7 @@ public actor CopilotProvider: UsageProvider {
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
+        let fetchedAt = now()
         let history = await sessionParser.parse()
         let availability = await detectAvailability()
         let isInstalled = availability == .installed || history.shutdownCount > 0
@@ -113,17 +120,21 @@ public actor CopilotProvider: UsageProvider {
             weekUsage: history.week,
             monthUsage: history.month,
             lifetimeUsage: history.lifetime,
-            costUsage: costUsage(history),
+            costUsage: costUsage(history, at: fetchedAt),
             warnings: history.warnings + (history.shutdownCount == 0 ? [warning] : []),
-            lastSyncedAt: history.shutdownCount == 0 ? nil : Date(),
+            lastSyncedAt: history.shutdownCount == 0 ? nil : fetchedAt,
             dailyTotals: history.dailyTotals,
             dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
     }
 
-    private func costUsage(_ history: CopilotSessionParser.AggregateUsage) -> CostUsage? {
+    private func costUsage(_ history: CopilotSessionParser.AggregateUsage, at reference: Date) -> CostUsage? {
         let pricing = PricingEngine(table: PricingService.cachedTable())
-        let models = UsageAggregation.sumModels(Array(history.dailyModelUsage.values))
+        let month = calendar.dateInterval(of: .month, for: reference)
+        let models = UsageAggregation.sumModels(history.dailyModelUsage.compactMap { day, models in
+            guard let month, day >= month.start, day <= reference else { return nil }
+            return models
+        })
         let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
         guard !amounts.isEmpty else { return nil }
         return CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)

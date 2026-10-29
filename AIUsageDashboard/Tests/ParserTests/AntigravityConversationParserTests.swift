@@ -20,6 +20,31 @@ final class AntigravityConversationParserTests: XCTestCase {
         try FileManager.default.removeItem(at: directory)
     }
 
+    func testProviderPricesOnlyCurrentCalendarMonthAndRetainsBothMonths() async throws {
+        let reference = Date()
+        let calendar = Calendar.current
+        let month = try XCTUnwrap(calendar.dateInterval(of: .month, for: reference))
+        let previous = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: month.start))
+        let rows = [previous, month.start].enumerated().map { index, day in
+            generation(usage(input: 1_000_000, output: 10, response: "month-\(index)"),
+                       at: UInt64(day.timeIntervalSince1970))
+        }
+        try database("months.db", generations: rows, steps: [])
+        let suite = "ai.padzy.tokei.wp1.antigravity.mtd"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let history = AntigravityConversationParser(roots: [directory], calendar: calendar, now: { reference })
+        let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
+                                          conversationParser: history, userDefaults: defaults,
+                                          calendar: calendar, now: { reference })
+        let snapshot = try await provider.fetchSnapshot()
+        // $1.50 input + $0.00009 reasoning; output includes the 10 reasoning tokens.
+        XCTAssertEqual(try XCTUnwrap(snapshot.costUsage?.amount), 1.50009, accuracy: 0.000001)
+        XCTAssertEqual(snapshot.dailyModelUsage?.count, 2)
+        XCTAssertEqual(snapshot.lifetimeUsage?.inputTokens, 2_000_000)
+    }
+
     func testDailyModelMapKeeps92DaysWhileLifetimeRetainsOlderRecords() async throws {
         let reference = Date(timeIntervalSince1970: 1_793_188_800)
         let today = calendar.startOfDay(for: reference)
