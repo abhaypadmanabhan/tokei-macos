@@ -52,7 +52,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## WP-5: Zstandard educational decoder and XXH64 content checksum
+## Zstandard educational decoder and XXH64 content checksum (facebook/zstd)
 
 The Swift decoder in Core/Parsing/Zstd is ported from facebook/zstd,
 `doc/educational_decoder/zstd_decompress.c`, commit
