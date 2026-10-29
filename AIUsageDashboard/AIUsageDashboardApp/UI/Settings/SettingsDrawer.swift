@@ -86,9 +86,6 @@ struct SettingsDrawer: View {
 
     @EnvironmentObject private var viewModel: DashboardViewModel
 
-    /// Gates the 80% / 95% quota notifications (`NotificationEngine.notificationsEnabledKey`).
-    @AppStorage(NotificationEngine.notificationsEnabledKey) private var notificationsEnabled = true
-
     /// What the system menu-bar item renders — shared key with `MenuBarLabel`.
     @AppStorage(MenuBarDisplayMode.storageKey)
     private var menuBarModeRaw = MenuBarDisplayMode.todayTokens.rawValue
@@ -114,10 +111,22 @@ struct SettingsDrawer: View {
     var body: some View {
         DrawerScaffold(title: "Settings", onClose: onClose) {
             planCostSection
+            LiveQuotaSettingsSection(
+                providers: quotaProviders,
+                displayName: displayName,
+                onChange: { Task { await viewModel.refresh() } }
+            )
+            QuotaAlertsSection(providers: quotaProviders, displayName: displayName)
             appearanceSection
-            notificationsSection
+            LaunchAtLoginSection()
             versionSection
         }
+    }
+
+    /// Agents on the canvas that can read live quota: the ones with a network switch and
+    /// a quota to alert on.
+    private var quotaProviders: [ProviderID] {
+        activeProviders.filter { ProviderMetadata.liveQuotaProviders.contains($0) }
     }
 
     private func displayName(_ id: ProviderID) -> String {
@@ -217,28 +226,6 @@ struct SettingsDrawer: View {
             RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
                 .stroke(PadzyTheme.border2, lineWidth: 1)
         )
-    }
-
-    // MARK: 4 · Notifications
-
-    /// The single real notification flag (`NotificationEngine.notificationsEnabledKey`)
-    /// gates the 80% / 95% quota alerts. It lives here, once — the mockup's separate
-    /// "quota alerts" + "notifications" sections map to this one switch, so shipping
-    /// two toggles for one flag would be an inert duplicate.
-    private var notificationsSection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.s) {
-            SectionLabel("Notifications")
-            Toggle(isOn: $notificationsEnabled) {
-                Text("Quota alerts")
-                    .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink2)
-            }
-            .toggleStyle(.padzy)
-            Text("Notify when any window crosses 80% or 95%.")
-                .font(.sans(size: 11))
-                .foregroundColor(PadzyTheme.ink5)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     // MARK: Version
