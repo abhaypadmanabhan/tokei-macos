@@ -94,7 +94,9 @@ final class CodexCompressedRolloutTests: XCTestCase {
         let discovered = try await provider(parser()).discoverLogSources()
         XCTAssertEqual(discovered.map(\.url.lastPathComponent), ["same.jsonl"])
         let discoveredURL = try XCTUnwrap(discovered.first?.url)
-        XCTAssertEqual(try inode(discoveredURL), inode(plain))
+        let actualInode = try inode(discoveredURL)
+        let expectedInode = try inode(plain)
+        XCTAssertEqual(actualInode, expectedInode)
     }
 
     func testCorruptionDiscardsProvisionalRecordsAndCachesFailure() async throws {
@@ -210,6 +212,8 @@ final class CodexCompressedRolloutTests: XCTestCase {
         let sources = try await provider(parser()).discoverLogSources()
         XCTAssertEqual(sources.map(\.url.lastPathComponent), ["regular.jsonl.zst"])
         let discoveredURL = try XCTUnwrap(sources.first?.url)
-        XCTAssertEqual(try inode(discoveredURL), inode(target))
+        let actualInode = try inode(discoveredURL)
+        let expectedInode = try inode(target)
+        XCTAssertEqual(actualInode, expectedInode)
     }
 }
