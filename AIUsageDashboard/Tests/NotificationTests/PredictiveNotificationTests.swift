@@ -3,7 +3,8 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class PredictiveNotificationTests: XCTestCase {
-    private let suite = "ai.AIUsageDashboard.NotificationEngineTests.predictive"
+    private let suite = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ai.AIUsageDashboard.NotificationEngineTests.predictive").path
     private var defaults: UserDefaults!
     private let instant = Date(timeIntervalSince1970: 1_800_000_000)
 
@@ -16,9 +17,9 @@ final class PredictiveNotificationTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
         defaults.synchronize()
         defaults = nil
-        let plist = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Preferences/" + suite + ".plist")
+        let plist = URL(fileURLWithPath: suite + ".plist")
         try? FileManager.default.removeItem(at: plist)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plist.path))
         defaults = nil
     }
 

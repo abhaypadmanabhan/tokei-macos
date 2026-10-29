@@ -8,7 +8,9 @@ final class NotificationEngineTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        suiteName = "ai.AIUsageDashboard.NotificationEngineTests.fixed"
+        // An absolute suite keeps real Foundation persistence in test temp, never ~/Library/Preferences.
+        suiteName = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai.AIUsageDashboard.NotificationEngineTests.fixed").path
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
     }
@@ -18,9 +20,9 @@ final class NotificationEngineTests: XCTestCase {
             defaults.removePersistentDomain(forName: suiteName)
             defaults.synchronize()
             defaults = nil
-            let plist = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Preferences/" + suiteName + ".plist")
+            let plist = URL(fileURLWithPath: suiteName + ".plist")
             try? FileManager.default.removeItem(at: plist)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: plist.path))
         }
         defaults = nil
         suiteName = nil
