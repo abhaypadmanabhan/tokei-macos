@@ -172,11 +172,18 @@ public struct CursorUsageSummary: Sendable, Equatable {
     public let usedPercent: Double?
     public let resetAt: Date?
     public let membershipType: String?
+    public let autoPercentUsed: Double?
+    public let apiPercentUsed: Double?
 
-    public init(usedPercent: Double?, resetAt: Date?, membershipType: String?) {
+    public init(
+        usedPercent: Double?, resetAt: Date?, membershipType: String?,
+        autoPercentUsed: Double? = nil, apiPercentUsed: Double? = nil
+    ) {
         self.usedPercent = usedPercent
         self.resetAt = resetAt
         self.membershipType = membershipType
+        self.autoPercentUsed = autoPercentUsed
+        self.apiPercentUsed = apiPercentUsed
     }
 
     /// Decodes the `usage-summary` body. Percent precedence mirrors the Cursor
@@ -193,8 +200,28 @@ public struct CursorUsageSummary: Sendable, Equatable {
         return CursorUsageSummary(
             usedPercent: percentUsed(plan: plan),
             resetAt: reset,
-            membershipType: root["membershipType"] as? String
+            membershipType: root["membershipType"] as? String,
+            autoPercentUsed: doubleValue(plan?["autoPercentUsed"]).map(clampPercent),
+            apiPercentUsed: doubleValue(plan?["apiPercentUsed"]).map(clampPercent)
         )
+    }
+
+    /// Prefer the two independent allowances; the combined percentage is not a third pool.
+    public func quotaWindows(observedAt: Date?) -> [QuotaWindow] {
+        if let autoPercentUsed, let apiPercentUsed {
+            return [
+                quotaWindow(percent: autoPercentUsed, label: "Cursor models", bucket: "cursor_auto", at: observedAt),
+                quotaWindow(percent: apiPercentUsed, label: "Other models", bucket: "cursor_api", at: observedAt)
+            ]
+        }
+        guard let usedPercent else { return [] }
+        return [quotaWindow(percent: usedPercent, label: membershipType, bucket: nil, at: observedAt)]
+    }
+
+    private func quotaWindow(percent: Double, label: String?, bucket: String?, at observedAt: Date?) -> QuotaWindow {
+        QuotaWindow(providerID: .cursor, type: .monthly, used: percent, limit: 100,
+                    remaining: 100 - percent, resetAt: resetAt, confidence: .providerReported,
+                    source: "cursor.com/api/usage-summary", label: label, bucketKey: bucket, observedAt: observedAt)
     }
 
     private static func percentUsed(plan: [String: Any]?) -> Double? {
@@ -219,7 +246,7 @@ public struct CursorUsageSummary: Sendable, Equatable {
         if let double = value as? Double { return double }
         if let int = value as? Int { return Double(int) }
         if let number = value as? NSNumber { return number.doubleValue }
-        if let string = value as? String { return Double(string) }
+        if let string = value as? String, let number = Double(string), number.isFinite { return number }
         return nil
     }
 }
