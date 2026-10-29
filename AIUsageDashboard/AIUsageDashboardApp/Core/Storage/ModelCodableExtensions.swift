@@ -24,6 +24,40 @@ extension QuotaWindowType: Codable {}
 extension ProviderWarning.Level: Codable {}
 extension AccountQuotaStatus: Codable {}
 
+extension QuotaSample: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case providerID, accountID, windowType, bucketKey, usedPercent, used, limit, resetAt, sampledAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            providerID: try container.decode(ProviderID.self, forKey: .providerID),
+            accountID: try container.decodeIfPresent(String.self, forKey: .accountID),
+            windowType: try container.decode(QuotaWindowType.self, forKey: .windowType),
+            bucketKey: try container.decode(String.self, forKey: .bucketKey),
+            usedPercent: try container.decode(Double.self, forKey: .usedPercent),
+            used: try container.decode(Double.self, forKey: .used),
+            limit: try container.decode(Double.self, forKey: .limit),
+            resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
+            sampledAt: try container.decode(Date.self, forKey: .sampledAt)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+        try container.encode(windowType, forKey: .windowType)
+        try container.encode(bucketKey, forKey: .bucketKey)
+        try container.encode(usedPercent, forKey: .usedPercent)
+        try container.encode(used, forKey: .used)
+        try container.encode(limit, forKey: .limit)
+        try container.encodeIfPresent(resetAt, forKey: .resetAt)
+        try container.encode(sampledAt, forKey: .sampledAt)
+    }
+}
+
 // MARK: - Value types with custom Codable implementations
 //
 // Synthesized Codable conformance is only available in the same file as the

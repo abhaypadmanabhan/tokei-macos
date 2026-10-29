@@ -7,7 +7,7 @@ public actor QuotaSeriesStore {
     /// this preserves a bounded recent history without allowing the sidecar to grow forever.
     public static let defaultRetentionLimit = 20_000
 
-    /// Per-series cap `(providerID, windowType, bucketKey)`. A high-frequency series
+    /// Per-series cap `(providerID, accountID, windowType, bucketKey)`. A high-frequency series
     /// can fill its own bucket but cannot evict samples from another series. The
     /// existing `defaultRetentionLimit` remains the global backstop for total on-disk
     /// size.
@@ -21,6 +21,8 @@ public actor QuotaSeriesStore {
     private var samples: [QuotaSample] = []
     private var didLoad = false
     private var lastWrittenData: Data?
+    // Empty identity means the provider has accounts but no known headline: never read legacy rows for it.
+    private var headlineAccountIDs: [String: String] = [:]
 
     public init(
         now: @escaping @Sendable () -> Date = { Date() },
@@ -48,16 +50,30 @@ public actor QuotaSeriesStore {
         var didAppend = false
 
         for snapshot in snapshots {
-            for window in snapshot.quotaWindows {
-                guard let sample = QuotaSample(window: window, sampledAt: sampledAt) else {
-                    continue
+            let readings: [(String?, [QuotaWindow])]
+            if let accounts = snapshot.accounts, !accounts.isEmpty {
+                let headline = accounts.first { $0.id == snapshot.headlineAccountID }
+                headlineAccountIDs[snapshot.providerID.rawValue] = headline?.accountID ?? ""
+                readings = accounts.compactMap { account in
+                    guard let identity = account.accountID, !identity.isEmpty else { return nil }
+                    return (identity, account.quotaWindows)
                 }
-                if let last = samples.last(where: { $0.isSameSeries(as: sample) }),
-                   last.hasSameReading(as: sample) {
-                    continue
+            } else {
+                // A transient absent account list cannot turn old unowned rows into account history.
+                readings = headlineAccountIDs[snapshot.providerID.rawValue] == nil ? [(nil, snapshot.quotaWindows)] : []
+            }
+            for (accountID, windows) in readings {
+                for window in windows {
+                    guard let sample = QuotaSample(window: window, accountID: accountID, sampledAt: sampledAt) else {
+                        continue
+                    }
+                    if let last = samples.last(where: { $0.isSameSeries(as: sample) }),
+                       last.hasSameReading(as: sample) {
+                        continue
+                    }
+                    samples.append(sample)
+                    didAppend = true
                 }
-                samples.append(sample)
-                didAppend = true
             }
         }
 
@@ -74,6 +90,7 @@ public actor QuotaSeriesStore {
         return samples
             .filter { sample in
                 sample.providerID == providerID &&
+                    sample.accountID == headlineAccountIDs[providerID.rawValue] &&
                     sample.windowType == windowType &&
                     (since.map { sample.sampledAt >= $0 } ?? true)
             }
@@ -93,6 +110,7 @@ public actor QuotaSeriesStore {
             return
         }
         samples = container.samples.sorted { $0.sampledAt < $1.sampledAt }
+        headlineAccountIDs = container.headlineAccountIDs ?? [:]
         lastWrittenData = data
         enforceRetentionLimit()
     }
@@ -116,12 +134,20 @@ public actor QuotaSeriesStore {
         samples = Array(samples.suffix(retentionLimit))
     }
 
-    private func seriesKey(for sample: QuotaSample) -> String {
-        "\(sample.providerID.rawValue)|\(sample.windowType.rawValue)|\(sample.bucketKey)"
+    private struct SeriesKey: Hashable {
+        let providerID: ProviderID
+        let accountID: String?
+        let windowType: QuotaWindowType
+        let bucketKey: String
+    }
+
+    private func seriesKey(for sample: QuotaSample) -> SeriesKey {
+        SeriesKey(providerID: sample.providerID, accountID: sample.accountID,
+                  windowType: sample.windowType, bucketKey: sample.bucketKey)
     }
 
     private func persist() {
-        let container = QuotaSeriesContainer(version: 1, samples: samples)
+        let container = QuotaSeriesContainer(version: 2, samples: samples, headlineAccountIDs: headlineAccountIDs)
         guard let data = try? Self.encoder.encode(container) else { return }
         guard data != lastWrittenData else { return }
         do {
@@ -149,4 +175,5 @@ public actor QuotaSeriesStore {
 private struct QuotaSeriesContainer: Codable {
     let version: Int
     var samples: [QuotaSample]
+    var headlineAccountIDs: [String: String]?
 }
