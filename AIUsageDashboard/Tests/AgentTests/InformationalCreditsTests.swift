@@ -20,7 +20,8 @@ final class InformationalCreditsTests: XCTestCase {
         let value = snapshot()
         XCTAssertEqual(UtilizationEngine.utilizations(from: [value]).map(\.usedPercent), [8])
         XCTAssertEqual(UtilizationEngine.aggregate(from: [value])?.usedPercent, 8)
-        XCTAssertEqual(AgentSnapshotWriter.buildSnapshot(from: [value], generatedAt: now).aggregateUtilizationPercent, 8)
+        let publicSnapshot = AgentSnapshotWriter.buildSnapshot(from: [value], generatedAt: now)
+        XCTAssertEqual(publicSnapshot.aggregateUtilizationPercent, 8)
     }
 
     func testExtraUsageNeverFiresOrArmsThresholdAlerts() {

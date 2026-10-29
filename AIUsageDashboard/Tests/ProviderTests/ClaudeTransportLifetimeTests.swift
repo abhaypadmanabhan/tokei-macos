@@ -12,7 +12,8 @@ final class ClaudeTransportLifetimeTests: XCTestCase {
         for _ in 0..<50 {
             let client = ClaudeUsageClientImpl()
             // No fetch occurs. Inspect the immutable transport without exposing a production test hook.
-            let session = try XCTUnwrap(Mirror(reflecting: client).children.compactMap { $0.value as? URLSession }.first)
+            let transports = Mirror(reflecting: client).children.compactMap { $0.value as? URLSession }
+            let session = try XCTUnwrap(transports.first)
             sessions.append(session)
         }
         XCTAssertEqual(Set(sessions.map(ObjectIdentifier.init)).count, 1)

@@ -10,7 +10,8 @@ final class ReviewCLIFormatTests: XCTestCase {
     }
 
     func testStatusJSONRemainsPrettyPrinted() throws {
-        let snapshot = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: Data(AgentSnapshotFixtures.full.utf8))
+        let data = Data(AgentSnapshotFixtures.full.utf8)
+        let snapshot = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: data)
         let output = try ReviewCLIProbe.run(["status", "--json"], snapshot: snapshot)
         XCTAssertEqual(output.status, 0)
         XCTAssertGreaterThan(output.text.split(separator: "\n").count, 2)

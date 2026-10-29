@@ -71,8 +71,6 @@ enum GeminiOAuthField {
     static let grantType = "grant_type"
 }
 
-// MARK: - OAuth credentials
-
 /// Mirrors the `~/.gemini/oauth_creds.json` file the Gemini CLI writes. Read-only:
 /// Tokei never writes this file or persists tokens anywhere else.
 public struct GeminiOAuthCredentials: Decodable, Sendable, Equatable {

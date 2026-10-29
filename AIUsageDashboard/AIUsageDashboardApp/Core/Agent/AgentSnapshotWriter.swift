@@ -72,9 +72,8 @@ public actor AgentSnapshotWriter {
         let utilizations = snapshots.flatMap { snapshot -> [Utilization] in
             let windows = headlineDecisions[snapshot.providerID]?.account.quotaWindows
                 ?? snapshot.quotaWindows
-            return windows.compactMap { window in
-                guard !window.isInformationalCredits,
-                      let usedPercent = UtilizationEngine.usedPercent(from: window) else { return nil }
+            return windows.filter { !$0.isInformationalCredits }.compactMap { window in
+                guard let usedPercent = UtilizationEngine.usedPercent(from: window) else { return nil }
                 return Utilization(
                     providerID: snapshot.providerID,
                     window: window.type,

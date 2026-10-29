@@ -3,7 +3,8 @@ import XCTest
 
 final class ForecastForwardCompatibilityTests: XCTestCase {
     func testUnknownForecastKindDoesNotRejectTheSnapshot() throws {
-        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(AgentSnapshotFixtures.full.utf8)) as? [String: Any])
+        let data = Data(AgentSnapshotFixtures.full.utf8)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         var providers = try XCTUnwrap(root["providers"] as? [[String: Any]])
         var windows = try XCTUnwrap(providers[0]["windows"] as? [[String: Any]])
         windows[0]["forecast"] = ["kind": "futureProjection"]

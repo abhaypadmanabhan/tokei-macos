@@ -9,7 +9,9 @@ enum ReviewCLIProbe {
         let text: String
     }
 
-    static func run(_ arguments: [String], snapshot: AgentSnapshot? = nil, closedOutput: Bool = false) throws -> Output {
+    static func run(
+        _ arguments: [String], snapshot: AgentSnapshot? = nil, closedOutput: Bool = false
+    ) throws -> Output {
         let directory = try CLITestSupport.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let process = Process()
