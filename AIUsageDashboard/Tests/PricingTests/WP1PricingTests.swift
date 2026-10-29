@@ -19,6 +19,15 @@ final class WP1PricingTests: XCTestCase {
         XCTAssertNil(engine.cost(model: "unpriced-model@priority", tokens: tokens))
     }
 
+    func testDottedClaudeVersionPricesWithoutChangingOtherModelVersions() throws {
+        let engine = PricingEngine()
+        let tokens = TokenUsage(inputTokens: 1_000_000, confidence: .localParsed)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "claude-sonnet-4.6", tokens: tokens)), 3, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "claude-opus-5.5", tokens: tokens)), 4, accuracy: 0.000001)
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "gpt-6.1-sol", tokens: tokens)), 2, accuracy: 0.000001)
+        XCTAssertNil(engine.cost(model: "claude-sonnet-4.9", tokens: tokens))
+    }
+
     func testClaudeFallbackCacheTiersAndExplicitOneHourRate() throws {
         let data = Data((#"{"claude-fixture":{"input_cost_per_token":0.000003,"output_cost_per_token":0.000015,"#
             + #""cache_creation_input_token_cost_above_1hr":0.000009},"#

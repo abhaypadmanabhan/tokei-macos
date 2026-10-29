@@ -54,9 +54,14 @@ public struct PricingTable: Sendable {
         if let slash = slug.lastIndex(of: "/") {
             candidates.append(String(slug[slug.index(after: slash)...]))
         }
-        return candidates + candidates.compactMap { candidate in
+        let releases = candidates + candidates.compactMap { candidate in
             guard let suffix = candidate.range(of: "-\\d{8}$", options: .regularExpression) else { return nil }
             return String(candidate[..<suffix.lowerBound])
+        }
+        return releases + releases.compactMap { candidate in
+            let dashed = candidate.replacingOccurrences(of: #"(claude-(?:[a-z]+-)?\d+)\.(\d+)"#,
+                                                        with: "$1-$2", options: .regularExpression)
+            return dashed == candidate ? nil : dashed
         }
     }
 

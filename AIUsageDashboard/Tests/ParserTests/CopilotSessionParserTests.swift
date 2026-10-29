@@ -94,6 +94,19 @@ final class CopilotSessionParserTests: XCTestCase {
         XCTAssertFalse(snapshot.warnings.contains { $0.message.contains("unavailable") })
     }
 
+    func testDottedClaudeModelsKeepTheirUsageKeysAndPriceInTheProvider() async throws {
+        let record = #"{"type":"session.shutdown","timestamp":"2026-10-28T10:00:00Z","data":{"modelMetrics":{ "#
+            + #""claude-sonnet-4.6":{"usage":{"inputTokens":1000000,"outputTokens":100000}},"#
+            + #""claude-opus-5.5":{"usage":{"inputTokens":1000000,"outputTokens":100000}}}}}"#
+        try write(record)
+        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser())
+        let snapshot = try await provider.fetchSnapshot()
+        let models = try XCTUnwrap(snapshot.dailyModelUsage?.values.first)
+        XCTAssertEqual(Set(models.keys), ["claude-sonnet-4.6", "claude-opus-5.5"])
+        // Sonnet: $3 input + $1.50 output. Opus: $4 input + $2 output.
+        XCTAssertEqual(try XCTUnwrap(snapshot.costUsage?.amount), 10.5, accuracy: 0.000001)
+    }
+
     func testCacheSubsetsAndLaterReasoningCorrectionDoNotAddTokens() async throws {
         let first = shutdown("2026-10-27T12:00:00Z", input: 100, output: 30,
                              components: ["cacheReadTokens": 20, "cacheWriteTokens": 10, "reasoningTokens": 10])
