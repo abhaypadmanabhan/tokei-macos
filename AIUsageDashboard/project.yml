@@ -104,6 +104,19 @@ targets:
       - path: AIUsageDashboardApp/UI/MenuBar/MaxxerMath.swift
       # Pure provider settings facts are tested without launching the app.
       - path: AIUsageDashboardApp/UI/Components/ProviderMetadata.swift
+      # Pace and forecast words ("Runs out ~3:40 PM, 6 h before reset") are pure
+      # Foundation; tested here with a fixed clock and 12/24-hour locales.
+      - path: AIUsageDashboardApp/UI/Components/PaceCopy.swift
+      # Same for the "Saved 8 days ago · updating…" words shown before the first live sync.
+      - path: AIUsageDashboardApp/UI/Components/SavedAgeCopy.swift
+      # Alert thresholds: the editor must write the exact §4 key and value.
+      - path: AIUsageDashboardApp/UI/Settings/AlertSettings.swift
+      # Claude extra-usage words ("$21.52 of $50.00 · off, out of credits").
+      - path: AIUsageDashboardApp/UI/Components/ExtraUsageCopy.swift
+      # Tier model keys ("gpt-5.5@priority") read as the base model and a tier word.
+      - path: AIUsageDashboardApp/UI/Components/ModelKeyName.swift
+      # Range, change and Cost-chart wording ("No priced days in this range" only with none).
+      - path: AIUsageDashboardApp/UI/Components/AnalyticsFormat.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
       # index, and a chart whose series collide cannot answer the question it exists for.

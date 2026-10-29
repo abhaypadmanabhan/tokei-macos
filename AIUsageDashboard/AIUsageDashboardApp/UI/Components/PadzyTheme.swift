@@ -107,8 +107,6 @@ extension View {
 
 /// Chart-only colors for deltas and the neutral area fill.
 public enum PadzyChartPalette {
-    public static let deltaUp = Color(hex: "3DBE8B")
-    public static let deltaDown = Color(hex: "FF4D4D")
 
     /// The one sanctioned gradient: a neutral ink→transparent fill under line/area
     /// charts (WP-5 recoloured from pink to neutral; per-agent history tints its own).
@@ -191,23 +189,22 @@ public struct TokenFormatter {
     }
 }
 
-/// Clean, unnumbered section header in the aitracker idiom: uppercase mono, tracked,
-/// faintest ink. Deliberately drops the `NN / TITLE` numbered kicker (user override).
-public struct SectionLabel: View {
+/// A section's plain heading, in sentence case and the body font ("Quota windows"). Tokei has
+/// no eyebrow labels (Abhay 2026-10-29: no small uppercase or letter-spaced text), so this
+/// replaces the old uppercase mono kicker; `NoEyebrowTextTests` keeps it that way.
+public struct SectionHeading: View {
     let title: String
-    var size: CGFloat
 
-    public init(_ title: String, size: CGFloat = 10) {
+    public init(_ title: String) {
         self.title = title
-        self.size = size
     }
 
     public var body: some View {
-        Text(title.uppercased())
-            .font(.mono(size: size))
-            .tracking(size * 0.16)
-            .foregroundColor(PadzyTheme.ink5)
+        Text(title)
+            .font(.sans(size: 15, weight: .semibold))
+            .foregroundColor(PadzyTheme.ink2)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

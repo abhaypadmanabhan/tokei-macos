@@ -12,10 +12,11 @@ struct AgentCellModel: Identifiable {
     let stat: String
     var statValue: Double? = nil
     let statColor: Color
-    /// Secondary line under the stat — the Quota lens's "54% left" / "FETCHING…" /
-    /// "ENABLE →" / "LOCAL LOGS" caption. `nil` in the Usage lens.
+    /// Secondary line under the stat: "5.21M today" in Usage, "no price data" in Cost.
     var substat: String? = nil
     var substatColor: Color = PadzyTheme.ink5
+    /// A caption of words ("no price data") reads in the body font; mono is for numbers.
+    var substatIsWords = false
     /// Estimated today tokens → subtle dotted underline + a `.help` tooltip.
     let isEstimated: Bool
     /// The single emptiest quota-bearing agent → a green "route here" dot.
@@ -102,8 +103,8 @@ struct AgentGridCell: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     if model.hasHeadroom {
-                        Text("HEADROOM")
-                            .font(.mono(size: 13.5))
+                        Text("Most room")
+                            .font(.sans(size: 12))
                             .foregroundColor(PadzyTheme.ink3)
                             .accessibilityLabel("Most headroom, route new work here")
                     }
@@ -144,12 +145,44 @@ struct AgentGridCell: View {
 
             if let substat = model.substat {
                 Text(substat)
-                    .font(.mono(size: 10))
-                    .tracking(0.2)
+                    .font(model.substatIsWords ? .sans(size: 12) : .mono(size: 12))
                     .monospacedDigit()
                     .foregroundColor(model.substatColor)
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// Agents named once on one quiet line instead of as empty tiles or bars: those with no
+/// tokens in the selected range (Usage), or with no live quota source (Quota). Each name is
+/// still a way into that agent's drill-in.
+struct QuietAgentsLine: View {
+    var lead = "No usage in this range:"
+    let providers: [(id: ProviderID, name: String)]
+    let onSelect: (ProviderID) -> Void
+
+    var body: some View {
+        FlowLayout(hSpacing: 6, vSpacing: 6) {
+            Text(lead)
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink4)
+            ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                Button {
+                    onSelect(provider.id)
+                } label: {
+                    Text(provider.name + (index < providers.count - 1 ? "," : ""))
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink3)
+                        .underline(true, color: PadzyTheme.ink5)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open \(provider.name)")
+                .accessibilityLabel("\(provider.name)")
+                .accessibilityHint("Opens \(provider.name) detail")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

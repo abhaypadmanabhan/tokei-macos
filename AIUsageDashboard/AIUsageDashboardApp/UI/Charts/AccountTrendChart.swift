@@ -214,9 +214,8 @@ struct AccountTrendChart: View {
         ZStack {
             RoundedRectangle(cornerRadius: PadzyRadius.control, style: .continuous)
                 .fill(PadzyTheme.ground.opacity(0.4))
-            Text(days.isEmpty ? "NO PER-ACCOUNT HISTORY YET" : "ONLY ONE DAY SO FAR")
-                .font(.mono(size: 13.5))
-                .tracking(13.5 * 0.08)
+            Text(days.isEmpty ? "No per-account history yet" : "Only one day so far")
+                .font(.sans(size: 13))
                 .foregroundColor(PadzyTheme.muted)
         }
     }

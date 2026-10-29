@@ -51,13 +51,22 @@ struct ModelValueSection: View {
     }
 
     private func rowView(_ row: ModelValueRow) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
-            Text(row.model)
-                .font(.mono(size: 15))
-                .foregroundColor(PadzyTheme.ink)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(row.model)
+        let key = ModelKeyName(row.model)
+        return HStack(alignment: .firstTextBaseline, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(key.name)
+                    .font(.mono(size: 15))
+                    .foregroundColor(PadzyTheme.ink)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let tier = key.tier {
+                    Text(tier)
+                        .font(.sans(size: 12))
+                        .foregroundColor(PadzyTheme.ink3)
+                        .fixedSize()
+                }
+            }
+            .help(key.spoken)
             Spacer(minLength: 12)
             Text(TokenFormatter.format(row.tokens))
                 .font(.mono(size: 15))
@@ -86,6 +95,6 @@ struct ModelValueSection: View {
     private func accessibilityLabel(_ row: ModelValueRow) -> String {
         let value = row.apiEquivalentUSD.map { "worth \(MaxxerMath.formatUSD($0)) at API rates" }
             ?? "no public rate"
-        return "\(row.model), \(TokenFormatter.format(row.tokens)) tokens this month, \(value)"
+        return "\(ModelKeyName(row.model).spoken), \(TokenFormatter.format(row.tokens)) tokens this month, \(value)"
     }
 }

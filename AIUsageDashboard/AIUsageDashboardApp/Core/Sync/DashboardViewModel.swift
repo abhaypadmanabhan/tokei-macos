@@ -16,8 +16,16 @@ public final class DashboardViewModel: ObservableObject {
     /// of the selected provider's usage. Shared so the menu-bar entry can drive it too.
     @Published public var showingSettings = false
     @Published public var range: UsageRange = .sevenDay
+    /// True while `snapshots` are the ones an earlier run saved and no live sync has landed
+    /// yet. Surfaces say so ("Saved 8 days ago · updating…") instead of passing them off as
+    /// current; cleared the moment live numbers arrive.
+    @Published public private(set) var showingSavedSnapshots = false
+    /// When the shown saved snapshots were last synced (the newest `lastSyncedAt` among
+    /// them); `nil` when not showing saved numbers or no provider stamped a time.
+    @Published public private(set) var savedSnapshotsDate: Date?
 
     private let syncEngine: SyncEngine
+    private let store: UsageStore
     private var calendar: Calendar
     /// Injected clock; internal so the pace extension reads the same "now".
     let now: @Sendable () -> Date
@@ -26,10 +34,12 @@ public final class DashboardViewModel: ObservableObject {
 
     public init(
         syncEngine: SyncEngine = .shared,
+        store: UsageStore = .shared,
         calendar: Calendar = .current,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.syncEngine = syncEngine
+        self.store = store
         self.calendar = calendar
         self.now = now
     }
@@ -41,9 +51,33 @@ public final class DashboardViewModel: ObservableObject {
     public func refresh() async {
         isLoading = true
         errorMessage = nil
-        snapshots = await syncEngine.refreshAll()
-        lastSyncedAt = Date()
+        let live = await syncEngine.refreshAll()
+        applyLive(live)
         isLoading = false
+    }
+
+    /// Shows the numbers the last run saved, at once, while the first live sync (a minute
+    /// or more on a cold launch) reads the logs. Does nothing once live numbers exist. A
+    /// saved quota reading whose reset has passed is shown as unknown, never as current.
+    public func loadSavedSnapshots() async {
+        guard snapshots.isEmpty else { return }
+        let saved = await store.allSnapshots()
+        // A live sync may have landed while the store was read.
+        guard snapshots.isEmpty, !saved.isEmpty else { return }
+        let now = now()
+        let order = Dictionary(uniqueKeysWithValues: ProviderID.allCases.enumerated().map { ($1, $0) })
+        snapshots = saved
+            .map { SavedSnapshotAging.expiringPastResets($0, now: now) }
+            .sorted { (order[$0.providerID] ?? 0) < (order[$1.providerID] ?? 0) }
+        savedSnapshotsDate = saved.compactMap(\.lastSyncedAt).max()
+        showingSavedSnapshots = true
+    }
+
+    private func applyLive(_ live: [ProviderSnapshot]) {
+        snapshots = live
+        lastSyncedAt = Date()
+        showingSavedSnapshots = false
+        savedSnapshotsDate = nil
     }
 
     /// Starts the file watcher and subscribes to sync results so auto-refreshes
@@ -56,10 +90,7 @@ public final class DashboardViewModel: ObservableObject {
             await syncEngine.startAutoSync()
             for await snapshots in stream {
                 guard let self else { return }
-                await MainActor.run {
-                    self.snapshots = snapshots
-                    self.lastSyncedAt = Date()
-                }
+                await MainActor.run { self.applyLive(snapshots) }
             }
         }
     }
@@ -131,6 +162,7 @@ public final class DashboardViewModel: ObservableObject {
     private(set) var calendarGeneration = 0
 
     var analyticsTimeZone: TimeZone { calendar.timeZone }
+    var analyticsCalendar: Calendar { calendar }
 
     func noteEffectiveTimezoneChange(_ calendar: Calendar) {
         self.calendar = calendar
@@ -192,28 +224,41 @@ public final class DashboardViewModel: ObservableObject {
         )
     }
 
+    /// Like for like: the last N complete days against the N before them. Today's part-day is
+    /// in neither side (a part-day set against a full day always reads as a drop); `nil` for
+    /// lifetime and custom ranges, or when any agent counted in those days is recorded only
+    /// from partway through the earlier period (`UsageAnalytics.historiesCover`).
     public var overviewDelta: Double? {
-        let dailyTotals = overviewDailyTotals
-        let current = overviewRangedTotal
-        let previous = UsageAnalytics.previousTotal(
-            dailyTotals: dailyTotals,
-            range: range,
-            calendar: calendar,
-            now: now()
-        )
-        return UsageAnalytics.delta(current: current, previous: previous)
-    }
-
-    /// Published headline gauge, labelled as the named best account when the provider picked one (D8).
-    public var overviewHeadlineGauge: HeadlineGauge? {
-        let gauges = visibleSnapshots.compactMap { headlineGauge(for: $0) }
-        if let named = gauges.first(where: { $0.accountID != nil }) {
-            return named
+        guard let days = UsageAnalytics.dayCount(for: range),
+              let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))
+        else { return nil }
+        let totals = overviewDailyTotals
+        let histories = visibleSnapshots.map { snapshot in
+            Set(UsageAnalytics.normalizedDailyTotals(snapshot.dailyTotals ?? [:], calendar: calendar)
+                .filter { $0.value > 0 }.keys)
         }
-        return gauges.max { $0.usedPercent < $1.usedPercent }
+        let previousBounds = UsageAnalytics.dayBounds(.previousDays(days), calendar: calendar, today: yesterday)
+        guard let previousStart = previousBounds.start,
+              UsageAnalytics.historiesCover(histories, from: previousStart, to: yesterday) else { return nil }
+        let previous = UsageAnalytics.filteredDailyTotals(
+            totals, range: .previousDays(days), calendar: calendar, now: yesterday
+        )
+        guard !previous.isEmpty else { return nil }
+        let current = UsageAnalytics.filteredDailyTotals(totals, range: .days(days), calendar: calendar, now: yesterday)
+        return UsageAnalytics.delta(current: current.values.reduce(0, +), previous: previous.values.reduce(0, +))
     }
 
-    /// Highest computable account window among visible providers. Surfaces called "tightest" use this (D8/D13).
+    /// Overview › Cost for the visible providers, priced with the Value tab's table.
+    public var overviewCost: CostSummary {
+        UsageAnalytics.costSummary(
+            snapshots: visibleSnapshots, range: range,
+            pricing: PricingEngine(table: PricingService.cachedTable()), calendar: calendar, now: now()
+        )
+    }
+
+    /// The tightest eligible reading among visible providers (see `isEligibleReading`): the
+    /// one definition behind the Overview quota hero, the menu-bar "Tightest quota" and the
+    /// status-item percentage, so no two surfaces name a different number (D13).
     public var tightestAccountPressure: AccountPressureReading? {
         tightestAccountPeak?.reading
     }
@@ -323,44 +368,23 @@ public final class DashboardViewModel: ObservableObject {
             }
         }
     }
-
-    private func headlineGauge(for snapshot: ProviderSnapshot) -> HeadlineGauge? {
-        let windows = snapshot.quotaWindows.filter { $0.type != .credits }
-        guard let peak = windows.compactMap(usedPercent(of:)).max() else { return nil }
-        if let id = snapshot.headlineAccountID,
-           let account = snapshot.accounts?.first(where: { $0.id == id }) {
-            return HeadlineGauge(
-                providerID: snapshot.providerID,
-                accountID: id,
-                accountLabel: account.label,
-                usedPercent: peak
-            )
-        }
-        return HeadlineGauge(
-            providerID: snapshot.providerID,
-            accountID: nil,
-            accountLabel: snapshot.displayName,
-            usedPercent: peak
-        )
-    }
-
-    private func usedPercent(of window: QuotaWindow) -> Double? {
-        UtilizationEngine.usedPercent(from: window)
-    }
 }
 
-/// Named best-account reading the Overview quota hero displays. Not a "tightest" claim.
-public struct HeadlineGauge: Equatable, Sendable {
-    public let providerID: ProviderID
-    public let accountID: String?
-    public let accountLabel: String
-    public let usedPercent: Double
-}
-
-/// Max account window. Surfaces labelled tightest must use this, not the published headline.
+/// The highest-used eligible window of one account (or of a single-account provider), with
+/// what a surface needs to name it: provider, account, which window, and when it resets.
 public struct AccountPressureReading: Equatable, Sendable {
     public let providerID: ProviderID
+    /// The provider's display name ("Claude Code").
+    public let providerName: String
     public let accountID: String
+    /// The account's label ("account-1"); the provider's name when it has no accounts.
     public let accountLabel: String
     public let usedPercent: Double
+    public let window: QuotaWindowType
+    /// The window's own label when the provider gives one ("Claude and GPT Models").
+    public let windowLabel: String?
+    public let resetAt: Date?
+
+    /// True when the provider has several accounts, so a surface should name this one.
+    public var namesAccount: Bool { accountLabel != providerName }
 }

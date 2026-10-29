@@ -56,7 +56,7 @@ struct ConnectionsView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            SectionLabel("Connected agents")
+            SectionHeading("Connected agents")
             AddAgentButton { onAddAgent() }
                 .fixedSize()
         }
@@ -64,7 +64,7 @@ struct ConnectionsView: View {
 
     private var privacyNote: some View {
         Text("Live quota uses read-only credentials already on this Mac. Tokei never sends prompts, code, or files anywhere.")
-            .font(.mono(size: 11))
+            .font(.sans(size: 13))
             .foregroundColor(PadzyTheme.ink5)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 580, alignment: .leading)

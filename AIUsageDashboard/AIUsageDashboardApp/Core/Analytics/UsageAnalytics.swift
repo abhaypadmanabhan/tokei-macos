@@ -198,16 +198,24 @@ extension UsageAnalytics {
         case previousDays(Int)
     }
 
+    /// Days with tokens in `range`, oldest first. A missing day *between* active days is a real
+    /// zero and is kept (a chart must not bridge it); days before the first active day stay out.
     static func trend(
         dailyTotals: [Date: Int],
         range: UsageRange,
         calendar: Calendar = .current,
         now: Date = Date()
     ) -> [(date: Date, tokens: Int)] {
-        filteredDailyTotals(dailyTotals, range: dailyRange(for: range), calendar: calendar, now: now)
+        let active = filteredDailyTotals(dailyTotals, range: dailyRange(for: range), calendar: calendar, now: now)
             .filter { $0.value > 0 }
-            .sorted { $0.key < $1.key }
-            .map { (date: $0.key, tokens: $0.value) }
+        guard var day = active.keys.min(), let last = active.keys.max() else { return [] }
+        var points: [(date: Date, tokens: Int)] = []
+        while day <= last {
+            points.append((date: day, tokens: active[day] ?? 0))
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return points
     }
 
     static func aggregateDailyTotals(

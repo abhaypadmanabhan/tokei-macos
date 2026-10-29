@@ -27,38 +27,41 @@ final class WP4LabelMotionTests: XCTestCase {
         XCTAssertFalse(UsageAnalytics.dailyHistoryTitle(for: .thirtyDay).contains("30d"))
     }
 
-    /// D8: 80/20 — headline gauge is the named best account (20); tightest surface is 80.
-    func testD8_eightyTwentyHeadlineIsBestAccountTightestIsMax() {
+    /// D8, superseded by WP-3 (2026-10-28 Bible §3 AC3): the quota hero and the menu-bar
+    /// "Tightest quota" read one definition. With accounts at 80% and 20%, both say 80%
+    /// and name the busy account; the old best-account (20%) hero is gone.
+    func testD8_eightyTwentyHeroAndMenuBothNameTheTightestAccount() {
         let vm = DashboardViewModel()
         vm.snapshots = [claudeEightyTwenty()]
 
-        let gauge = vm.overviewHeadlineGauge
-        XCTAssertEqual(gauge?.accountLabel, "best")
-        XCTAssertEqual(gauge?.usedPercent, 20)
         XCTAssertEqual(vm.tightestAccountPressure?.usedPercent, 80)
         XCTAssertEqual(vm.tightestAccountPressure?.accountLabel, "busy")
+        XCTAssertEqual(vm.tightestAccountPressure?.providerName, "Claude Code")
+        XCTAssertEqual(vm.tightestAccountPressure?.namesAccount, true)
     }
 
-    /// D8: an extra Codex 50 must not replace the named best-account gauge or hide the 80.
-    func testD8_codexFiftyDoesNotReplaceBestAccountOrHideTightest() {
+    /// D8: an extra Codex 50 must not hide the 80.
+    func testD8_codexFiftyDoesNotHideTightest() {
         let vm = DashboardViewModel()
         vm.snapshots = [
             claudeEightyTwenty(),
             provider(.codex, name: "Codex", today: 40, windowUsed: 50),
         ]
 
-        XCTAssertEqual(vm.overviewHeadlineGauge?.accountLabel, "best")
-        XCTAssertEqual(vm.overviewHeadlineGauge?.usedPercent, 20)
         XCTAssertEqual(vm.tightestAccountPressure?.usedPercent, 80)
+        XCTAssertEqual(vm.tightestAccountPressure?.providerID, .claudeCode)
     }
 
-    /// D12: today 10 vs 30-day 1000 vs previous 100 is +900% of the ranged total, not of today.
+    /// D12: today 10, the 30 full days to yesterday 990, the 30 before them 100: the delta is
+    /// +890% of the complete-day totals (WP-3 AC2, like for like), not growth of today's 10.
     func testD12_deltaIsNotGrowthOfTodayHeadline() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let today = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 9, day: 16))!
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-        let previousEnd = calendar.date(byAdding: .day, value: -30, to: today)!
+        // First day of the previous 30 complete days (07-18), so that period counts as recorded
+        // (a history starting later makes no claim); outside the ranged 30 days.
+        let previousStart = calendar.date(byAdding: .day, value: -60, to: today)!
         let vm = DashboardViewModel(calendar: calendar, now: { today })
         vm.range = .thirtyDay
         vm.snapshots = [
@@ -71,13 +74,13 @@ final class WP4LabelMotionTests: XCTestCase {
                 dailyTotals: [
                     today: 10,
                     yesterday: 990,
-                    previousEnd: 100,
+                    previousStart: 100,
                 ]
             ),
         ]
 
         XCTAssertEqual(vm.overviewRangedTotal, 1000)
-        XCTAssertEqual(vm.overviewDelta, 900)
+        XCTAssertEqual(vm.overviewDelta, 890)
         XCTAssertEqual(vm.snapshots[0].todayUsage.totalTokens, 10)
         XCTAssertNotEqual(vm.overviewRangedTotal, vm.snapshots[0].todayUsage.totalTokens)
     }

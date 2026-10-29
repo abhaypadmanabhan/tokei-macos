@@ -8,27 +8,22 @@ struct ConfidenceBadge: View {
     /// callers keep the long label.
     var compact: Bool = false
 
-    /// Short forms chosen to stay unambiguous at a glance: never abbreviate two
-    /// different confidences to the same prefix.
+    /// Where the number came from, as a short sentence-case word (no badge box, no capitals:
+    /// Tokei has no eyebrow labels). The compact form is shorter, never ambiguous.
     private var label: String {
-        guard compact else { return confidence.displayName.uppercased() }
         switch confidence {
-        case .exact: return "EXACT"
-        case .providerReported: return "REPORTED"
-        case .localParsed: return "PARSED"
-        case .estimated: return "EST"
-        case .unavailable: return "N/A"
+        case .exact: return "Exact"
+        case .providerReported: return compact ? "Reported" : "Reported by the provider"
+        case .localParsed: return "Local logs"
+        case .estimated: return compact ? "Estimate" : "Estimated"
+        case .unavailable: return "Unavailable"
         }
     }
 
     var body: some View {
         Text(label)
-            .font(.mono(size: 9))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundColor(PadzyTheme.ink)
-            .background(Color.clear)
-            .border(PadzyTheme.muted, width: 1)
+            .font(.sans(size: 12))
+            .foregroundColor(PadzyTheme.ink3)
             .accessibilityLabel("Confidence: \(confidence.displayName)")
     }
 }

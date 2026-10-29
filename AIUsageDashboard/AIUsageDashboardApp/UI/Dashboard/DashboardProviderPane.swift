@@ -22,22 +22,15 @@ struct DashboardProviderPane: View {
     private var content: some View {
         if let errorMessage = viewModel.errorMessage {
             SurfaceStateView(
-                header: "USAGE",
                 kind: .error(headline: "Sync failed", detail: errorMessage),
                 onRetry: { Task { await viewModel.refresh() } }
             )
         } else if viewModel.selectedProvider == .claudeCode && !isClaudeInstalled {
             claudeMissingState
         } else if selectedSnapshot == nil && viewModel.isLoading {
-            SurfaceStateView(
-                header: "USAGE",
-                kind: .loading(message: "Reading local logs")
-            )
+            SurfaceStateView(kind: .loading(message: "Reading local logs"))
         } else if !selectedHasData {
-            SurfaceStateView(
-                header: "USAGE",
-                kind: .empty(headline: "No usage data", hint: noDataHint)
-            )
+            SurfaceStateView(kind: .empty(headline: "No usage data", hint: noDataHint))
         } else if let snapshot = selectedSnapshot {
             // ONE unified drill-in (WP-5 P6) for BOTH full-metrics and plan-only
             // providers — the plan-only branch now falls through here too. Analytics
@@ -61,7 +54,7 @@ struct DashboardProviderPane: View {
                 onEnableOnline: onEnableOnline
             )
         } else {
-            SurfaceStateView(header: "USAGE", kind: .loading(message: "Reading local logs"))
+            SurfaceStateView(kind: .loading(message: "Reading local logs"))
         }
     }
 
@@ -114,7 +107,7 @@ struct DashboardProviderPane: View {
     /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
     /// opinion on visibility, so the filtering happens here.
     private var visibleUtilizations: [Utilization] {
-        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
+        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 
     // MARK: Empty state
@@ -123,15 +116,14 @@ struct DashboardProviderPane: View {
     /// data yet", so it gets its own copy naming the path we watch.
     private var claudeMissingState: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionLabel("Usage")
-            Text("NO CLAUDE CODE DIRECTORY DETECTED")
-                .font(.display(size: 18, weight: .black))
+            Text("No Claude Code folder on this Mac")
+                .font(.sans(size: 17, weight: .semibold))
                 .foregroundColor(PadzyTheme.ink)
             Text("Expected location: ~/.claude")
                 .font(.mono(size: 12))
                 .foregroundColor(PadzyTheme.ink)
             Text("Install Claude Code and run it once in your terminal to initialize session logs.")
-                .font(.system(size: 12))
+                .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.muted)
             Spacer()
         }

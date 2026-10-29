@@ -10,105 +10,86 @@ import AIUsageDashboardCore
 /// than private only because Swift's `private` is file-scoped — nothing outside
 /// `OverviewView` should call them.
 extension OverviewView {
-    // MARK: Quota state (FIX 2 + FIX 3)
+    // MARK: Quota state
 
-    /// Whether the provider's live-quota flag is on (same UserDefaults key the
-    /// Connections/Agents toggle writes). `false` for local-only providers.
-    func liveQuotaEnabled(_ id: ProviderID) -> Bool {
-        guard let key = ProviderMetadata.liveQuotaEnabledKey(for: id) else { return false }
-        return UserDefaults.standard.bool(forKey: key)
-    }
-
+    /// A live reading when the provider has one, else what its row can honestly say.
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderMetadata.showsPendingQuota(for: id) {
-            return liveQuotaEnabled(id) ? .fetching : .connect
-        }
-        return .localOnly
+        return .gap(QuotaGap.classify(
+            id,
+            isEnabled: { UserDefaults.standard.bool(forKey: $0) },
+            isSyncing: viewModel.isLoading,
+            reason: QuotaGap.reason(for: viewModel.snapshot(for: id))
+        ))
     }
 
-    /// One resolved cell per visible provider for the agent grid, resolved for the
-    /// active lens: Usage shows today's tokens; Quota shows used% + a `% left` substat
-    /// (FIX 2), with an honest connect/fetching state for providers with no live window.
+    /// Tokens per visible provider in the selected range (the same split the ranged total
+    /// above the chart adds up).
+    var rangedTokens: [ProviderID: Int] {
+        Dictionary(viewModel.providerSplit.map { ($0.provider, $0.tokens) }, uniquingKeysWith: +)
+    }
+
+    /// Visible providers that used tokens in the range: one tile each, in `ProviderID` order.
+    var activeInRange: [ProviderID] {
+        let tokens = rangedTokens
+        return visibleProviders.filter { (tokens[$0] ?? 0) > 0 }
+    }
+
+    /// Visible providers with no tokens in the range. They collapse into one quiet line
+    /// (each name still opens its drill-in) instead of a row of 0 and — tiles.
+    var quietInRange: [ProviderID] {
+        let tokens = rangedTokens
+        return visibleProviders.filter { (tokens[$0] ?? 0) == 0 }
+    }
+
+    /// One tile per agent that used tokens in the range: the range's tokens, with today's
+    /// share of them underneath.
     var agentModels: [AgentCellModel] {
         let headroom = headroomProviderID
-        return visibleProviders.map { id in
-            switch metric {
-            case .usage: return usageCell(id, headroom: headroom)
-            case .quota: return quotaCell(id, headroom: headroom)
+        let tokens = rangedTokens
+        return activeInRange.map { id in
+            let ranged = tokens[id] ?? 0
+            let today = viewModel.snapshot(for: id)?.todayUsage
+            return AgentCellModel(
+                providerID: id, name: displayName(id),
+                stat: TokenFormatter.format(ranged), statValue: Double(ranged),
+                statColor: PadzyTheme.ink,
+                substat: today?.totalTokens.map { "\(TokenFormatter.format($0)) today" },
+                substatColor: PadzyTheme.ink4,
+                isEstimated: today?.confidence == .estimated,
+                hasHeadroom: id == headroom
+            )
+        }
+    }
+
+    /// One tile per agent with tokens in the range, in the Cost lens: the range's API
+    /// estimate, a provider-reported all-time figure, or "no price data", never $0.
+    func costAgentModels(_ cost: CostSummary) -> [AgentCellModel] {
+        activeInRange.map { id in
+            let stat: String
+            let caption: String?
+            switch cost.providers[id] ?? .noPriceData {
+            case let .priced(usd, partial):
+                stat = MaxxerMath.formatUSD(usd)
+                caption = partial ? "some tokens unpriced" : nil
+            case let .reportedAllTime(usd):
+                stat = MaxxerMath.formatUSD(usd)
+                caption = "reported, all time"
+            case .noPriceData:
+                stat = "—"
+                caption = "no price data"
             }
+            return AgentCellModel(
+                providerID: id, name: displayName(id), stat: stat, statColor: PadzyTheme.ink,
+                substat: caption, substatColor: PadzyTheme.ink4, substatIsWords: true,
+                isEstimated: false, hasHeadroom: false
+            )
         }
     }
 
-    func usageCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
-        let today = viewModel.snapshot(for: id)?.todayUsage
-        let tightest = tightestByProvider[id]
-
-        let stat: String
-        let color: Color
-        var estimated = false
-        if let today, let total = today.totalTokens {
-            stat = TokenFormatter.format(total)
-            color = PadzyTheme.ink
-            estimated = today.confidence == .estimated
-        } else if let tightest {
-            stat = "\(Int(round(tightest.usedPercent)))%"
-            color = PadzyTheme.ink2
-        } else {
-            stat = "—"
-            color = PadzyTheme.ink5
-        }
-
-        return AgentCellModel(
-            providerID: id, name: displayName(id),
-            stat: stat, statValue: today?.totalTokens.map(Double.init) ?? tightest?.usedPercent,
-            statColor: color,
-            isEstimated: estimated, hasHeadroom: id == headroom
-        )
-    }
-
-    func quotaCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
-        let stat: String
-        let statColor: Color
-        let substat: String?
-        let substatColor: Color
-        switch quotaState(for: id) {
-        case .live(let util):
-            // D25: the quota lens already has the bars. Don't repeat % + "% left" here.
-            let used = Int(round(max(0, min(100, util.usedPercent))))
-            stat = "\(used)%"
-            if util.usedPercent >= 90 {
-                statColor = PadzyTheme.accent
-            } else if util.usedPercent >= 70 {
-                statColor = PadzyTheme.accent.opacity(0.6)
-            } else {
-                statColor = PadzyTheme.ink
-            }
-            substat = nil
-            substatColor = PadzyTheme.ink5
-        case .fetching:
-            stat = "—"; statColor = PadzyTheme.ink3
-            substat = "FETCHING…"; substatColor = PadzyTheme.ink5
-        case .connect:
-            stat = "OFF"; statColor = PadzyTheme.ink4
-            substat = "ENABLE →"; substatColor = PadzyTheme.accent
-        case .localOnly:
-            stat = "—"; statColor = PadzyTheme.ink4
-            substat = "LOCAL LOGS"; substatColor = PadzyTheme.ink5
-        }
-        let value: Double?
-        if case .live(let util) = quotaState(for: id) { value = util.usedPercent } else { value = nil }
-        return AgentCellModel(
-            providerID: id, name: displayName(id),
-            stat: stat, statValue: value, statColor: statColor,
-            substat: substat, substatColor: substatColor,
-            isEstimated: false, hasHeadroom: id == headroom && quotaState(for: id).isLive
-        )
-    }
-
-    /// Every visible provider as a quota bar row for the Quota-metric main view —
-    /// live windows first (fullest-first), then the honest non-live states so nothing
-    /// the user enabled is dropped (FIX 3). Sorted so the pressure that bites is on top.
+    /// Rows for the Quota lens: live gauges first (fullest on top), then providers that
+    /// could report quota but have no reading. Providers with no quota source are not rows;
+    /// they are named once on `noQuotaSourceProviders`' line.
     var quotaRows: [AgentQuotaRow] {
         visibleProviders
             .map { id -> AgentQuotaRow in
@@ -117,10 +98,16 @@ extension OverviewView {
                 if case .live(let util) = state { pace = viewModel.pace(for: util) }
                 return AgentQuotaRow(id: id, name: displayName(id), state: state, pace: pace)
             }
+            .filter { $0.state != .gap(.noSource) }
             .sorted { lhs, rhs in
                 if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
                 return lhs.usedPercent > rhs.usedPercent
             }
+    }
+
+    /// Visible providers with no live quota connector (local logs only), in `ProviderID` order.
+    var noQuotaSourceProviders: [ProviderID] {
+        visibleProviders.filter { quotaState(for: $0) == .gap(.noSource) }
     }
 
     /// Per-day top agent for the trend hover callout — the provider that contributed
@@ -148,16 +135,18 @@ extension OverviewView {
     var heroNumber: String {
         switch metric {
         case .usage: return mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—"
+        case .cost: return viewModel.overviewCost.todayUSD.map { MaxxerMath.formatUSD($0) } ?? "—"
         case .quota:
-            guard let gauge = viewModel.overviewHeadlineGauge else { return "—" }
-            return "\(Int(round(gauge.usedPercent)))%"
+            guard let reading = viewModel.tightestAccountPressure else { return "—" }
+            return "\(Int(round(reading.usedPercent)))%"
         }
     }
 
     var heroNumericValue: Double? {
         switch metric {
         case .usage: return mergedToday.totalTokens.map(Double.init)
-        case .quota: return viewModel.overviewHeadlineGauge?.usedPercent
+        case .cost: return viewModel.overviewCost.todayUSD
+        case .quota: return viewModel.tightestAccountPressure?.usedPercent
         }
     }
 
@@ -165,13 +154,34 @@ extension OverviewView {
         switch metric {
         case .usage:
             let count = activeAgentCount
-            return "tokens today across \(count) active agent\(count == 1 ? "" : "s") · incl. cache"
-        case .quota:
-            guard let gauge = viewModel.overviewHeadlineGauge else { return "No live quota connected yet." }
-            if gauge.accountID != nil {
-                return "\(gauge.accountLabel) — the account with the most headroom."
+            let agents = "\(count) active agent\(count == 1 ? "" : "s")"
+            guard viewModel.showingSavedSnapshots else { return "tokens today across \(agents) · incl. cache" }
+            // Saved numbers: name the day they describe and say they are being refreshed.
+            let now = Date()
+            let day = SavedAgeCopy.dayPhrase(savedAt: viewModel.savedSnapshotsDate, now: now)
+            let age = SavedAgeCopy.statusLine(
+                savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: now
+            )
+            return "tokens \(day) across \(agents) · incl. cache · \(age.prefix(1).lowercased())\(age.dropFirst())"
+        case .cost:
+            let cost = viewModel.overviewCost
+            guard cost.todayUSD != nil else {
+                return cost.pricedFrom == nil
+                    ? "No per-model token data to price yet."
+                    : "No priced data for today yet."
             }
-            return "\(gauge.accountLabel) live quota."
+            return (["API estimate for today at public rates"]
+                + [AnalyticsFormat.excludedPhrase(cost.todayExcludedShare)].compactMap { $0 })
+                .joined(separator: " · ")
+        case .quota:
+            // The same reading the menu bar calls "Tightest quota", named in full.
+            guard let reading = viewModel.tightestAccountPressure else {
+                return viewModel.gaugeUtilizations.isEmpty
+                    ? "No live quota reading yet."
+                    : "No current reading: what's saved is estimated or past its reset."
+            }
+            return "\(QuotaWindowName.owner(of: reading)), \(QuotaWindowName.phrase(of: reading))"
+                + " — the tightest live quota."
         }
     }
 
@@ -212,9 +222,9 @@ extension OverviewView {
     }
 
     /// Published windows of visible providers only (D13). The quota hero does not use this
-    /// as a "tightest" claim — see `overviewHeadlineGauge`.
+    /// as a "tightest" claim — see `DashboardViewModel.tightestAccountPressure`.
     var tightestWindow: Utilization? {
-        MaxxerMath.tightestWindow(in: viewModel.utilization.filter {
+        MaxxerMath.tightestWindow(in: viewModel.gaugeUtilizations.filter {
             visibleProviders.contains($0.providerID)
         })
     }
@@ -222,7 +232,7 @@ extension OverviewView {
     /// Each provider reduced to its tightest (highest-used) live window.
     var tightestByProvider: [ProviderID: Utilization] {
         var result: [ProviderID: Utilization] = [:]
-        for util in viewModel.utilization {
+        for util in viewModel.gaugeUtilizations {
             if let existing = result[util.providerID] {
                 if util.usedPercent > existing.usedPercent { result[util.providerID] = util }
             } else {
@@ -245,6 +255,6 @@ extension OverviewView {
     /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
     /// opinion on visibility, so the filtering happens here.
     var visibleUtilizations: [Utilization] {
-        viewModel.utilization.filter { !ProviderVisibility.isHidden($0.providerID) }
+        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
     }
 }

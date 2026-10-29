@@ -70,7 +70,7 @@ struct MenuBarView: View {
 
     /// The agent's tightest live-quota window %, or `nil` when it exposes none.
     private func tightestPercent(_ id: ProviderID) -> Double? {
-        viewModel.utilization.filter { $0.providerID == id }.map(\.usedPercent).max()
+        viewModel.gaugeUtilizations.filter { $0.providerID == id }.map(\.usedPercent).max()
     }
 
     /// Three agents for the mini-list, ranked by whichever metric is showing:
@@ -150,24 +150,17 @@ struct MenuBarView: View {
     // MARK: Hero
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("TOKENS · TODAY")
-                    .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink5)
-                Spacer(minLength: 8)
-                Text("incl. cache")
-                    .font(.sans(size: 15))
-                    .foregroundColor(PadzyTheme.ink5)
-            }
-
-            Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
+        VStack(alignment: .leading, spacing: 2) {
+            Text(viewModel.todayIsUnknown ? "—" : TokenFormatter.format(viewModel.menuBarTodayTotal))
                 .font(.mono(size: 34, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
                 .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
+            Text("tokens today · incl. cache")
+                .font(.sans(size: 13))
+                .foregroundColor(PadzyTheme.ink4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -193,15 +186,8 @@ struct MenuBarView: View {
                         .rollingNumber(card.totalValueMultiple, reduceMotion: reduceMotion)
                     if let tier = card.tier {
                         Text(tier.displayName)
-                            .font(.mono(size: 9))
-                            .tracking(9 * 0.06)
+                            .font(.sans(size: 12))
                             .foregroundColor(PadzyTheme.ink3)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                                    .stroke(PadzyTheme.border2, lineWidth: 1)
-                            )
                     }
                 }
             }
@@ -212,30 +198,33 @@ struct MenuBarView: View {
                     .foregroundColor(PadzyTheme.ink3)
                 Spacer(minLength: 8)
                 if let tightest {
-                    HStack(spacing: 8) {
-                        Text("\(Int(tightest.usedPercent.rounded()))%")
-                            .font(.mono(size: 13.5, weight: .semibold))
-                            .monospacedDigit()
-                            .foregroundColor(PadzyTheme.ink)
-                            .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
-                        Text(tightest.accountLabel)
-                            .font(.sans(size: 15))
-                            .foregroundColor(PadzyTheme.ink4)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                    Text("\(Int(tightest.usedPercent.rounded()))%")
+                        .font(.mono(size: 13.5, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundColor(PadzyTheme.ink)
+                        .rollingNumber(tightest.usedPercent, reduceMotion: reduceMotion)
                 } else {
                     Text("—")
                         .font(.mono(size: 13))
                         .foregroundColor(PadzyTheme.ink3)
+                        .help("No current live quota reading")
                 }
             }
 
-            if let pace = viewModel.tightestAccountPace {
-                HStack {
-                    Spacer(minLength: 8)
-                    PaceLine(pace: pace, compact: true)
+            // Whose window it is and whether it lasts: the same reading and words as the
+            // Overview quota hero.
+            if let tightest {
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("\(QuotaWindowName.owner(of: tightest)) · \(QuotaWindowName.phrase(of: tightest))")
+                        .font(.sans(size: 12.5))
+                        .foregroundColor(PadzyTheme.ink4)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let pace = viewModel.tightestAccountPace {
+                        PaceLine(pace: pace, resetAt: tightest.resetAt, compact: true)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 16)
@@ -253,8 +242,7 @@ struct MenuBarView: View {
                     withAnimation(reduceMotion ? nil : PadzyMotion.quick) { agentMetric = metric }
                 } label: {
                     Text(metric.rawValue)
-                        .font(.mono(size: 10))
-                        .tracking(0.4)
+                        .font(.sans(size: 12, weight: .medium))
                         .foregroundColor(agentMetric == metric ? PadzyTheme.ink : PadzyTheme.ink4)
                         .padding(.horizontal, 11)
                         .padding(.vertical, 4)
@@ -297,7 +285,11 @@ struct MenuBarView: View {
     }
 
     private func tokenRow(_ snapshot: ProviderSnapshot) -> some View {
-        HStack(spacing: 9) {
+        // Same rule as the headline: an earlier day's saved total is not today's.
+        let row = SavedAgeCopy.todayRow(
+            name: snapshot.displayName, tokens: snapshot.todayUsage.totalTokens, todayIsUnknown: viewModel.todayIsUnknown
+        )
+        return HStack(spacing: 9) {
             ProviderBrandMark.tinted(snapshot.providerID, size: 18)
             Text(snapshot.displayName)
                 .font(.sans(size: 12.5))
@@ -305,14 +297,17 @@ struct MenuBarView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 8)
-            Text(TokenFormatter.format(snapshot.todayUsage.totalTokens))
+            Text(row.value)
                 .font(.mono(size: 13.5))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)
-                .rollingNumber(snapshot.todayUsage.totalTokens.map(Double.init), reduceMotion: reduceMotion)
+                .rollingNumber(
+                    viewModel.todayIsUnknown ? nil : snapshot.todayUsage.totalTokens.map(Double.init),
+                    reduceMotion: reduceMotion
+                )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(snapshot.displayName), \(TokenFormatter.format(snapshot.todayUsage.totalTokens)) tokens today")
+        .accessibilityLabel(row.spoken)
     }
 
     /// Quota mode: glyph + a threshold-coloured fill bar + reset countdown — no
@@ -399,7 +394,7 @@ struct MenuBarView: View {
     }
 
     private func tightestUtil(_ id: ProviderID) -> Utilization? {
-        viewModel.utilization.filter { $0.providerID == id }.max { $0.usedPercent < $1.usedPercent }
+        viewModel.gaugeUtilizations.filter { $0.providerID == id }.max { $0.usedPercent < $1.usedPercent }
     }
 
     /// Compact reset countdown ("4d 9h" / "2h 41m" / "41m") — no ticking seconds,
@@ -443,7 +438,7 @@ struct MenuBarView: View {
                 NSApp.terminate(nil)
             }) {
                 Text("Quit ⌘Q")
-                    .font(.mono(size: 11))
+                    .font(.sans(size: 12))
                     .foregroundColor(PadzyTheme.ink4)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
