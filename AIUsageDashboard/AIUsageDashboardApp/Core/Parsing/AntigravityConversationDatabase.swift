@@ -13,7 +13,7 @@ struct AntigravityConversationDatabase: Sendable {
     static func read(_ url: URL, modifiedAt: Date) throws -> Self {
         var handle: OpaquePointer?
         guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
-              let database = handle else {
+              let database = handle, TokeiSQLiteHardenConnection(database) == SQLITE_OK else {
             if let handle { sqlite3_close(handle) }
             throw ReadError.database
         }
@@ -86,12 +86,13 @@ struct AntigravityConversationDatabase: Sendable {
 
     private static func hasTable(_ name: String, database: OpaquePointer) throws -> Bool {
         var statement: OpaquePointer?
-        let sql = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='\(name)'"
+        // Use SQLite's parsed type; a planted schema can spell CREATE VIRTUAL with other whitespace.
+        let sql = "PRAGMA main.table_list('\(name)')"
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw ReadError.database }
         defer { sqlite3_finalize(statement) }
         let result = sqlite3_step(statement)
         guard result == SQLITE_ROW || result == SQLITE_DONE else { throw ReadError.database }
-        return result == SQLITE_ROW
+        return result == SQLITE_ROW && sqlite3_column_text(statement, 2).map { String(cString: $0) } == "table"
     }
 
     private static func trajectoryTimestamp(_ database: OpaquePointer) throws -> Date? {

@@ -75,6 +75,16 @@ final class CooldownStoreTests: XCTestCase {
         XCTAssertEqual(store.read()?.until, fixedNow)
     }
 
+    func testReadClampsPlantedFarFutureCooldownToConfiguredMaximum() throws {
+        let url = tempDirectory.appendingPathComponent("planted.json")
+        try Data(#"{"until":"2099-01-01T00:00:00Z"}"#.utf8).write(to: url)
+        let now = fixedNow
+        let store = CooldownStore(cooldownURL: url, now: { now }, maxCooldownInterval: 90)
+
+        XCTAssertEqual(store.read()?.until, fixedNow.addingTimeInterval(90))
+        XCTAssertFalse(store.isActive(at: fixedNow.addingTimeInterval(90)))
+    }
+
     func testReadReturnsNilWhenNoFileExists() {
         let (store, _) = makeStore()
 

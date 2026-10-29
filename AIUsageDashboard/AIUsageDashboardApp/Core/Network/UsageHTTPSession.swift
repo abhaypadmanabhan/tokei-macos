@@ -34,6 +34,7 @@ private final class UsageRedirectDelegate: NSObject, URLSessionTaskDelegate {
               destination.scheme?.lowercased() == "https",
               let host = original.host?.lowercased(),
               destination.host?.lowercased() == host,
+              original.port == destination.port,
               destination.user == nil, destination.password == nil
         else {
             completionHandler(nil)
