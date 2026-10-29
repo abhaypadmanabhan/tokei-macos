@@ -107,9 +107,13 @@ enum GuardCommand {
             print("tokei guard: invalid arguments; use --provider P and --min-headroom 0...100.")
             return 64
         }
-        guard let snapshot = try? reader.read(),
-              let headroom = headroom(snapshot, options: options, now: reader.now()) else {
-            print("tokei guard: fresh eligible quota unavailable; open Tokei to refresh.")
+        guard let snapshot = try? reader.read() else {
+            print("tokei guard: snapshot unavailable.")
+            return 69
+        }
+        let reading = headroom(snapshot, options: options, now: reader.now())
+        guard let headroom = reading.value else {
+            print("tokei guard: \(reading.reason).")
             return 69
         }
         let passes = headroom >= options.minimumHeadroom
@@ -140,19 +144,44 @@ enum GuardCommand {
         return options
     }
 
-    private static func headroom(_ snapshot: AgentSnapshot, options: Options, now: Date) -> Double? {
-        guard snapshot.stale != true, snapshot.generatedAt <= now.addingTimeInterval(60) else { return nil }
+    private static func headroom(
+        _ snapshot: AgentSnapshot, options: Options, now: Date
+    ) -> (value: Double?, reason: String) {
+        guard snapshot.stale != true, snapshot.generatedAt <= now.addingTimeInterval(60) else {
+            return (nil, "snapshot is stale or timestamped in the future")
+        }
         let recommendation = snapshot.recommendation
         if options.provider == nil {
-            guard let validUntil = recommendation?.validUntil, validUntil > now else { return nil }
+            guard let validUntil = recommendation?.validUntil, validUntil > now else {
+                return (nil, "routing recommendation is missing or expired")
+            }
         }
         guard let providerID = options.provider ?? recommendation?.target?.provider ?? recommendation?.routeTo,
-              let provider = snapshot.providers.first(where: { $0.id == providerID }) else { return nil }
+              let provider = snapshot.providers.first(where: { $0.id == providerID }) else {
+            return (nil, "selected provider has no quota reading")
+        }
+        guard let accounts = provider.accounts, !accounts.isEmpty else {
+            return providerHeadroom(provider.windows, now: now)
+        }
         let targetID = options.provider == nil
             ? recommendation?.target?.accountID ?? provider.headlineAccountID : nil
-        if options.provider == nil, targetID == nil { return nil }
-        return provider.accounts?.filter { targetID == nil || $0.accountID == targetID }
+        let value = accounts.filter { targetID == nil || $0.accountID == targetID }
             .compactMap { eligibleHeadroom($0, now: now) }.max()
+        return (value, "selected account has no fresh eligible quota reading")
+    }
+
+    private static func providerHeadroom(_ windows: [AgentWindow], now: Date) -> (value: Double?, reason: String) {
+        let limits = windows.filter { $0.bucketKey != "claude_extra_usage" }
+        guard !limits.isEmpty else { return (nil, "selected provider has no rate-limit reading") }
+        guard limits.allSatisfy({ window in
+            guard window.confidence == "official", let observed = window.observedAt,
+                  window.usedPercent.isFinite, (0...100).contains(window.usedPercent) else { return false }
+            return (-60...AgentSnapshot.stalenessThreshold).contains(now.timeIntervalSince(observed))
+                && (window.resetsAt.map { $0 > now } ?? true)
+        }), let peak = limits.map(\.usedPercent).max() else {
+            return (nil, "selected provider has a stale, expired or unconfirmed reading")
+        }
+        return (100 - peak, "")
     }
 
     private static func eligibleHeadroom(_ account: AgentAccount, now: Date) -> Double? {
