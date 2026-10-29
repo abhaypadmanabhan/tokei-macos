@@ -84,10 +84,12 @@ public actor NotificationEngine {
             thresholdsByProvider: thresholds
         )
         let now = clock.now()
-        predictiveKeys = predictiveKeys.filter { $0.resetAt > now }
+        predictiveKeys = predictiveKeys.filter {
+            $0.resetAt.addingTimeInterval(PredictiveQuotaWarning.Key.resetTolerance) > now
+        }
         let predictiveEnabled = userDefaults.object(forKey: "predictiveQuotaWarningsEnabled") as? Bool ?? true
         let predictions = predictiveEnabled ? PredictiveQuotaWarning.evaluate(snapshots: snapshots, now: now)
-            .filter { !predictiveKeys.contains($0.key) } : []
+            .filter { !hasFiredPrediction($0.key, at: now) } : []
 
         guard !result.notifications.isEmpty || !predictions.isEmpty else {
             firedKeys = result.fired
@@ -117,19 +119,24 @@ public actor NotificationEngine {
             )
             do { try await notificationCenter.add(request: request) } catch { firedKeys.remove(evaluation.key) }
         }
-        for prediction in predictions where !predictiveKeys.contains(prediction.key) {
+        for prediction in predictions {
+            guard !hasFiredPrediction(prediction.key, at: clock.now()) else { continue }
             let request = NotificationRequest(
                 identifier: "predictive_\(UUID().uuidString)", title: "Tokei", body: prediction.body, sound: true
             )
             do {
                 try await notificationCenter.add(request: request)
-                predictiveKeys.insert(prediction.key)
+                predictiveKeys.update(with: prediction.key)
             } catch { continue }
         }
         Self.saveFiredKeys(firedKeys, to: userDefaults)
         if let data = try? JSONEncoder().encode(predictiveKeys) {
             userDefaults.set(data, forKey: Self.predictiveKeysDefaultsKey)
         }
+    }
+
+    private func hasFiredPrediction(_ key: PredictiveQuotaWarning.Key, at now: Date) -> Bool {
+        predictiveKeys.contains { $0.suppresses(key, now: now) }
     }
 
     private nonisolated static func thresholds(for provider: ProviderID, defaults: UserDefaults) -> [Int] {

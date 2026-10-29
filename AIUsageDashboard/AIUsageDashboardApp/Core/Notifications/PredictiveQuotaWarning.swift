@@ -2,11 +2,27 @@ import Foundation
 
 struct PredictiveQuotaWarning: Sendable {
     struct Key: Codable, Hashable, Sendable {
+        static let resetTolerance: TimeInterval = 10 * 60
         let providerID: ProviderID
         let accountID: String?
         let windowType: QuotaWindowType
         let bucketKey: String
         let resetAt: Date
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.providerID == rhs.providerID && lhs.accountID == rhs.accountID && lhs.bucketKey == rhs.bucketKey
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(providerID)
+            hasher.combine(accountID)
+            hasher.combine(bucketKey)
+        }
+
+        func suppresses(_ candidate: Self, now: Date) -> Bool {
+            guard self == candidate else { return false }
+            return resetAt > now || abs(resetAt.timeIntervalSince(candidate.resetAt)) <= Self.resetTolerance
+        }
     }
 
     let key: Key

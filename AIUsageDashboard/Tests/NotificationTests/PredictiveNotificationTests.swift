@@ -66,6 +66,24 @@ final class PredictiveNotificationTests: XCTestCase {
         XCTAssertEqual(center.requests.count, 1)
     }
 
+    func testResetJitterFiresOnceUntilStoredResetHasPassed() async {
+        let clock = NotificationTestClock(instant)
+        let center = RecordingNotificationCenter()
+        let reset = instant.addingTimeInterval(12 * 3600)
+        let engine = NotificationEngine(notificationCenter: center, clock: clock, userDefaults: defaults)
+        await engine.evaluateThresholds(for: [snapshot(reset: reset)])
+        await engine.evaluateThresholds(for: [snapshot(reset: reset.addingTimeInterval(0.5))])
+        XCTAssertEqual(center.requests.count, 1, "half-second reset jitter is still one window")
+        let reloaded = NotificationEngine(notificationCenter: center, clock: clock, userDefaults: defaults)
+        await reloaded.evaluateThresholds(for: [snapshot(reset: reset.addingTimeInterval(600))])
+        XCTAssertEqual(center.requests.count, 1, "ten-minute reset jitter survives an engine restart")
+        await reloaded.evaluateThresholds(for: [snapshot(reset: reset.addingTimeInterval(601))])
+        XCTAssertEqual(center.requests.count, 1, "a future stored reset cannot re-arm early")
+        clock.set(instant.addingTimeInterval(24 * 3600))
+        await reloaded.evaluateThresholds(for: [snapshot(reset: instant.addingTimeInterval(36 * 3600))])
+        XCTAssertEqual(center.requests.count, 2)
+    }
+
     func testProviderThresholdsUseExactKeyAndInvalidValuesFallBack() async {
         defaults.set([60], forKey: "notificationThresholds.claude_code")
         defaults.set([100], forKey: "notificationThresholds.codex")
