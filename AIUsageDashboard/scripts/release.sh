@@ -56,12 +56,20 @@ notarize() {
 TOKEI_RELEASE=1 "$ROOT/scripts/build-app.sh"
 
 # The appcast step needs Sparkle's EdDSA sign_update from the release tree's package
-# artifacts. Check now, not after ~10 minutes of notarization (0.10.0: the artifact's bin/
-# had been emptied, only old_dsa_scripts/ remained, and the release stopped at the appcast).
-if ! find "$ROOT/build/DerivedData-release/SourcePackages/artifacts" -path '*/bin/sign_update' \
-    -not -path '*old_dsa_scripts*' -type f -perm -u+x 2>/dev/null | grep -q .; then
-  echo "release: Sparkle sign_update missing from build/DerivedData-release." >&2
-  echo "release: rm -rf build/DerivedData-release/SourcePackages, then rerun scripts/release.sh." >&2
+# artifacts. Check now, not after ~10 minutes of notarization. Twice in a row (0.10.0,
+# 0.11.0) the cached artifact's bin/ had been emptied, leaving only old_dsa_scripts/, so
+# a missing tool now clears the package cache and rebuilds once before giving up.
+has_sign_update() {
+  find "$ROOT/build/DerivedData-release/SourcePackages/artifacts" -path '*/bin/sign_update' \
+    -not -path '*old_dsa_scripts*' -type f -perm -u+x 2>/dev/null | grep -q .
+}
+if ! has_sign_update; then
+  echo "release: Sparkle sign_update missing; clearing the release package cache and rebuilding once." >&2
+  rm -rf "${ROOT:?}/build/DerivedData-release/SourcePackages"
+  TOKEI_RELEASE=1 "$ROOT/scripts/build-app.sh"
+fi
+if ! has_sign_update; then
+  echo "release: Sparkle sign_update still missing after a fresh package resolve." >&2
   exit 1
 fi
 
