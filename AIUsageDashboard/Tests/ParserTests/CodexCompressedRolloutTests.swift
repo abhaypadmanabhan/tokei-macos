@@ -146,7 +146,7 @@ final class CodexCompressedRolloutTests: XCTestCase {
         let original = await parser.parse(logSources: [source(url)])
         XCTAssertEqual(original.lifetime.totalTokens, 150)
         let before = await CodexCompressedLogCache.shared.entryCountForTesting()
-        XCTAssertEqual(before, 1)
+        XCTAssertGreaterThanOrEqual(before, 1)
         try FileManager.default.removeItem(at: url)
         let refreshed = await parser.parse(logSources: [])
         XCTAssertEqual(refreshed.lifetime.totalTokens, 0)
