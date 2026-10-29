@@ -10,7 +10,8 @@ The v1 surface is read-only: the app atomically writes a snapshot and the bundle
 - **Path:** `~/Library/Application Support/AIUsageDashboard/agent-snapshot.json`
 - **Writer:** `AgentSnapshotWriter`, after each `SyncEngine.refreshAll()` cycle.
 - **Write contract:** atomic replacement; a reader sees the old complete file or the
-  new complete file, never a torn intermediate file.
+  new complete file, never a torn intermediate file. `SecureFileWriter` creates the directory
+  with mode 0700 and replaces files with mode 0600; JSON is compact.
 - **Schema version:** `1`. The account additions are optional additive fields, not a
   breaking shape change.
 
@@ -245,6 +246,18 @@ fixture data, not a claim about the current machine.
 | `observedAt` | When the reading was taken; use this for reading freshness. |
 | `label` | Optional provider display label for a bucket. |
 | `bucketKey` | Optional stable identity separating multiple same-type buckets. |
+| `windowSeconds` | Optional full duration, reported or inferred from a fixed-length window type. |
+| `pace.state` | `ahead`, `onPace`, or `behind`, comparing used share with elapsed share. |
+| `pace.elapsedPercent` | Elapsed share of the window, clamped to 0–100. |
+| `pace.deltaPoints` | Used percent minus elapsed percent. Positive means faster consumption. |
+| `forecast.kind` | `lastsToReset`, `runsOut`, `exhausted`, or `tooEarly`. |
+| `forecast.runsOutAt` | UTC ISO8601 projection, present only for `runsOut`. |
+
+Pace and forecast are computed at `generatedAt`; they do not refresh the provider reading.
+Unknown duration/reset/used values omit both. A projection is `tooEarly` before 5% of
+the window passes. Claude's `claude_extra_usage` credits are informational: never paced,
+never an account's binding window, and excluded from routing. Their bounded `source`
+label carries USD, enabled/disabled and the recognized `out_of_credits` reason.
 
 ### Recommendation
 
@@ -287,7 +300,7 @@ when the file itself is stale, `content[1]` may carry a human warning.
 
 - Optional fields are omitted when absent. Missing `accountID`, `selector`, `quota`,
   `headlineAccountID`, `target`, `avoidAccounts`, `validUntil`, `label`, or
-  `bucketKey` means unknown/unsupported, never a default value.
+  `bucketKey`, `windowSeconds`, `pace`, or `forecast` means unknown/unsupported, never a default value.
 - Consumers must feature-detect `accountID` and `target`; `schemaVersion == 1` alone
   does not prove the producer is account-aware.
 - `accounts[].id` keeps its legacy path meaning. Do not silently reinterpret it as an
