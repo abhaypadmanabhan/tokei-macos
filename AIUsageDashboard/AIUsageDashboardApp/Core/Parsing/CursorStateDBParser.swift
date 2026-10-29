@@ -64,29 +64,40 @@ public actor CursorStateDBParser {
 
     private let fileManager: FileManager
     private let calendar: Calendar
+    private let copyDatabase: @Sendable (URL, URL) throws -> Void
+    private var cached: (fingerprint: CursorDatabaseFingerprint, state: OfflineState)?
 
     public init(
         fileManager: FileManager = .default,
         calendar: Calendar = .current,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        copyDatabase: (@Sendable (URL, URL) throws -> Void)? = nil
     ) {
         self.fileManager = fileManager
         self.calendar = calendar
+        self.copyDatabase = copyDatabase ?? { source, destination in
+            try SQLiteSidecarCopy.copyDatabase(from: source, to: destination, using: fileManager)
+        }
         _ = now // Kept for source compatibility with the public initializer.
     }
 
     public func parse(stateDatabaseURL: URL) async -> OfflineState {
+        let fingerprint = CursorDatabaseFingerprint(url: stateDatabaseURL, fileManager: fileManager)
+        if let fingerprint, let cached, cached.fingerprint == fingerprint { return cached.state }
+        cached = nil
         do {
             let tempDirectory = try temporaryCopyDirectory()
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try SQLiteSidecarCopy.copyDatabase(
-                from: stateDatabaseURL,
-                to: databaseCopyURL,
-                using: fileManager
-            )
-            return try parseCopiedDatabase(at: databaseCopyURL)
+            try copyDatabase(stateDatabaseURL, databaseCopyURL)
+            let state = try parseCopiedDatabase(at: databaseCopyURL)
+            // A write during backup must trigger another scan, not bless a stale stamp.
+            if let fingerprint,
+               fingerprint == CursorDatabaseFingerprint(url: stateDatabaseURL, fileManager: fileManager) {
+                cached = (fingerprint, state)
+            }
+            return state
         } catch {
             return OfflineState(
                 isAuthenticated: false,
@@ -104,20 +115,7 @@ public actor CursorStateDBParser {
     /// and must leave the process only inside the WorkOS session cookie sent to
     /// `cursor.com` over TLS (`CursorSession` / `CursorUsageClientImpl`).
     public func readAccessToken(stateDatabaseURL: URL) async -> String? {
-        do {
-            let tempDirectory = try temporaryCopyDirectory()
-            defer { try? fileManager.removeItem(at: tempDirectory) }
-
-            let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try SQLiteSidecarCopy.copyDatabase(
-                from: stateDatabaseURL,
-                to: databaseCopyURL,
-                using: fileManager
-            )
-            return try readAccessTokenValue(at: databaseCopyURL)
-        } catch {
-            return nil
-        }
+        await parse(stateDatabaseURL: stateDatabaseURL).accessToken
     }
 
     // MARK: - Private helpers
@@ -198,29 +196,6 @@ public actor CursorStateDBParser {
         )
     }
 
-    private func readAccessTokenValue(at url: URL) throws -> String? {
-        var database: OpaquePointer?
-        let openResult = sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil)
-        guard openResult == SQLITE_OK, let database else {
-            let message = database.map { sqliteMessage($0) } ?? "unable to open copied Cursor state database"
-            if let database { sqlite3_close(database) }
-            throw SQLiteReadError(message: message)
-        }
-        defer { sqlite3_close(database) }
-
-        var statement: OpaquePointer?
-        let prepareResult = sqlite3_prepare_v2(database, Self.accessTokenSQL, -1, &statement, nil)
-        guard prepareResult == SQLITE_OK, let statement else {
-            throw SQLiteReadError(message: sqliteMessage(database))
-        }
-        defer { sqlite3_finalize(statement) }
-
-        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
-        guard let data = dataColumn(statement, index: 0) else { return nil }
-        let token = stringValue(from: data)
-        return token?.isEmpty == false ? token : nil
-    }
-
     private func stringValue(from data: Data) -> String? {
         if let json = try? JSONSerialization.jsonObject(with: data, options: .allowFragments),
            let string = json as? String {
@@ -294,9 +269,38 @@ public actor CursorStateDBParser {
            OR key LIKE 'aiCodeTracking.dailyStats.v1.5.%'
         """
 
-    private static let accessTokenSQL = """
-        SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'
-        """
+}
+
+private struct CursorDatabaseFingerprint: Equatable {
+    let path: String
+    let database: Stamp
+    let wal: Stamp?
+    let journal: Stamp?
+
+    init?(url: URL, fileManager: FileManager) {
+        guard let database = Stamp(url: url, fileManager: fileManager) else { return nil }
+        path = url.path
+        self.database = database
+        wal = Stamp(url: URL(fileURLWithPath: url.path + "-wal"), fileManager: fileManager)
+        journal = Stamp(url: URL(fileURLWithPath: url.path + "-journal"), fileManager: fileManager)
+    }
+
+    struct Stamp: Equatable {
+        let size: UInt64
+        let modified: Date
+        let fileNumber: UInt64
+
+        init?(url: URL, fileManager: FileManager) {
+            guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+                  attributes[.type] as? FileAttributeType == .typeRegular,
+                  let size = attributes[.size] as? NSNumber,
+                  let modified = attributes[.modificationDate] as? Date,
+                  let fileNumber = attributes[.systemFileNumber] as? NSNumber else { return nil }
+            self.size = size.uint64Value
+            self.modified = modified
+            self.fileNumber = fileNumber.uint64Value
+        }
+    }
 }
 
 private struct SQLiteReadError: LocalizedError {

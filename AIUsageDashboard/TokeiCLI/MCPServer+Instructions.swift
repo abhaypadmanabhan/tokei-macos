@@ -46,3 +46,71 @@ extension MCPServer {
         Read-only. No network, no credentials, no other application's data.
         """
 }
+
+extension MCPServer {
+    func toolDefinitions() -> [[String: Any]] {
+        let emptyInput: [String: Any] = [
+            "type": "object",
+            "properties": [String: Any](),
+            "additionalProperties": false
+        ]
+        var usageInput = emptyInput
+        usageInput["properties"] = ["provider": ["type": "string", "enum": SnapshotReader.providerIDs.sorted()]]
+        var definitions: [[String: Any]] = [
+            [
+                "name": ToolName.usage.rawValue,
+                // Trigger first, payload second: an agent decides whether to call from the
+                // opening clause, so "when" has to lead. Same reason `instructions` exists.
+                "description": "Call when you need the full quota picture across the user's AI "
+                    + "coding tools rather than a single routing verdict — to report what they "
+                    + "have left, to size a job against the current window, or to compare two "
+                    + "specific providers. Returns per-provider quota windows (used %, reset "
+                    + "time, confidence, source), aggregate utilization, token counts, and "
+                    + "timestamps. Includes a `stale` flag when the data is old or Tokei isn't "
+                    + "running. " + Self.accountContract + " Read-only; no network or credentials.",
+                "inputSchema": usageInput
+            ],
+            [
+                "name": ToolName.routeRecommendation.rawValue,
+                "description": "Call this BEFORE you spawn, delegate to, or orchestrate another "
+                    + "coding agent or subagent, and before any long, parallel, or fan-out run "
+                    + "that will consume a provider's quota — routing work to a provider about "
+                    + "to hit its limit wastes the run. Returns which provider to route new work "
+                    + "to (least-utilized), which to avoid (at or over 85% of a limit), and the "
+                    + "reason, with generatedAt, ageSeconds, validUntil, and stale metadata. "
+                    + Self.accountContract + " Cheap and read-only: prefer calling it over guessing.",
+                "inputSchema": emptyInput
+            ]
+        ]
+        for index in definitions.indices {
+            let usage = index == 0
+            definitions[index]["title"] = usage ? "Usage and quota" : "Route recommendation"
+            definitions[index]["annotations"] = ["readOnlyHint": true, "idempotentHint": true, "openWorldHint": false]
+            if negotiatedVersion == Self.protocolVersion {
+                definitions[index]["outputSchema"] = outputSchema(usage: usage)
+            }
+        }
+        return definitions
+    }
+
+    private static let accountContract = "Accounts use `accountID`, an opaque provider-scoped "
+        + "identity that is stable across machines for known identities; `accounts[].id` is a "
+        + "legacy locator; feature-detect `accountID` and `target`. An older helper in front of "
+        + "a newer app is a lossy proxy. Pass `recommendation.target.selector.env` as the "
+        + "environment map to the process API; never concatenate it into a shell string. "
+        + "`quota.status` is `eligible`, `expiredCredentials`, `cooldown`, `disabled`, "
+        + "`requestFailed`, `noQuotaSource`, or `unknown`; only `eligible` is positive headroom."
+
+    private func outputSchema(usage: Bool) -> [String: Any] {
+        if usage {
+            return ["type": "object", "required": ["schemaVersion", "generatedAt", "providers"],
+                    "properties": ["schemaVersion": ["type": "integer"],
+                                   "generatedAt": ["type": "string", "format": "date-time"],
+                                   "providers": ["type": "array", "items": ["type": "object"]]]]
+        }
+        return ["type": "object", "required": ["generatedAt", "stale", "avoid", "reason"],
+                "properties": ["generatedAt": ["type": "string", "format": "date-time"],
+                               "stale": ["type": "boolean"], "reason": ["type": "string"],
+                               "avoid": ["type": "array", "items": ["type": "string"]]]]
+    }
+}

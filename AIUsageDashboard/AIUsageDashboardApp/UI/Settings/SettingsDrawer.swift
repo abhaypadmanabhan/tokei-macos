@@ -77,7 +77,7 @@ struct DrawerScaffold<Content: View>: View {
 
 /// The Settings right-hand drawer (WP-5 IA consolidation). Every control here is
 /// backed by a real store — plan cost, the notification flag, the menu-bar readout
-/// mode, and the Sparkle updater. The prior drill-in `SettingsPane`'s "SOON"
+/// mode, and the Sparkle updater. The prior drill-in `SettingsPane`'s "soon"
 /// placeholders (config presets, theme swatches, accent swatches, monthly limits,
 /// channel pickers) are dropped rather than shipped inert.
 struct SettingsDrawer: View {
@@ -85,9 +85,6 @@ struct SettingsDrawer: View {
     let onClose: () -> Void
 
     @EnvironmentObject private var viewModel: DashboardViewModel
-
-    /// Gates the 80% / 95% quota notifications (`NotificationEngine.notificationsEnabledKey`).
-    @AppStorage(NotificationEngine.notificationsEnabledKey) private var notificationsEnabled = true
 
     /// What the system menu-bar item renders — shared key with `MenuBarLabel`.
     @AppStorage(MenuBarDisplayMode.storageKey)
@@ -114,10 +111,22 @@ struct SettingsDrawer: View {
     var body: some View {
         DrawerScaffold(title: "Settings", onClose: onClose) {
             planCostSection
+            LiveQuotaSettingsSection(
+                providers: quotaProviders,
+                displayName: displayName,
+                onChange: { Task { await viewModel.refresh() } }
+            )
+            QuotaAlertsSection(providers: quotaProviders, displayName: displayName)
             appearanceSection
-            notificationsSection
+            LaunchAtLoginSection()
             versionSection
         }
+    }
+
+    /// Agents on the canvas that can read live quota: the ones with a network switch and
+    /// a quota to alert on.
+    private var quotaProviders: [ProviderID] {
+        activeProviders.filter { ProviderMetadata.liveQuotaProviders.contains($0) }
     }
 
     private func displayName(_ id: ProviderID) -> String {
@@ -129,7 +138,7 @@ struct SettingsDrawer: View {
 
     private var planCostSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Monthly plan cost")
+            SectionHeading("Monthly plan cost")
             Text("Leave blank if an agent has no fixed plan.")
                 .font(.sans(size: 11))
                 .foregroundColor(PadzyTheme.ink5)
@@ -164,7 +173,7 @@ struct SettingsDrawer: View {
 
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.m) {
-            SectionLabel("Appearance")
+            SectionHeading("Appearance")
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Menu bar shows")
@@ -219,28 +228,6 @@ struct SettingsDrawer: View {
         )
     }
 
-    // MARK: 4 · Notifications
-
-    /// The single real notification flag (`NotificationEngine.notificationsEnabledKey`)
-    /// gates the 80% / 95% quota alerts. It lives here, once — the mockup's separate
-    /// "quota alerts" + "notifications" sections map to this one switch, so shipping
-    /// two toggles for one flag would be an inert duplicate.
-    private var notificationsSection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.s) {
-            SectionLabel("Notifications")
-            Toggle(isOn: $notificationsEnabled) {
-                Text("Quota alerts")
-                    .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink2)
-            }
-            .toggleStyle(.padzy)
-            Text("Notify when any window crosses 80% or 95%.")
-                .font(.sans(size: 11))
-                .foregroundColor(PadzyTheme.ink5)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     // MARK: Version
 
     private var versionSection: some View {
@@ -271,7 +258,7 @@ struct SettingsDrawer: View {
                     Spacer(minLength: 8)
 
                     Text(updateStatusText)
-                        .font(.mono(size: 10))
+                        .font(.sans(size: 12))
                         .foregroundColor(PadzyTheme.ink5)
                         .lineLimit(1)
                 }
@@ -344,7 +331,9 @@ private struct PlanCostDrawerRow: View {
                 if !presets.isEmpty {
                     presetMenu
                 }
+                // The field keeps its natural width ("$ 400.00 /mo"); the agent name gives way.
                 priceField
+                    .fixedSize()
             }
 
             if let suggestion {
@@ -407,39 +396,24 @@ private struct PlanCostDrawerRow: View {
                 }
             }
         } label: {
-            Text("PRESET")
-                .font(.mono(size: 8.5))
-                .tracking(8.5 * 0.08)
-                .foregroundColor(PadzyTheme.ink4)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                        .stroke(PadzyTheme.border2, lineWidth: 1)
-                )
+            // A pull-down beside the field, symbol only, so the agent's name keeps the room.
+            Image(systemName: "list.bullet")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(PadzyTheme.ink3)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .help("Plan presets")
         .accessibilityLabel("\(displayName) plan presets")
     }
 
-    /// Subtle disclosure for an un-persisted detected suggestion — never a second
-    /// accent hue, just a bordered mono kicker plus its source.
+    /// Subtle disclosure for an un-persisted detected suggestion — never a second accent
+    /// hue, one plain sentence naming its source.
     private func detectedCaption(_ plan: DetectedPlan) -> some View {
         HStack(spacing: 6) {
-            Text("DETECTED")
-                .font(.mono(size: 8.5))
-                .tracking(8.5 * 0.08)
-                .foregroundColor(PadzyTheme.ink5)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .overlay(
-                    RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                        .stroke(PadzyTheme.border2, lineWidth: 1)
-                )
-            Text("from \(plan.source) — edit or leave as-is to confirm")
-                .font(.sans(size: 10))
-                .foregroundColor(PadzyTheme.ink5)
+            Text("Detected from \(plan.source). Edit it, or leave it to confirm.")
+                .font(.sans(size: 12))
+                .foregroundColor(PadzyTheme.ink4)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.leading, 34)

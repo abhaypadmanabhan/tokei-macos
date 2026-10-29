@@ -41,6 +41,11 @@ final class WindowVisibilityMonitor: ObservableObject {
     }
 
     private func refresh() {
+        #if DEBUG
+        // A capture tour must not depend on other apps leaving the window uncovered: covered,
+        // the dashboard drops to a plain fill and its proof hooks leave the view tree.
+        if ProofRoute.isTour { isVisible = true; return }
+        #endif
         isVisible = NSApp?.occlusionState.contains(.visible) ?? true
     }
 }

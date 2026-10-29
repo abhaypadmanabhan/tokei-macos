@@ -10,6 +10,7 @@ public actor SyncEngine {
     private let watcher: FileWatcher
     private let evaluateThresholds: @Sendable ([ProviderSnapshot]) async -> Void
     private let sleep: @Sendable (TimeInterval) async throws -> Void
+    private let isLowPowerModeEnabled: @Sendable () -> Bool
     private var periodicSyncTask: Task<Void, Never>?
     private var refreshTask: Task<[ProviderSnapshot], Never>?
     private var refreshDirty = false
@@ -29,7 +30,8 @@ public actor SyncEngine {
         },
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-        }
+        },
+        isLowPowerModeEnabled: @escaping @Sendable () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
     ) {
         self.registry = registry
         self.store = store
@@ -37,6 +39,7 @@ public actor SyncEngine {
         self.agentSnapshotWriter = agentSnapshotWriter
         self.watcher = watcher
         self.sleep = sleep
+        self.isLowPowerModeEnabled = isLowPowerModeEnabled
         self.evaluateThresholds = evaluateThresholds
         var continuation: AsyncStream<[ProviderSnapshot]>.Continuation!
         self.updates = AsyncStream { cont in
@@ -75,6 +78,7 @@ public actor SyncEngine {
     }
 
     private func performRefresh() async -> [ProviderSnapshot] {
+        await watcher.refreshWatchPaths()
         let snapshots = await registry.snapshotAll()
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
@@ -98,9 +102,9 @@ public actor SyncEngine {
                 _ = await self.refreshAll()
             }
         }
-        periodicSyncTask = Task { [weak self, sleep] in
+        periodicSyncTask = Task { [weak self, sleep, isLowPowerModeEnabled] in
             while !Task.isCancelled {
-                do { try await sleep(300) } catch { break }
+                do { try await sleep(isLowPowerModeEnabled() ? 1800 : 300) } catch { break }
                 guard !Task.isCancelled else { break }
                 guard let self else { break }
                 _ = await self.refreshAll()

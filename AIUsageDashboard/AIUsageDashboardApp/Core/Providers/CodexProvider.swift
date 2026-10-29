@@ -94,7 +94,12 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             now: fetchedAt
         )
         let lifetime = UsageAggregation.sum(collected.aggregates.map(\.lifetime))
-        let modelUsage = UsageAggregation.sumModels(collected.aggregates.map(\.lifetimeModelUsage))
+        let dailyModels = UsageAggregation.mergeModels(collected.aggregates.map(\.dailyModelUsage))
+        let month = Calendar.current.dateInterval(of: .month, for: fetchedAt)
+        let modelUsage = UsageAggregation.sumModels(dailyModels.compactMap { day, models in
+            guard let month, day >= month.start, day <= fetchedAt else { return nil }
+            return models
+        })
         let cost = await costUsage(for: modelUsage)
 
         return ProviderSnapshot(
@@ -111,7 +116,7 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
             lastSyncedAt: fetchedAt,
             dailyTotals: UsageAggregation.merge(collected.aggregates.map(\.dailyTotals)),
             hourlyTotals: UsageAggregation.merge(collected.aggregates.compactMap(\.hourlyTotals)),
-            dailyModelUsage: UsageAggregation.mergeModels(collected.aggregates.map(\.dailyModelUsage)),
+            dailyModelUsage: dailyModels,
             accounts: attributedUsages.isEmpty ? nil : attributedUsages,
             headlineAccountID: headline?.account.id
         )
@@ -232,25 +237,25 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         guard fileManager.fileExists(atPath: sessionsDirectory.path) else { return [] }
         guard let enumerator = fileManager.enumerator(
             at: sessionsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
         var sources: [LogSource] = []
         while let file = enumerator.nextObject() as? URL {
-            guard file.pathExtension == "jsonl" else { continue }
+            guard CodexRolloutFiles.accepts(file) else { continue }
             let values = try? file.resourceValues(
-                forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                forKeys: [.contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey]
             )
-            guard values?.isRegularFile != false else { continue }
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
             sources.append(LogSource(
                 providerID: id,
                 url: file,
-                sessionID: file.deletingPathExtension().lastPathComponent,
+                sessionID: CodexRolloutFiles.sessionID(file),
                 lastModified: values?.contentModificationDate
             ))
         }
-        return sources
+        return CodexRolloutFiles.preferringPlain(sources)
     }
 
     public func updateCalendar(_ calendar: Calendar) async {

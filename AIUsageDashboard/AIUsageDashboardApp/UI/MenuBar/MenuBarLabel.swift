@@ -85,9 +85,14 @@ struct MenuBarLabel: View {
                 EmptyView()
 
             case .todayTokens:
-                Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
-                    .monospacedDigit()
-                    .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
+                if viewModel.todayIsUnknown {
+                    // Saved numbers from an earlier day: their "today" is not today.
+                    Text("—")
+                } else {
+                    Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
+                        .monospacedDigit()
+                        .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
+                }
 
             case .tightestPercent:
                 if let tightestPercent {

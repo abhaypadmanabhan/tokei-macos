@@ -53,6 +53,24 @@ final class ProviderModelTests: XCTestCase {
         XCTAssertEqual(merged.outputTokens, 15)
     }
 
+    func testOneHourCacheWritesAreASubsetThatMergesAndPersists() throws {
+        let split = TokenUsage(cacheCreationTokens: 100, cacheCreation1hTokens: 60, confidence: .localParsed)
+        let unsplit = TokenUsage(cacheCreationTokens: 40, confidence: .localParsed)
+
+        XCTAssertEqual(split.totalTokens, 100, "the 1 h share is part of cache creation, not added on top")
+        XCTAssertEqual(split.merging(unsplit).cacheCreation1hTokens, 60)
+        XCTAssertEqual(split.merging(split).cacheCreation1hTokens, 120)
+        XCTAssertNil(unsplit.merging(unsplit).cacheCreation1hTokens, "a merge never invents a TTL split")
+        XCTAssertEqual(UsageAggregation.sum([split, unsplit, split]).cacheCreation1hTokens, 120)
+        XCTAssertNil(UsageAggregation.sum([unsplit]).cacheCreation1hTokens)
+
+        let decoded = try JSONDecoder().decode(TokenUsage.self, from: JSONEncoder().encode(split))
+        XCTAssertEqual(decoded.cacheCreation1hTokens, 60)
+        let legacy = Data(#"{"cacheCreationTokens":7,"confidence":"localParsed"}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(TokenUsage.self, from: legacy).cacheCreation1hTokens,
+                     "files written before the split decode without it")
+    }
+
     func testS02TokenUsageArithmeticSaturatesInsteadOfTrapping() {
         let maximum = TokenUsage(inputTokens: .max, outputTokens: 1, confidence: .localParsed)
         XCTAssertEqual(maximum.totalTokens, .max)

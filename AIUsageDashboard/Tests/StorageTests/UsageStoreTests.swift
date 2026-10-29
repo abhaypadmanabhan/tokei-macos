@@ -250,7 +250,7 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(permissions, 0o600, "new store file should be readable only by the owner")
     }
 
-    func testExistingStoreFilePermissionsAreNotChanged() async {
+    func testExistingStoreFilePermissionsBecomeOwnerOnly() async {
         let fileURL = tempDirectory.appendingPathComponent("usage-store.json")
         let existingJSON = "{\"snapshots\":{},\"dailyUsages\":{}}"
         try? existingJSON.write(to: fileURL, atomically: true, encoding: .utf8)
@@ -261,6 +261,7 @@ final class UsageStoreTests: XCTestCase {
 
         let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
         let permissions = (attrs?[.posixPermissions] as? NSNumber)?.intValue
-        XCTAssertEqual(permissions, 0o644, "existing store file permissions should not be modified")
+        XCTAssertEqual(permissions, 0o600)
     }
+
 }

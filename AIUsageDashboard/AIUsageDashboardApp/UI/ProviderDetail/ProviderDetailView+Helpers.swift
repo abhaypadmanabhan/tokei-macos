@@ -39,17 +39,7 @@ extension ProviderDetailView {
 
     /// Human window label for rows + the gauge (`.label` wins; else a friendly name).
     func windowDisplayName(_ window: QuotaWindow) -> String {
-        if let label = window.label, !label.isEmpty { return label }
-        switch window.type {
-        case .session: return "Session"
-        case .daily: return "Daily"
-        case .weekly: return "Weekly"
-        case .fiveHour: return "5-hour"
-        case .monthly: return "Monthly"
-        case .credits: return "Credits"
-        case .perModel: return "Per model"
-        case .lifetime: return "Lifetime"
-        }
+        QuotaWindowName.display(type: window.type, label: window.label)
     }
 
     /// Lowercased window phrase for the insight sentence ("weekly window", "quota").

@@ -4,18 +4,16 @@ import AIUsageDashboardCore
 struct DashboardView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openWindow) private var openWindow
     /// False when the app is idling in the menu bar; stops the status-dot pulse so
     /// its `repeatForever` animation isn't left churning on the retained window.
     @Environment(\.dashboardVisible) private var dashboardVisible
 
-    /// Local top-level navigation. `Core` is untouched; `.settings` is mirrored
-    /// into `viewModel.showingSettings` so existing Core consumers stay in sync.
-    @State private var section: AppSection = .overview
+    /// The tab and drill-in on screen. Shared with the View and Go menus (⌘1/⌘2/⌘3, ⌘[).
+    @ObservedObject private var navigator = DashboardNavigator.shared
 
-    /// The tab the content returns to when a drill-in is dismissed, and the pane
-    /// that stays rendered underneath one. Only ever written by a tab selection,
-    /// so drilling in and backing out is a round trip.
-    @State private var homeTab: DashboardTab = .overview
+    private var section: AppSection { navigator.section }
+    private var homeTab: DashboardTab { navigator.homeTab }
 
     /// Drives the `+` add-agent sheet, shared by Overview's blank-canvas call to
     /// action and the Settings pane.
@@ -126,13 +124,16 @@ struct DashboardView: View {
                 break
             }
         }
-        .onAppear {
-            // Seed the canvas once so a brand-new user (no agents on disk) leads with
-            // the + instead of a wall of empty provider rows; idempotent thereafter.
-            AddAgentModel.seedOnFirstLaunchIfNeeded()
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: ProofRoute.popoverNotification)) { _ in
+            openWindow(id: ProofRoute.popoverWindowID)
         }
+        #endif
         .task {
-            viewModel.beginAutoSync()
+            #if DEBUG
+            if ProofRoute.wantsPopover { openWindow(id: ProofRoute.popoverWindowID) }
+            #endif
+            // Syncing itself starts at app launch (AppDelegate); opening the window refreshes.
             await viewModel.refresh()
         }
     }
@@ -140,15 +141,11 @@ struct DashboardView: View {
     // MARK: Navigation
 
     private func select(tab: DashboardTab) {
-        homeTab = tab
-        navigate(to: tab.section)
-        viewModel.showingSettings = false
+        navigator.select(tab, viewModel: viewModel)
     }
 
     private func openProvider(_ providerID: ProviderID) {
-        viewModel.selectedProvider = providerID
-        navigate(to: .provider(providerID))
-        viewModel.showingSettings = false
+        navigator.open(providerID, viewModel: viewModel)
     }
 
     /// Opens the Settings drawer (used by the Cursor "enable online" hand-off). The
@@ -159,19 +156,7 @@ struct DashboardView: View {
 
     /// Dismiss any drill-in back to the tab that owns the content behind it.
     private func goBack() {
-        navigate(to: homeTab.section)
-        viewModel.showingSettings = false
-    }
-
-    /// Single write point for `section`, so the drill-in transition is animated
-    /// in exactly one place — and skipped entirely under Reduce Motion, where the
-    /// pane swap happens instantly instead of sliding.
-    private func navigate(to destination: AppSection) {
-        if reduceMotion {
-            section = destination
-        } else {
-            withAnimation(.easeOut(duration: 0.18)) { section = destination }
-        }
+        navigator.back(viewModel: viewModel)
     }
 
     // MARK: Content
@@ -210,7 +195,9 @@ struct DashboardView: View {
         case .overview:
             OverviewView(
                 onSelectProvider: { openProvider($0) },
-                onAddAgent: { showingAddAgent = true }
+                onAddAgent: { showingAddAgent = true },
+                onOpenSettings: { openSettings() },
+                onOpenValue: { navigator.select(.value, viewModel: viewModel) }
             )
         case .value:
             ValueView(
@@ -240,8 +227,8 @@ struct DashboardView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                    Text("BACK")
-                        .font(.mono(size: 13.5))
+                    Text("Back")
+                        .font(.sans(size: 13, weight: .medium))
                 }
                 .foregroundColor(PadzyTheme.ink)
                 .padding(.horizontal, 10)
@@ -254,7 +241,19 @@ struct DashboardView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+            .help("Back (Esc or ⌘[)")
             .accessibilityLabel("Back to \(homeTab.accessibilityName)")
+            .background {
+                // ⌘[ is also Go › Back, but SwiftUI re-enables that item only when the menu
+                // is validated (opened), so a drill-in reached by clicking would ignore ⌘[
+                // until then (menu self-test, 2026-10-28). The window owns the key while a
+                // drill-in is on screen; on a tab there is no back bar and the disabled menu
+                // item correctly does nothing.
+                Button("Back") { goBack() }
+                    .keyboardShortcut("[", modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
 
             Spacer(minLength: 0)
         }

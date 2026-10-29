@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - Errors
-
 public enum GeminiUsageError: LocalizedError, Sendable, Equatable {
+    /// A persisted rate-limit backoff is still active.
+    case cooldownActive(until: Date)
     /// No usable `oauth_creds.json` (missing file, empty, or unparseable) — the user
     /// has not signed in to the Gemini CLI on this machine.
     case notAuthenticated
@@ -21,6 +21,8 @@ public enum GeminiUsageError: LocalizedError, Sendable, Equatable {
 
     public var errorDescription: String? {
         switch self {
+        case .cooldownActive(let until):
+            "Gemini is rate-limited. Tokei retries at \(until.formatted(date: .omitted, time: .shortened))."
         case .notAuthenticated:
             "Gemini CLI is not signed in on this machine."
         case .tokenRefreshUnavailable:
@@ -69,8 +71,6 @@ enum GeminiOAuthField {
     static let grantType = "grant_type"
 }
 
-// MARK: - OAuth credentials
-
 /// Mirrors the `~/.gemini/oauth_creds.json` file the Gemini CLI writes. Read-only:
 /// Tokei never writes this file or persists tokens anywhere else.
 public struct GeminiOAuthCredentials: Decodable, Sendable, Equatable {
@@ -116,25 +116,58 @@ public actor GeminiUsageClientImpl: QuotaProvider {
     private let now: @Sendable () -> Date
     private let clientID: String
     private let clientSecret: String?
+    private let cooldownStore: CooldownStore
+    private var cached: CachedGeminiQuota?
+    private var inFlight: PendingGeminiQuota?
 
     public init(
         urlSession: URLSession? = nil,
         credentialsFileURL: URL? = nil,
         now: @escaping @Sendable () -> Date = { Date() },
         clientID: String = GeminiOAuthConfig.publicClientID,
-        clientSecret: String? = GeminiOAuthConfig.clientSecret
+        clientSecret: String? = GeminiOAuthConfig.clientSecret,
+        cooldownURL: URL? = nil
     ) {
-        self.urlSession = urlSession ?? URLSession(configuration: .ephemeral)
+        self.urlSession = urlSession ?? UsageHTTPSession.shared
         self.credentialsFileURL = credentialsFileURL
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".gemini/oauth_creds.json")
         self.now = now
         self.clientID = clientID
         self.clientSecret = clientSecret
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AIUsageDashboard", isDirectory: true)
+        self.cooldownStore = CooldownStore(
+            cooldownURL: cooldownURL ?? directory.appendingPathComponent("gemini-usage-cooldown.json"), now: now
+        )
     }
 
     public func fetchQuotaWindows() async throws -> [QuotaWindow] {
         let credentials = try loadCredentials()
+        let referenceDate = now()
+        if let cached, cached.token == credentials.accessToken,
+           (0..<600).contains(referenceDate.timeIntervalSince(cached.fetchedAt)),
+           cached.windows.allSatisfy({ $0.resetAt.map { $0 > referenceDate } ?? true }) {
+            return cached.windows
+        }
+        if let cooldown = cooldownStore.read(), cooldown.until > referenceDate {
+            throw GeminiUsageError.cooldownActive(until: cooldown.until)
+        }
+        if let inFlight, inFlight.token == credentials.accessToken { return try await inFlight.task.value }
+        let task = Task {
+            let windows = try await self.fetchUncached(credentials: credentials)
+            return UsageClientPolicy.observed(windows, at: self.now())
+        }
+        let pending = PendingGeminiQuota(token: credentials.accessToken, task: task)
+        inFlight = pending
+        defer { if inFlight?.requestID == pending.requestID { inFlight = nil } }
+        let observed = try await task.value
+        let observedAt = observed.first?.observedAt ?? now()
+        cached = CachedGeminiQuota(fetchedAt: observedAt, windows: observed, token: credentials.accessToken)
+        return observed
+    }
+
+    private func fetchUncached(credentials: GeminiOAuthCredentials) async throws -> [QuotaWindow] {
         let token = try await accessToken(for: credentials, forceRefresh: false)
         do {
             return try await fetchWindows(token: token)
@@ -173,6 +206,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
     private func refreshAccessToken(refreshToken: String, clientSecret: String) async throws -> String {
         var request = URLRequest(url: Self.tokenEndpoint)
         request.httpMethod = "POST"
+        request.setValue(UsageHTTPSession.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Self.formURLEncoded([
             GeminiOAuthField.clientID: clientID,
@@ -185,6 +219,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         guard let http = response as? HTTPURLResponse else {
             throw GeminiUsageError.unexpectedResponse
         }
+        if http.statusCode == 429 { cooldownStore.record(duration: cooldownStore.retryAfter(from: http)) }
         guard (200..<300).contains(http.statusCode) else {
             throw GeminiUsageError.tokenRefreshFailed(http.statusCode)
         }
@@ -224,6 +259,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
     private func postJSON(_ url: URL, token: String, body: [String: Any]) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.setValue(UsageHTTPSession.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -232,6 +268,7 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         guard let http = response as? HTTPURLResponse else {
             throw GeminiUsageError.unexpectedResponse
         }
+        if http.statusCode == 429 { cooldownStore.record(duration: cooldownStore.retryAfter(from: http)) }
         guard (200..<300).contains(http.statusCode) else {
             throw GeminiUsageError.httpStatus(http.statusCode)
         }
@@ -324,8 +361,6 @@ public actor GeminiUsageClientImpl: QuotaProvider {
         URL(string: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota")!
 }
 
-// MARK: - Response models
-
 private struct GeminiQuotaResponse: Decodable {
     let quotaGroups: [GeminiQuotaGroup]
 }
@@ -349,4 +384,16 @@ private struct GeminiQuotaBucket: Decodable {
         if let remainingFraction { return (1 - remainingFraction) * 100 }
         return nil
     }
+}
+
+private struct CachedGeminiQuota {
+    let fetchedAt: Date
+    let windows: [QuotaWindow]
+    let token: String
+}
+
+private struct PendingGeminiQuota {
+    let requestID = UUID()
+    let token: String
+    let task: Task<[QuotaWindow], Error>
 }

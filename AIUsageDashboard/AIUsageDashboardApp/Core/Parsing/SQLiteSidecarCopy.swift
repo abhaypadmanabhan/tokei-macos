@@ -40,14 +40,16 @@ enum SQLiteSidecarCopy {
             }
         }
 
+        let sourcePath = try noFollowSourcePath(sourceURL)
         var sourceDatabase: OpaquePointer?
         let sourceResult = sqlite3_open_v2(
-            sourceURL.path,
+            sourcePath,
             &sourceDatabase,
-            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+            SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW,
             nil
         )
-        guard sourceResult == SQLITE_OK, let sourceDatabase else {
+        guard sourceResult == SQLITE_OK, let sourceDatabase,
+              TokeiSQLiteHardenConnection(sourceDatabase) == SQLITE_OK else {
             let message = sourceDatabase.map(sqliteMessage) ?? "unable to open source database"
             if let sourceDatabase { sqlite3_close(sourceDatabase) }
             throw SQLiteSnapshotError(message: message)
@@ -61,7 +63,8 @@ enum SQLiteSidecarCopy {
             SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
             nil
         )
-        guard destinationResult == SQLITE_OK, let destinationDatabase else {
+        guard destinationResult == SQLITE_OK, let destinationDatabase,
+              TokeiSQLiteHardenConnection(destinationDatabase) == SQLITE_OK else {
             let message = destinationDatabase.map(sqliteMessage) ?? "unable to create snapshot database"
             if let destinationDatabase { sqlite3_close(destinationDatabase) }
             sqlite3_close(sourceDatabase)
@@ -113,6 +116,16 @@ enum SQLiteSidecarCopy {
         sqlite3_close(destinationDatabase)
         sqlite3_close(sourceDatabase)
         throw SQLiteSnapshotError(message: message)
+    }
+
+    private static func noFollowSourcePath(_ url: URL) throws -> String {
+        // NOFOLLOW rejects ancestor aliases too. Foundation resolves /private/var
+        // back to /var, so use realpath on only the parent and preserve the file entry.
+        guard let parent = realpath(url.deletingLastPathComponent().path, nil) else {
+            throw SQLiteSnapshotError(message: "unable to resolve SQLite source directory")
+        }
+        defer { free(parent) }
+        return String(cString: parent) + "/" + url.lastPathComponent
     }
 
     private static func createPrivateDestinationFile(at destinationURL: URL) throws {

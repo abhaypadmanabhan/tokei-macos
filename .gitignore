@@ -19,3 +19,9 @@ dist/
 AGENTS.md
 # Separate Next.js website project (#10) — tracked independently when ready
 website/
+
+# Proof screenshots show personal usage and stay local (Abhay, 0.10.0 precedent; enforced 2026-10-29)
+tasks/reports/**/*.png
+tasks/reports/**/*.jpg
+# WP-5 read-only upstream reference and local proof outputs
+.scratch/

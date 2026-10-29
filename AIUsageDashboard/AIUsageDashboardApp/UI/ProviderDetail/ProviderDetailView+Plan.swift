@@ -10,7 +10,7 @@ extension ProviderDetailView {
 
     var planCreditsSection: some View {
         VStack(alignment: .leading, spacing: 20) {
-            SectionLabel("Plan & credits")
+            SectionHeading("Plan & credits")
 
             if let credits = creditsWindow, let display = creditsDisplay(credits) {
                 HStack(spacing: 16) {
@@ -41,8 +41,8 @@ extension ProviderDetailView {
                 }
 
                 FlowLayout(hSpacing: 40, vSpacing: 20) {
-                    ForEach(display.stats, id: \.kicker) { stat in
-                        planStatBlock(kicker: stat.kicker, value: stat.value, numeric: stat.numeric)
+                    ForEach(display.stats, id: \.caption) { stat in
+                        planStatBlock(caption: stat.caption, value: stat.value, numeric: stat.numeric)
                     }
                 }
             }
@@ -85,11 +85,8 @@ extension ProviderDetailView {
         snapshot.providerID == .cursor ? "Enable online in Settings" : "Enable online sync \u{2192}"
     }
 
-    private func planStatBlock(kicker: String, value: String, numeric: Double? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kicker.uppercased())
-                .font(.mono(size: 13.5))
-                .foregroundColor(PadzyTheme.ink5)
+    private func planStatBlock(caption: String, value: String, numeric: Double? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(value)
                 .font(.mono(size: 22, weight: .semibold))
                 .monospacedDigit()
@@ -97,6 +94,9 @@ extension ProviderDetailView {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .rollingNumber(numeric, reduceMotion: reduceMotion)
+            Text(caption)
+                .font(.sans(size: 13, weight: .medium))
+                .foregroundColor(PadzyTheme.ink3)
         }
         .fixedSize()
     }
@@ -105,7 +105,7 @@ extension ProviderDetailView {
         let barLabel: String
         let readout: String
         let fraction: Double
-        let stats: [(kicker: String, value: String, numeric: Double?)]
+        let stats: [(caption: String, value: String, numeric: Double?)]
     }
 
     /// Preserves the capabilityPane "used" vs "left" nuance: a window reporting

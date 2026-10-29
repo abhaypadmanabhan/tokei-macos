@@ -1,5 +1,20 @@
 import Foundation
 
+extension CodingUserInfoKey {
+    static let ignoringSyncTime = CodingUserInfoKey(rawValue: "usageStoreIgnoringSyncTime")!
+}
+
+private extension KeyedEncodingContainer {
+    mutating func encodeSortedDates<Value: Encodable>(_ values: [Date: Value]?, forKey key: Key) throws {
+        guard let values else { return }
+        var pairs = nestedUnkeyedContainer(forKey: key)
+        for date in values.keys.sorted() {
+            try pairs.encode(date)
+            try pairs.encode(values[date])
+        }
+    }
+}
+
 // MARK: - Raw-representable enums
 
 extension ProviderID: Codable {}
@@ -8,6 +23,68 @@ extension MetricConfidence: Codable {}
 extension QuotaWindowType: Codable {}
 extension ProviderWarning.Level: Codable {}
 extension AccountQuotaStatus: Codable {}
+
+extension FiredNotificationKey: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case providerID, windowType, threshold, resetAt, bucketKey, accountID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            providerID: try container.decode(ProviderID.self, forKey: .providerID),
+            windowType: try container.decode(QuotaWindowType.self, forKey: .windowType),
+            threshold: try container.decode(Int.self, forKey: .threshold),
+            resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
+            bucketKey: try container.decodeIfPresent(String.self, forKey: .bucketKey),
+            accountID: try container.decodeIfPresent(String.self, forKey: .accountID)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encode(windowType, forKey: .windowType)
+        try container.encode(threshold, forKey: .threshold)
+        try container.encodeIfPresent(resetAt, forKey: .resetAt)
+        try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+    }
+}
+
+extension QuotaSample: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case providerID, accountID, windowType, bucketKey, usedPercent, used, limit, resetAt, sampledAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            providerID: try container.decode(ProviderID.self, forKey: .providerID),
+            accountID: try container.decodeIfPresent(String.self, forKey: .accountID),
+            windowType: try container.decode(QuotaWindowType.self, forKey: .windowType),
+            bucketKey: try container.decode(String.self, forKey: .bucketKey),
+            usedPercent: try container.decode(Double.self, forKey: .usedPercent),
+            used: try container.decode(Double.self, forKey: .used),
+            limit: try container.decode(Double.self, forKey: .limit),
+            resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
+            sampledAt: try container.decode(Date.self, forKey: .sampledAt)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(providerID, forKey: .providerID)
+        try container.encodeIfPresent(accountID, forKey: .accountID)
+        try container.encode(windowType, forKey: .windowType)
+        try container.encode(bucketKey, forKey: .bucketKey)
+        try container.encode(usedPercent, forKey: .usedPercent)
+        try container.encode(used, forKey: .used)
+        try container.encode(limit, forKey: .limit)
+        try container.encodeIfPresent(resetAt, forKey: .resetAt)
+        try container.encode(sampledAt, forKey: .sampledAt)
+    }
+}
 
 // MARK: - Value types with custom Codable implementations
 //
@@ -70,10 +147,12 @@ extension ProviderSnapshot: Codable {
         try container.encodeIfPresent(lifetimeUsage, forKey: .lifetimeUsage)
         try container.encodeIfPresent(costUsage, forKey: .costUsage)
         try container.encode(warnings, forKey: .warnings)
-        try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
-        try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
-        try container.encodeIfPresent(hourlyTotals, forKey: .hourlyTotals)
-        try container.encodeIfPresent(dailyModelUsage, forKey: .dailyModelUsage)
+        if encoder.userInfo[.ignoringSyncTime] as? Bool != true {
+            try container.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
+        }
+        try container.encodeSortedDates(dailyTotals, forKey: .dailyTotals)
+        try container.encodeSortedDates(hourlyTotals, forKey: .hourlyTotals)
+        try container.encodeSortedDates(dailyModelUsage, forKey: .dailyModelUsage)
         try container.encodeIfPresent(accounts, forKey: .accounts)
         try container.encodeIfPresent(headlineAccountID, forKey: .headlineAccountID)
     }
@@ -120,7 +199,7 @@ extension ProviderAccountUsage: Codable {
         try container.encode(label, forKey: .label)
         try container.encode(quotaWindows, forKey: .quotaWindows)
         try container.encode(todayUsage, forKey: .todayUsage)
-        try container.encodeIfPresent(dailyTotals, forKey: .dailyTotals)
+        try container.encodeSortedDates(dailyTotals, forKey: .dailyTotals)
         if !configDirectories.isEmpty {
             try container.encode(configDirectories, forKey: .configDirectories)
         }
@@ -138,6 +217,7 @@ extension TokenUsage: Codable {
         case outputTokens
         case cacheReadTokens
         case cacheCreationTokens
+        case cacheCreation1hTokens
         case reasoningTokens
         case confidence
     }
@@ -148,6 +228,7 @@ extension TokenUsage: Codable {
         outputTokens = try container.decodeIfPresent(Int.self, forKey: .outputTokens)
         cacheReadTokens = try container.decodeIfPresent(Int.self, forKey: .cacheReadTokens)
         cacheCreationTokens = try container.decodeIfPresent(Int.self, forKey: .cacheCreationTokens)
+        cacheCreation1hTokens = try container.decodeIfPresent(Int.self, forKey: .cacheCreation1hTokens)
         reasoningTokens = try container.decodeIfPresent(Int.self, forKey: .reasoningTokens)
         confidence = try container.decode(MetricConfidence.self, forKey: .confidence)
     }
@@ -158,6 +239,7 @@ extension TokenUsage: Codable {
         try container.encodeIfPresent(outputTokens, forKey: .outputTokens)
         try container.encodeIfPresent(cacheReadTokens, forKey: .cacheReadTokens)
         try container.encodeIfPresent(cacheCreationTokens, forKey: .cacheCreationTokens)
+        try container.encodeIfPresent(cacheCreation1hTokens, forKey: .cacheCreation1hTokens)
         try container.encodeIfPresent(reasoningTokens, forKey: .reasoningTokens)
         try container.encode(confidence, forKey: .confidence)
     }
@@ -231,7 +313,10 @@ extension QuotaWindow: Codable {
         try container.encode(source, forKey: .source)
         try container.encodeIfPresent(label, forKey: .label)
         try container.encodeIfPresent(bucketKey, forKey: .bucketKey)
-        try container.encodeIfPresent(observedAt, forKey: .observedAt)
+        // A repeated observation updates in-memory freshness, but alone is not new stored content.
+        if encoder.userInfo[.ignoringSyncTime] as? Bool != true {
+            try container.encodeIfPresent(observedAt, forKey: .observedAt)
+        }
         try container.encodeIfPresent(windowDuration, forKey: .windowDuration)
     }
 }

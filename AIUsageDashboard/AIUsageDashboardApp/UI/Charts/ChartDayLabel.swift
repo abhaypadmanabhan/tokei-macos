@@ -8,7 +8,7 @@ import Foundation
 /// edited, and two charts on one screen labelling the same day differently reads as a bug
 /// in the data rather than in the formatter.
 enum ChartDayLabel {
-    /// X-axis label: `TODAY` for the current day, else the whole-day distance back
+    /// X-axis label: "Today" for the current day, else the whole-day distance back
     /// (`7D`). Dates read as "how long ago", not as a calendar.
     static func relative(_ date: Date, now: Date = Date()) -> String {
         let calendar = Calendar.current
@@ -17,7 +17,7 @@ enum ChartDayLabel {
             from: calendar.startOfDay(for: date),
             to: calendar.startOfDay(for: now)
         ).day ?? 0
-        return days <= 0 ? "TODAY" : "\(days)D"
+        return days <= 0 ? "Today" : "\(days)D"
     }
 
     /// Callout header: the actual day (`Mon Jul 27`), because a hover is where the

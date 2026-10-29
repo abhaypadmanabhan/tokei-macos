@@ -11,11 +11,11 @@ import AIUsageDashboardCore
 ///   local logs; Rescan re-reads them (`viewModel.refresh()`). There is no
 ///   per-agent "pause", so the dot is an honest status indicator, not a fake
 ///   toggle.
-/// - **Live quota** only appears for the three providers that actually expose an
+/// - **Live quota** only appears for the providers that actually expose an
 ///   online connector (`ProviderMetadata.liveQuotaProviders`); its switch is
-///   the same `@AppStorage` flag the connector reads at fetch time, and the OFF /
-///   CONNECTING / LIVE state is derived from whether a live window has landed.
-///   Local-only agents read "LOCAL LOGS ONLY" instead of a dead toggle.
+///   the same `@AppStorage` flag the connector reads at fetch time, and the off /
+///   connecting / live state is derived from whether a live window has landed.
+///   Local-only agents read "Local logs only" instead of a dead toggle.
 ///
 /// The one place anything leaves the Mac — Cursor's authenticated request — keeps
 /// its explicit disclosure line; the general privacy note lives in the footer.
@@ -65,7 +65,7 @@ struct ConnectionRow: View {
     }
 
     private var hasLiveData: Bool {
-        viewModel.utilization.contains { $0.providerID == providerID }
+        viewModel.gaugeUtilizations.contains { $0.providerID == providerID }
     }
 
     private var show: Bool { !hiddenFlag }
@@ -74,8 +74,8 @@ struct ConnectionRow: View {
         Binding(get: { !hiddenFlag }, set: { hiddenFlag = !$0 })
     }
 
-    /// OFF → CONNECTING (enabled, first window not yet in) → LIVE. Local-only
-    /// providers never reach this — they show "LOCAL LOGS ONLY".
+    /// Off → connecting (enabled, first window not yet in) → live. Local-only providers
+    /// never reach this — they show "Local logs only".
     private enum LiveState { case off, connecting, live }
     private var liveState: LiveState {
         guard liveEnabled else { return .off }
@@ -139,16 +139,9 @@ struct ConnectionRow: View {
 
     private var capabilityChip: some View {
         Text(capability.label)
-            .font(.mono(size: 8.5))
-            .tracking(8.5 * 0.08)
+            .font(.sans(size: 12))
             .foregroundColor(PadzyTheme.ink3)
             .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .overlay(
-                RoundedRectangle(cornerRadius: PadzyRadius.chip, style: .continuous)
-                    .stroke(PadzyTheme.border2, lineWidth: 1)
-            )
             .fixedSize()
             .accessibilityLabel("Capability: \(capability.label)")
     }
@@ -205,9 +198,8 @@ struct ConnectionRow: View {
     private var liveQuotaControl: some View {
         if connectable {
             HStack(spacing: 8) {
-                Text("LIVE QUOTA · \(liveStateLabel)")
-                    .font(.mono(size: 9.5))
-                    .tracking(9.5 * 0.1)
+                Text("Live quota \(liveStateLabel)")
+                    .font(.sans(size: 12))
                     .foregroundColor(liveDotColor)
                 Toggle("", isOn: $liveEnabled)
                     .labelsHidden()
@@ -219,29 +211,18 @@ struct ConnectionRow: View {
             }
             .fixedSize()
             .help(Self.liveDisclosure(for: providerID))
-        } else if providerID == .gemini {
-            // Gemini quota needs a one-time CLI sign-in (#54) — surface the fix
-            // here instead of the generic local-only state, which would read as
-            // "nothing to do" when there actually is.
-            Text("Run `gemini` and sign in to enable Gemini quota")
-                .font(.mono(size: 9.5))
-                .tracking(9.5 * 0.1)
-                .foregroundColor(PadzyTheme.ink5)
-                .lineLimit(1)
-                .truncationMode(.tail)
         } else {
-            Text("LOCAL LOGS ONLY")
-                .font(.mono(size: 9.5))
-                .tracking(9.5 * 0.1)
-                .foregroundColor(PadzyTheme.ink5)
+            Text("Local logs only")
+                .font(.sans(size: 12))
+                .foregroundColor(PadzyTheme.ink4)
         }
     }
 
     private var liveStateLabel: String {
         switch liveState {
-        case .off: return "OFF"
-        case .connecting: return "CONNECTING"
-        case .live: return "LIVE"
+        case .off: return "off"
+        case .connecting: return "connecting"
+        case .live: return "on"
         }
     }
 
@@ -266,6 +247,9 @@ struct ConnectionRow: View {
             return "Makes an authenticated request to Cursor's servers using your local session token to fetch real token and quota usage."
         case .antigravity:
             return "Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere."
+        case .gemini:
+            return "Asks Google for your Gemini quota with the Gemini CLI's sign-in on this Mac."
+                + " Run `gemini` once to sign in."
         default:
             return ""
         }

@@ -93,3 +93,19 @@ State: T3 runs for WP-2/WP-3 were CANCELLED at 09:11:38Z (parent thread closed);
   pane `wp2-codex-fix`, brief `tasks/reports/2026-10-20-wp2.fix-brief.md` in the WP-2 worktree.
 - WP-3: Codex review CHANGES → `bcbc781`; delta still wants the Overview/menu pace accessor to require a reported used + per-row state.
 - Proof lock `/tmp/tokei-live-proof.lock` now owned by the orchestrator. Baseline `mtd_baseline.py` keeps largest; `BASELINE_NOW` pins time.
+
+## Outcome — SHIPPED 0.10.0 (build 10), ~12:25 UTC 2026-10-20
+
+All remaining steps done; details and numbers in `tasks/reports/release-2026-10-20.md`.
+- main @ `4b0b245` (merge `fd3e205` + appcast), tag `v0.10.0`, GitHub release with the notarized DMG
+  (6,209,432 bytes, SHA-256 prefix 01a185064305df1a), live Pages feed serves 0.10.0, website
+  deployed (Vercel prod, v0.10.0). dev == main.
+- After the merges: security L1/L2 fixes, a flaky-test fix, a release preflight for Sparkle's
+  sign_update, and a CPU optimisation (`21aa50e`: per-record day/hour cached at parse time).
+- CPU on the notarized build: quiet 0.52 %, busy 10.5 % vs 0.9.0's 13.1 %.
+- Worktrees and lane branches removed; `/tmp/tokei-live-proof.lock` removed; Abhay's
+  /Applications Tokei (0.9.0) relaunched and hidden — it will offer the 0.10.0 update.
+- Follow-ups: hidden launch never starts syncing (pre-existing); pace sentence truncates in the
+  narrow drill-in column; Antigravity tokens; Codex priority pricing; pace in MCP snapshot;
+  guard-bash `large-delete` fires on commits that stage no deletions when the checkout has
+  unstaged ones (the five brand/handoff PNGs).

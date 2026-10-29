@@ -255,7 +255,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     /// synced last stand in for both).
     public init(
         account: ClaudeAccount,
-        urlSession: URLSession = .shared,
+        urlSession: URLSession? = nil,
         keychainReader: KeychainPasswordSpawning = SecurityCLIKeychainReader(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
@@ -272,7 +272,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     }
 
     public init(
-        urlSession: URLSession = .shared,
+        urlSession: URLSession? = nil,
         credentialsReader: ClaudeUsageCredentialsReading = DefaultClaudeUsageCredentialsReader(),
         cacheURL: URL? = nil,
         cooldownURL: URL? = nil,
@@ -282,7 +282,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
             try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
         }
     ) {
-        self.urlSession = urlSession
+        self.urlSession = urlSession ?? UsageHTTPSession.shared
         self.credentialsReader = credentialsReader
         self.cacheURL = cacheURL ?? Self.defaultStorageURL(filename: "claude-usage-cache.json")
         self.cooldownStore = CooldownStore(
@@ -360,6 +360,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
         guard !windows.isEmpty else {
             throw ClaudeUsageError.unrecognizedResponse
         }
+        if let extra = payload.extraUsage?.window(providerID: providerID) { windows.append(extra) }
         return windows
     }
 
@@ -413,7 +414,7 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Tokei/0.2", forHTTPHeaderField: "User-Agent")
+        request.setValue(UsageHTTPSession.userAgent, forHTTPHeaderField: "User-Agent")
         return request
     }
 
@@ -445,21 +446,13 @@ public actor ClaudeUsageClientImpl: ClaudeUsageClient {
     }
 
     private func persistCache(_ windows: [QuotaWindow], fetchedAt: Date) throws {
-        try createParentDirectory(for: cacheURL)
         let data = try JSONEncoder.claudeUsageEncoder.encode(CachedQuotaWindows(fetchedAt: fetchedAt, windows: windows))
-        try data.write(to: cacheURL, options: .atomic)
+        try SecureFileWriter.write(data, to: cacheURL)
     }
 
     private func readCache() throws -> CachedQuotaWindows {
         let data = try Data(contentsOf: cacheURL)
         return try JSONDecoder.claudeUsageDecoder.decode(CachedQuotaWindows.self, from: data)
-    }
-
-    private func createParentDirectory(for url: URL) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
     }
 
     private static func quotaWindow(from entry: ClaudeUsageLimitEntry, providerID: ProviderID) -> QuotaWindow? {
@@ -579,11 +572,13 @@ private struct ClaudeUsagePayload: Decodable {
     let fiveHour: ClaudeUsageFallbackLimit?
     let sevenDay: ClaudeUsageFallbackLimit?
     let limits: [ClaudeUsageLimitEntry]?
+    let extraUsage: ClaudeExtraUsage?
 
     private enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case limits
+        case extraUsage = "extra_usage"
     }
 }
 

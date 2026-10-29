@@ -8,8 +8,8 @@ import os
 /// `~/Library/Application Support/AIUsageDashboard/agent-snapshot.json`. The mapping
 /// (`buildSnapshot`) is pure and static so it can be unit-tested without touching disk.
 ///
-/// SECURITY: only percentages, token counts, and timestamps leave here — see the
-/// invariant on `AgentSnapshot`. No raw provider responses, tokens, or credentials.
+/// SECURITY: the allowlist in `AgentSnapshot` and docs/08 includes local profile paths
+/// and process selectors. No raw provider responses, tokens or credentials leave here.
 public actor AgentSnapshotWriter {
     public static let shared = AgentSnapshotWriter()
 
@@ -72,7 +72,7 @@ public actor AgentSnapshotWriter {
         let utilizations = snapshots.flatMap { snapshot -> [Utilization] in
             let windows = headlineDecisions[snapshot.providerID]?.account.quotaWindows
                 ?? snapshot.quotaWindows
-            return windows.compactMap { window in
+            return windows.filter { !$0.isInformationalCredits }.compactMap { window in
                 guard let usedPercent = UtilizationEngine.usedPercent(from: window) else { return nil }
                 return Utilization(
                     providerID: snapshot.providerID,
@@ -114,7 +114,7 @@ public actor AgentSnapshotWriter {
             id: snapshot.providerID.rawValue,
             displayName: snapshot.displayName,
             windows: (headlineDecision?.account.quotaWindows ?? snapshot.quotaWindows)
-                .compactMap(agentWindow(from:)),
+                .compactMap { agentWindow(from: $0, generatedAt: generatedAt) },
             tokensToday: snapshot.todayUsage.totalTokens,
             lastUpdated: snapshot.lastSyncedAt,
             // Absent rather than empty for single-account providers, so nothing changes
@@ -139,7 +139,7 @@ public actor AgentSnapshotWriter {
             now: generatedAt
         )
         let projectedWindows = account.quotaWindows.enumerated().compactMap { sourceIndex, window in
-            agentWindow(from: window).map { (sourceIndex: sourceIndex, window: $0) }
+            agentWindow(from: window, generatedAt: generatedAt).map { (sourceIndex: sourceIndex, window: $0) }
         }
         let publicBindingWindowIndex = decision.bindingWindowIndex.flatMap { sourceIndex in
             projectedWindows.firstIndex { $0.sourceIndex == sourceIndex }
@@ -175,8 +175,9 @@ public actor AgentSnapshotWriter {
     /// A window becomes public only when it has a computable percentage — the same
     /// rule the utilization spine uses (`UtilizationEngine.usedPercent`), replicated
     /// here to keep `source` (which the spine drops) and avoid widening its API.
-    private static func agentWindow(from window: QuotaWindow) -> AgentWindow? {
+    private static func agentWindow(from window: QuotaWindow, generatedAt: Date) -> AgentWindow? {
         guard let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
+        let pace = QuotaPace(window: window, now: generatedAt)
         return AgentWindow(
             type: window.type.rawValue,
             usedPercent: percent,
@@ -185,8 +186,21 @@ public actor AgentSnapshotWriter {
             source: window.source,
             observedAt: window.observedAt,
             label: window.label,
-            bucketKey: window.bucketKey
+            bucketKey: window.bucketKey,
+            windowSeconds: QuotaPace.duration(for: window.type, reported: window.windowDuration),
+            pace: pace.map { AgentWindowPace(state: $0.state.rawValue,
+                                             elapsedPercent: $0.elapsedPercent, deltaPoints: $0.delta) },
+            forecast: pace.map { publicForecast($0.forecast) }
         )
+    }
+
+    private static func publicForecast(_ forecast: QuotaPace.Forecast) -> AgentWindowForecast {
+        switch forecast {
+        case .tooEarly: return AgentWindowForecast(kind: "tooEarly")
+        case .lastsToReset: return AgentWindowForecast(kind: "lastsToReset")
+        case .exhausted: return AgentWindowForecast(kind: "exhausted")
+        case .runsOut(let date): return AgentWindowForecast(kind: "runsOut", runsOutAt: date)
+        }
     }
 
     /// Collapse the internal five-level confidence to the three public labels agents
@@ -203,11 +217,8 @@ public actor AgentSnapshotWriter {
 
     private func persist(_ snapshot: AgentSnapshot) -> Bool {
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let data = try encoder.encode(snapshot)
-            // `.atomic` writes to a sibling temp file and renames — a reader never sees
-            // a torn file, and a crash mid-write leaves the previous snapshot intact.
-            try data.write(to: fileURL, options: .atomic)
+            try SecureFileWriter.write(data, to: fileURL)
             return true
         } catch {
             Self.log.error("agent snapshot write failed: \(error.localizedDescription, privacy: .public)")

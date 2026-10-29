@@ -87,14 +87,36 @@ struct ProviderDetailView: View {
 
     private var isWide: Bool { containerWidth - Self.hPad * 2 >= 720 }
 
-    private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty }
+    /// Claude's extra-usage balance (§4.3), drawn under the quota rows; never a gauge.
+    var extraUsageWindow: QuotaWindow? { ExtraUsageCopy.window(in: snapshot) }
+
+    private var showQuotaWindows: Bool { !nonCreditsWindows.isEmpty || extraUsageWindow != nil }
     private var showHistory: Bool { hasLocalTokenData }
     private var showSplitSection: Bool { hasLocalTokenData && (hasSplit || todayTotal != nil) }
-    private var hasRightColumn: Bool { showHistory || showSplitSection || showAccounts || !modelValues.isEmpty }
 
     // MARK: - Body
 
     var body: some View {
+        ScrollViewReader { proxy in
+            scrollingBody
+                #if DEBUG
+                .onAppear {
+                    // Debug proof route `provider.<id>.scrolled`: capture the drill-in scrolled.
+                    guard ProofRoute.scrollsDrillIn else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                        proxy.scrollTo(Self.scrolledAnchor, anchor: .top)
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: ProofRoute.scrollNotification)) { _ in
+                    proxy.scrollTo(Self.scrolledAnchor, anchor: .top)
+                }
+                #endif
+        }
+    }
+
+    static let scrolledAnchor = "drill-after-quota"
+
+    private var scrollingBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xxl) {
                 header
@@ -177,25 +199,23 @@ struct ProviderDetailView: View {
 
     private var metaGrid: some View {
         FlowLayout(hSpacing: 32, vSpacing: 14) {
-            metaBlock(kicker: "Watched file",
-                      value: ProviderMetadata.localPaths(for: snapshot.providerID).first ?? "\u{2014}",
-                      color: PadzyTheme.ink3)
+            watchedFile(ProviderMetadata.localPaths(for: snapshot.providerID).first ?? "\u{2014}")
         }
     }
 
-    private func metaBlock(kicker: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(kicker.uppercased())
-                .font(.mono(size: 9))
-                .tracking(0.9)
-                .foregroundColor(PadzyTheme.ink5)
-            Text(value)
+    /// "Watches ~/.claude/projects": the words in the body font, the path in mono.
+    private func watchedFile(_ path: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("Watches")
+                .font(.sans(size: 13))
+                .foregroundColor(PadzyTheme.ink4)
+            Text(path)
                 .font(.mono(size: 12))
-                .foregroundColor(color)
+                .foregroundColor(PadzyTheme.ink3)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .frame(maxWidth: 320, alignment: .leading)
+        .frame(maxWidth: 420, alignment: .leading)
     }
 
     // MARK: - 3 · Insight
@@ -338,24 +358,24 @@ struct ProviderDetailView: View {
 
     private var statsFlow: some View {
         FlowLayout(hSpacing: 40, vSpacing: 30) {
-            statBlock(kicker: "Tokens · today",
+            statBlock(caption: "Tokens today",
                       value: TokenFormatter.format(todayTotal),
                       sub: todayTokenSub,
                       known: todayTotal != nil,
                       numeric: todayTotal.map(Double.init),
                       subNumeric: todayDeltaNumeric)
-            statBlock(kicker: UsageAnalytics.rollingSevenDayLabel,
+            statBlock(caption: UsageAnalytics.rollingSevenDayLabel,
                       value: TokenFormatter.format(weekTokens),
                       sub: weekDeltaSub,
                       known: weekTokens != nil,
                       numeric: weekTokens.map(Double.init),
                       subNumeric: weekDeltaNumeric)
-            statBlock(kicker: "Peak hour",
+            statBlock(caption: "Peak hour",
                       value: peakHour.map { AnalyticsFormat.hourLabel($0.hour) } ?? "\u{2014}",
                       sub: peakHour == nil ? "" : "most active",
                       known: peakHour != nil,
                       numeric: peakHour.map { Double($0.hour) })
-            statBlock(kicker: "Plan value",
+            statBlock(caption: "Plan value",
                       value: MaxxerMath.formatMultiple(value?.valueMultiple),
                       sub: planValueSub,
                       known: value?.valueMultiple != nil,
@@ -370,18 +390,16 @@ struct ProviderDetailView: View {
         return "incl. cache · \(cache)"
     }
 
+    /// A number with its caption under it ("340M" / "Tokens today"), then its context line.
     private func statBlock(
-        kicker: String,
+        caption: String,
         value: String,
         sub: String,
         known: Bool,
         numeric: Double? = nil,
         subNumeric: Double? = nil
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(kicker.uppercased())
-                .font(.mono(size: 13.5))
-                .foregroundColor(PadzyTheme.ink5)
+        VStack(alignment: .leading, spacing: 4) {
             Text(value)
                 .font(.mono(size: 26, weight: .semibold))
                 .monospacedDigit()
@@ -389,6 +407,9 @@ struct ProviderDetailView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .rollingNumber(numeric, reduceMotion: reduceMotion)
+            Text(caption)
+                .font(.sans(size: 13, weight: .medium))
+                .foregroundColor(PadzyTheme.ink3)
             if !sub.isEmpty {
                 Text(sub)
                     .font(.sans(size: 15))
@@ -440,39 +461,34 @@ struct ProviderDetailView: View {
         return "\(MaxxerMath.formatUSD(value?.apiEquivalentUSD))/mo API-equiv"
     }
 
-    // MARK: - 6/7/8 · Bottom region (2-column ≥720pt)
+    // MARK: - 6/7/8 · Bottom region
 
-    @ViewBuilder
+    /// One reading order: quota, history, accounts, token split, value by model. Two columns
+    /// only where both hold content of about the same height (the quota rows beside the
+    /// daily history, on a wide window); everything else runs full width. The old split put
+    /// the short quota list beside a tall right column, leaving the left side empty once
+    /// scrolled (2026-10-28 captures).
     private var bottomRegion: some View {
-        if showQuotaWindows && hasRightColumn {
-            if isWide {
+        VStack(alignment: .leading, spacing: PadzySpace.xxl) {
+            if showQuotaWindows && showHistory && isWide {
                 HStack(alignment: .top, spacing: 44) {
                     quotaWindowsSection.frame(maxWidth: .infinity, alignment: .leading)
-                    rightColumn.frame(maxWidth: .infinity, alignment: .leading)
+                    dailyHistorySection.frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: PadzySpace.xxl) {
-                    quotaWindowsSection
-                    rightColumn
+                if showQuotaWindows { quotaWindowsSection }
+                if showHistory { dailyHistorySection }
+            }
+            Group {
+                if showAccounts {
+                    accountsSection
+                } else if showAccountSetupNotice {
+                    MultiAccountNotice(kind: .claudeSetup)
                 }
+                if showSplitSection { tokenSplitSection }
+                if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
             }
-        } else if hasRightColumn {
-            rightColumn
-        } else if showQuotaWindows {
-            quotaWindowsSection
-        }
-    }
-
-    private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 30) {
-            if showAccounts {
-                accountsSection
-            } else if showAccountSetupNotice {
-                MultiAccountNotice(kind: .claudeSetup)
-            }
-            if showHistory { dailyHistorySection }
-            if showSplitSection { tokenSplitSection }
-            if !modelValues.isEmpty { ModelValueSection(rows: modelValues) }
+            .id(Self.scrolledAnchor)
         }
     }
 

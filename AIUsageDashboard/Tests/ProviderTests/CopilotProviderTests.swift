@@ -19,7 +19,8 @@ final class CopilotProviderTests: XCTestCase {
     func testMissingInstallMarkersReportNotInstalledAndUnavailableUsage() async throws {
         let provider = CopilotProvider(
             installationMarkers: [tempDirectory.appendingPathComponent("missing")],
-            extensionDirectories: [tempDirectory.appendingPathComponent("extensions")]
+            extensionDirectories: [tempDirectory.appendingPathComponent("extensions")],
+            sessionParser: .init(sessionStateDirectory: tempDirectory)
         )
 
         let availability = await provider.detectAvailability()
@@ -43,7 +44,8 @@ final class CopilotProviderTests: XCTestCase {
         try FileManager.default.createDirectory(at: marker, withIntermediateDirectories: true)
         let provider = CopilotProvider(
             installationMarkers: [marker],
-            extensionDirectories: []
+            extensionDirectories: [],
+            sessionParser: .init(sessionStateDirectory: tempDirectory)
         )
 
         let availability = await provider.detectAvailability()
@@ -61,7 +63,8 @@ final class CopilotProviderTests: XCTestCase {
         )
         let provider = CopilotProvider(
             installationMarkers: [],
-            extensionDirectories: [extensions]
+            extensionDirectories: [extensions],
+            sessionParser: .init(sessionStateDirectory: tempDirectory)
         )
 
         let availability = await provider.detectAvailability()
@@ -74,7 +77,8 @@ final class CopilotProviderTests: XCTestCase {
         try FileManager.default.createDirectory(at: marker, withIntermediateDirectories: true)
         let provider = CopilotProvider(
             installationMarkers: [marker],
-            extensionDirectories: []
+            extensionDirectories: [],
+            sessionParser: .init(sessionStateDirectory: tempDirectory)
         )
 
         let snapshot = try await provider.fetchSnapshot()

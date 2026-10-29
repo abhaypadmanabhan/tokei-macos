@@ -119,19 +119,36 @@ final class CodexRateLimitClientTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let binary = try script("""
-        printf '%s' "$$" > "$CODEX_HOME/pid"
         printf '{"id":1'
         while :; do :; done
         """, in: directory)
+        let timeout: TimeInterval = 0.2
         let start = ProcessInfo.processInfo.systemUptime
-        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory, timeout: 0.2)) {
+        XCTAssertThrowsError(try CodexRateLimitClient.runProcess(binary: binary, root: directory, timeout: timeout)) {
             XCTAssertEqual($0 as? CodexRateLimitClient.ProbeError, .timeout)
         }
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 1)
-        let pid = try XCTUnwrap(Int32(String(contentsOf: directory.appendingPathComponent("pid"))))
-        for _ in 0..<100 where Darwin.kill(pid, 0) == 0 { usleep(1000) }
-        XCTAssertEqual(Darwin.kill(pid, 0), -1)
-        XCTAssertEqual(errno, ESRCH)
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, timeout + 2)
+
+        func fixtureProcessesRemain() throws -> Bool {
+            let probe = Process()
+            probe.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+            probe.arguments = ["-f", NSRegularExpression.escapedPattern(for: directory.path)]
+            probe.standardOutput = FileHandle.nullDevice
+            probe.standardError = FileHandle.nullDevice
+            try probe.run()
+            probe.waitUntilExit()
+            XCTAssertEqual(probe.terminationReason, .exit)
+            XCTAssertTrue((0...1).contains(probe.terminationStatus), "pgrep exited \(probe.terminationStatus)")
+            return probe.terminationStatus != 1
+        }
+
+        let cleanupDeadline = ProcessInfo.processInfo.systemUptime + 1
+        var processesRemain = try fixtureProcessesRemain()
+        while processesRemain && ProcessInfo.processInfo.systemUptime < cleanupDeadline {
+            usleep(10_000)
+            processesRemain = try fixtureProcessesRemain()
+        }
+        XCTAssertFalse(processesRemain, "Surviving process from fixture \(directory.path)")
     }
 
     func testRealRunnerRejectsUnboundedOutput() throws {

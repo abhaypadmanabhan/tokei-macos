@@ -65,7 +65,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
 
     func testProviderAvailabilityUsesStateDatabasePresenceOnly() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
-        let provider = AntigravityProvider(stateDatabaseURL: stateDB)
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []))
 
         var availability = await provider.detectAvailability()
         XCTAssertEqual(availability, .notInstalled)
@@ -78,7 +78,7 @@ final class AntigravityStateDBParserTests: XCTestCase {
     func testProviderReturnsAuthenticatedPlanAndHonestCreditInfoWithoutFabricatedQuota() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())
-        let provider = AntigravityProvider(stateDatabaseURL: stateDB)
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []))
 
         let snapshot = try await provider.fetchSnapshot()
         let capabilities = await provider.capabilities
@@ -100,6 +100,21 @@ final class AntigravityStateDBParserTests: XCTestCase {
         })
         XCTAssertTrue(snapshot.warnings.contains {
             $0.level == .info && $0.message.contains("Model quota") && $0.message.contains("offline")
+        })
+    }
+
+    func testProviderWarnsWhenExistingStateDatabaseCannotBeRead() async throws {
+        let stateDB = tempDirectory.appendingPathComponent("unreadable-state.vscdb")
+        try Data("not a SQLite database".utf8).write(to: stateDB)
+        let suite = "ai.padzy.tokei.wp1.unreadable-state"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let provider = AntigravityProvider(stateDatabaseURL: stateDB, conversationParser: .init(roots: []),
+                                          userDefaults: defaults)
+        let snapshot = try await provider.fetchSnapshot()
+        XCTAssertTrue(snapshot.warnings.contains {
+            $0.level == .warning && $0.message.contains("local state database could not be read")
         })
     }
 

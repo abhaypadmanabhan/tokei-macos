@@ -17,6 +17,7 @@ public actor CursorProvider: UsageProvider {
     private let usageClient: CursorUsageClient
     private let calendar: Calendar
     private let now: @Sendable () -> Date
+    private let parseUsageEvents: @Sendable (String) -> [CursorUsageEvent]
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     public init(
@@ -26,7 +27,8 @@ public actor CursorProvider: UsageProvider {
         usageClient: CursorUsageClient? = nil,
         calendar: Calendar = .current,
         now: @escaping @Sendable () -> Date = { Date() },
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        parseUsageEvents: @escaping @Sendable (String) -> [CursorUsageEvent] = { CursorUsageCSV.parseEvents($0) }
     ) {
         self.fileManager = fileManager
         self.stateDatabaseURL = stateDatabaseURL ?? fileManager.homeDirectoryForCurrentUser
@@ -35,6 +37,7 @@ public actor CursorProvider: UsageProvider {
         self.usageClient = usageClient ?? CursorUsageClientImpl()
         self.calendar = calendar
         self.now = now
+        self.parseUsageEvents = parseUsageEvents
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
     }
 
@@ -73,19 +76,11 @@ public actor CursorProvider: UsageProvider {
                 costUsage = online.cost
                 dailyTotals = online.dailyTotals.isEmpty ? nil : online.dailyTotals
                 hourlyTotals = online.hourlyTotals
-                if let summary = online.summary, let percent = summary.usedPercent {
-                    quotaWindows = [QuotaWindow(
-                        providerID: id,
-                        type: .monthly,
-                        used: percent,
-                        limit: 100,
-                        remaining: max(0, 100 - percent),
-                        resetAt: summary.resetAt,
-                        confidence: .providerReported,
-                        source: "cursor.com/api/usage-summary",
-                        label: state.planLabel ?? summary.membershipType,
-                        observedAt: online.summaryObservedAt
-                    )]
+                if let summary = online.summary {
+                    quotaWindows = summary.quotaWindows(
+                        observedAt: online.summaryObservedAt,
+                        fallbackLabel: state.planLabel
+                    )
                 }
             case .missingSession:
                 warnings.append(ProviderWarning(
@@ -150,7 +145,7 @@ public actor CursorProvider: UsageProvider {
             let csv = try await csvResult
             let summaryResponse = await summaryData
             let responseTime = now()
-            let events = CursorUsageCSV.parseEvents(csv)
+            let events = parseUsageEvents(csv)
             let summary = summaryResponse.flatMap { CursorUsageSummary.decode($0.payload) }
 
             var windows = UsageWindows(

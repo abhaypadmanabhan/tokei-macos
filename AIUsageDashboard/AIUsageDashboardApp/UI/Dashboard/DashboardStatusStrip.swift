@@ -58,12 +58,20 @@ struct DashboardStatusStrip: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("r", modifiers: .command)
+        // ⌘R lives on View › Sync Now, so the shortcut is listed in the menu bar.
+        .help("Sync now (⌘R)")
         .disabled(viewModel.isLoading)
         .accessibilityLabel("Sync now")
     }
 
     private var syncStatusText: String {
+        // Saved numbers from the last run are on screen: say how old they are.
+        if viewModel.showingSavedSnapshots {
+            _ = countdownTick
+            return SavedAgeCopy.statusLine(
+                savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: Date()
+            )
+        }
         if viewModel.isLoading { return "Syncing…" }
         guard let syncedRelative else { return "Not synced yet" }
         return "Synced \(syncedRelative)"

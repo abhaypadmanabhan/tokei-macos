@@ -41,12 +41,7 @@ struct AddAgentDrawer: View {
 
     private var detectedSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
-            HStack(spacing: 8) {
-                Text("Detected on this Mac \u{00B7} \(detected.count)")
-                    .font(.mono(size: 10))
-                    .tracking(10 * 0.14)
-                    .foregroundColor(PadzyTheme.ink5)
-            }
+            SectionHeading("Detected on this Mac (\(detected.count))")
             VStack(spacing: PadzySpace.s) {
                 ForEach(detected, id: \.self) { id in
                     agentRow(id)
@@ -59,7 +54,7 @@ struct AddAgentDrawer: View {
 
     private var allAgentsSection: some View {
         VStack(alignment: .leading, spacing: PadzySpace.s) {
-            SectionLabel("All agents")
+            SectionHeading("All agents")
             VStack(spacing: PadzySpace.s) {
                 ForEach(ProviderID.allCases.filter { !detected.contains($0) }, id: \.self) { id in
                     agentRow(id)
@@ -93,7 +88,7 @@ struct AddAgentDrawer: View {
             if added {
                 Button(action: { remove(id) }) {
                     Text("Connected")
-                        .font(.mono(size: 11))
+                        .font(.sans(size: 12))
                         .foregroundColor(PadzyTheme.ink4)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -162,8 +157,8 @@ struct AddAgentButton: View {
                 Image(systemName: "plus")
                     .font(.system(size: compact ? 11 : 12, weight: .bold))
                 if !compact {
-                    Text("ADD AGENT")
-                        .font(.mono(size: 11))
+                    Text("Add agent")
+                        .font(.sans(size: 13, weight: .semibold))
                 }
             }
             .foregroundColor(PadzyTheme.accent)

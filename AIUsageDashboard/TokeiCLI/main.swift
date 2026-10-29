@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// The `tokei` helper — a read-only companion to the Tokei app that exposes the quota
 /// snapshot to orchestrating agents (issue #57). It reads ONLY the snapshot file: no
@@ -12,7 +13,7 @@ enum TokeiCLI {
     /// the `cli-version-sync` gate fails the commit when the two drift — this string
     /// silently reported 0.7.0 from a 0.7.1 build and cost real debugging time, because
     /// `tokei version` is the first thing you check when diagnosing which binary is live.
-    static let version = "0.10.0"
+    static let version = "0.11.0"
 }
 
 func printUsage(to handle: FileHandle = .standardOutput) {
@@ -21,6 +22,7 @@ func printUsage(to handle: FileHandle = .standardOutput) {
 
     USAGE:
       tokei status [--json]   Print the current usage snapshot (table, or raw JSON)
+      tokei guard [--provider P] [--min-headroom N]  Exit 0 when fresh headroom meets N (default 15)
       tokei mcp               Run the stdio MCP server (2 tools: get_usage, get_route_recommendation)
       tokei help              Show this help
       tokei version           Print the version
@@ -39,7 +41,10 @@ switch arguments.first {
 case "status":
     let wantsJSON = arguments.dropFirst().contains("--json")
     exit(StatusCommand.run(json: wantsJSON))
+case "guard":
+    exit(GuardCommand.run(arguments: Array(arguments.dropFirst())))
 case "mcp":
+    signal(SIGPIPE, SIG_IGN)
     MCPServer(version: TokeiCLI.version).run()
     exit(0)
 case "help", "--help", "-h":

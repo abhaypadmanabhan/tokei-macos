@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Reusable data-state surface — loading / empty / error — in the aitracker theme.
 ///
-/// Editorial contract: clean unnumbered section header + hairline, display-face
-/// headline in `ink`, mono/`muted` supporting copy, and the single accent reserved for the
+/// Editorial contract: a sentence-case headline in `ink`, supporting copy in the body font
+/// and `muted`, and the single accent reserved for the
 /// running-state tick (loading), the `!!` error signal, and the primary recovery
 /// action. Status is never signalled by colour alone. Every data surface routes
 /// its non-loaded states through this one view so the three states read
@@ -18,8 +18,6 @@ struct SurfaceStateView: View {
         case error(headline: String, detail: String)
     }
 
-    /// Optional unnumbered section header (`USAGE`). Suppressed in compact mode.
-    var header: String? = nil
     let kind: Kind
     /// Dense variant for the menu-bar popover: no header, tighter type, no full-height fill.
     var compact: Bool = false
@@ -31,10 +29,6 @@ struct SurfaceStateView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 14) {
-            if let header, !compact {
-                SectionLabel(header)
-                HairlineDivider()
-            }
             content
             if !compact { Spacer(minLength: 0) }
         }
@@ -62,18 +56,18 @@ struct SurfaceStateView: View {
                             pulse = true
                         }
                     }
-                Text(message.uppercased())
-                    .font(.mono(size: compact ? 11 : 13))
+                Text(message)
+                    .font(.sans(size: compact ? 12 : 15))
                     .foregroundColor(PadzyTheme.muted)
             }
 
         case let .empty(headline, hint):
             VStack(alignment: .leading, spacing: compact ? 4 : 8) {
-                Text(headline.uppercased())
-                    .font(.display(size: compact ? 12 : 18, weight: .black))
+                Text(headline)
+                    .font(.sans(size: compact ? 13 : 17, weight: .semibold))
                     .foregroundColor(PadzyTheme.ink)
                 Text(hint)
-                    .font(.mono(size: compact ? 10 : 12))
+                    .font(.sans(size: compact ? 12 : 15))
                     .foregroundColor(PadzyTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -85,18 +79,18 @@ struct SurfaceStateView: View {
                     Text("!!")
                         .font(.mono(size: compact ? 11 : 13))
                         .foregroundColor(PadzyTheme.accent)
-                    Text(headline.uppercased())
-                        .font(.display(size: compact ? 12 : 18, weight: .black))
+                    Text(headline)
+                        .font(.sans(size: compact ? 13 : 17, weight: .semibold))
                         .foregroundColor(PadzyTheme.ink)
                 }
                 Text(detail)
-                    .font(.mono(size: compact ? 10 : 12))
+                    .font(.sans(size: compact ? 12 : 15))
                     .foregroundColor(PadzyTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 if let onRetry {
                     Button(action: onRetry) {
-                        Text("RETRY")
-                            .font(.mono(size: compact ? 10 : 12))
+                        Text("Retry")
+                            .font(.sans(size: compact ? 12 : 13, weight: .semibold))
                             .foregroundColor(PadzyTheme.ground)
                             .padding(.horizontal, compact ? 12 : 20)
                             .padding(.vertical, compact ? 5 : 8)

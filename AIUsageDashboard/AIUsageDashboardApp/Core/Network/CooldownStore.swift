@@ -71,19 +71,16 @@ struct CooldownStore: Sendable {
     /// Writes the clamped cooldown. Throws on any filesystem/encoding failure; the
     /// production path goes through `record(duration:)`, which logs the throw.
     func persist(duration: TimeInterval?) throws {
-        try FileManager.default.createDirectory(
-            at: cooldownURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
         let interval = min(maxCooldownInterval, max(0, duration ?? defaultCooldownInterval))
         let data = try Self.encoder.encode(Cooldown(until: now().addingTimeInterval(interval)))
-        try data.write(to: cooldownURL, options: .atomic)
+        try SecureFileWriter.write(data, to: cooldownURL)
     }
 
     /// Reads the persisted cooldown, or `nil` on any missing/corrupt file.
     func read() -> Cooldown? {
         guard let data = try? Data(contentsOf: cooldownURL) else { return nil }
-        return try? Self.decoder.decode(Cooldown.self, from: data)
+        guard let cooldown = try? Self.decoder.decode(Cooldown.self, from: data) else { return nil }
+        return Cooldown(until: min(cooldown.until, now().addingTimeInterval(maxCooldownInterval)))
     }
 
     /// Removes the persisted cooldown file, ignoring any filesystem error.

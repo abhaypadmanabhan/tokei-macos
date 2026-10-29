@@ -140,4 +140,58 @@ final class QuotaPaceTests: XCTestCase {
         XCTAssertNil(QuotaPace(window: window(.lifetime), now: now))
         XCTAssertNil(QuotaPace(window: window(.perModel), now: now))
     }
+
+    // MARK: - Run-out forecast (expected instants worked by hand, not by the formula)
+
+    private func assertRunsOut(_ pace: QuotaPace, after seconds: TimeInterval,
+                               file: StaticString = #filePath, line: UInt = #line) throws {
+        guard case let .runsOut(at) = pace.forecast else {
+            return XCTFail("expected a run-out, got \(pace.forecast)", file: file, line: line)
+        }
+        XCTAssertEqual(at.timeIntervalSince(now), seconds, accuracy: 1e-6, file: file, line: line)
+    }
+
+    func testRunsOutBeforeResetAtTheAverageBurn() throws {
+        // Weekly, half gone (302,400 s), 80% used: 80 points took 302,400 s, so the last 20
+        // take 75,600 s (21 h), well inside the 302,400 s left.
+        let pace = try XCTUnwrap(QuotaPace(window: window(used: 80, resetIn: week / 2), now: now))
+        try assertRunsOut(pace, after: 75_600)
+    }
+
+    func testLastsToResetWhenTheBurnLeavesRoom() throws {
+        // Half gone, 40% used: the remaining 60 points would take 453,600 s; only 302,400 s are left.
+        let pace = try XCTUnwrap(QuotaPace(window: window(used: 40, resetIn: week / 2), now: now))
+        XCTAssertEqual(pace.forecast, .lastsToReset)
+    }
+
+    func testEmptyingExactlyAtTheResetLastsToReset() throws {
+        // Half gone, half used: it empties at the reset instant, which still counts as lasting.
+        let pace = try XCTUnwrap(QuotaPace(window: window(used: 50, resetIn: week / 2), now: now))
+        XCTAssertEqual(pace.forecast, .lastsToReset)
+    }
+
+    func testNothingUsedLastsToReset() throws {
+        let pace = try XCTUnwrap(QuotaPace(window: window(used: 0, resetIn: week / 2), now: now))
+        XCTAssertEqual(pace.forecast, .lastsToReset)
+    }
+
+    func testFullyUsedIsExhaustedEvenEarlyInTheWindow() throws {
+        let pace = try XCTUnwrap(QuotaPace(window: window(used: 100, resetIn: week - 60), now: now))
+        XCTAssertEqual(pace.forecast, .exhausted)
+    }
+
+    func testNoForecastInTheFirstFivePercentOfTheWindow() throws {
+        // 4% of a week gone (24,192 s) with 3% used would project a run-out in under a day.
+        let early = try XCTUnwrap(QuotaPace(window: window(used: 3, resetIn: week * 0.96), now: now))
+        XCTAssertEqual(early.forecast, .tooEarly)
+        // At 6% gone (36,288 s), 3% used: the other 97 points take 1,173,312 s, past the reset.
+        let later = try XCTUnwrap(QuotaPace(window: window(used: 3, resetIn: week * 0.94), now: now))
+        XCTAssertEqual(later.forecast, .lastsToReset)
+    }
+
+    func testSessionWindowRunOut() throws {
+        // 5 h session resetting in 3 h (2 h = 7,200 s gone), 60% used: 40 points take 4,800 s.
+        let pace = try XCTUnwrap(QuotaPace(window: window(.session, used: 60, resetIn: 3 * 3_600), now: now))
+        try assertRunsOut(pace, after: 4_800)
+    }
 }

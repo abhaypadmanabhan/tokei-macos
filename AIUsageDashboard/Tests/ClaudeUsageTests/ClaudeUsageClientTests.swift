@@ -7,7 +7,7 @@ final class ClaudeUsageDecoderTests: XCTestCase {
 
         let windows = try ClaudeUsageClientImpl.decodeQuotaWindows(data, providerID: .claudeCode)
 
-        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows.count, 4)
 
         let session = try XCTUnwrap(windows.first { $0.type == .session })
         XCTAssertEqual(session.used, 8)
@@ -30,7 +30,7 @@ final class ClaudeUsageDecoderTests: XCTestCase {
         XCTAssertEqual(scoped.bucketKey, "weekly_scoped:Fable")
         XCTAssertEqual(scoped.resetAt, isoDate("2026-07-13T02:00:00.476071+00:00"))
 
-        XCTAssertFalse(windows.contains { $0.type == .credits })
+        XCTAssertTrue(windows.contains { $0.bucketKey == "claude_extra_usage" })
     }
 
     private func isoDate(_ value: String) -> Date? {
@@ -218,7 +218,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
 
         let windows = try await client.fetchQuotaWindows()
 
-        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows.count, 4)
         let request = try XCTUnwrap(MockClaudeURLProtocol.requests.last)
         XCTAssertEqual(request.url?.absoluteString, "https://api.anthropic.com/api/oauth/usage")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer mock-access-token")
@@ -248,7 +248,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
         let recordedSleeps = await sleeper.intervals()
         XCTAssertEqual(recordedSleeps, [])
         XCTAssertTrue(FileManager.default.fileExists(atPath: cooldownURL.path))
-        XCTAssertEqual(staleWindows.count, 3)
+        XCTAssertEqual(staleWindows.count, 4)
         XCTAssertTrue(staleWindows.allSatisfy { $0.confidence == .estimated })
         XCTAssertTrue(staleWindows.allSatisfy { $0.source.contains("(stale)") })
 
@@ -256,7 +256,7 @@ final class ClaudeUsageClientImplTests: XCTestCase {
         let cooldownWindows = try await client.fetchQuotaWindows()
 
         XCTAssertEqual(MockClaudeURLProtocol.requests.count, 2)
-        XCTAssertEqual(cooldownWindows.count, 3)
+        XCTAssertEqual(cooldownWindows.count, 4)
         XCTAssertTrue(cooldownWindows.allSatisfy { $0.confidence == .estimated })
     }
 
@@ -455,7 +455,7 @@ final class ClaudeCodeProviderQuotaTests: XCTestCase {
 
         let calls = await client.callCount()
         XCTAssertEqual(calls, 1)
-        XCTAssertEqual(snapshot.quotaWindows.count, 3)
+        XCTAssertEqual(snapshot.quotaWindows.count, 4)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .session }?.used, 8)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .weekly }?.used, 62)
         XCTAssertEqual(snapshot.quotaWindows.first { $0.type == .perModel }?.label, "Fable")

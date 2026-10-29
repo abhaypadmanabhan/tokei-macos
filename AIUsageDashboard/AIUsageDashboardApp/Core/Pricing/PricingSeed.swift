@@ -22,7 +22,24 @@ public struct NoOpPricingTableRefresher: PricingTableRefreshing {
 public enum PricingSeed {
     public static let capturedAt = "2026-10-20"
 
-    public static let defaultTable = PricingTable(rates: [
+    public static let defaultTable: PricingTable = {
+        var rates = standardRates
+        let priorityModels = ["gpt-5", "gpt-5.1", "gpt-5.3-codex", "gpt-5.4",
+                              "gpt-6-astra", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.5"]
+        for model in priorityModels {
+            guard let rate = rates[model] else { continue }
+            rates[model + "@priority"] = PricingTierRates.scale(rate, by: model == "gpt-5.5" ? 2.5 : 2)
+        }
+        for model in ["gpt-6-astra", "gpt-6.1-sol"] {
+            if let rate = rates[model] { rates[model + "@ultrafast"] = PricingTierRates.scale(rate, by: 6) }
+        }
+        for model in ["claude-opus-5", "claude-opus-5-5"] {
+            if let rate = rates[model] { rates[model + "@fast"] = PricingTierRates.scale(rate, by: 2) }
+        }
+        return PricingTable(rates: rates)
+    }()
+
+    private static let standardRates: [String: PricingRate] = [
         // Anthropic Claude.
         "claude-opus-5-5": rate(input: 4.00, cachedInput: 0.20, cacheCreation: 5.00, output: 20.00),
         "claude-opus-5": rate(input: 5.00, cachedInput: 0.50, cacheCreation: 6.25, output: 25.00),
@@ -73,6 +90,10 @@ public enum PricingSeed {
         "o3-mini": rate(input: 1.10, cachedInput: 0.55, output: 4.40),
         "o4-mini": rate(input: 1.10, cachedInput: 0.275, output: 4.40),
 
+        // Antigravity display-name aliases, research 2026-10-28, LiteLLM public table.
+        "gemini-3.5-flash": rate(input: 1.50, cachedInput: 0.15, output: 9.00),
+        "gemini-3.6-flash": rate(input: 0.75, cachedInput: 0.075, output: 3.75),
+
         // Cursor Composer API-equivalent overrides.
         "cursor-composer": rate(input: 3.00, cachedInput: 0.30, cacheCreation: 3.75, output: 15.00),
         "cursor/composer": rate(input: 3.00, cachedInput: 0.30, cacheCreation: 3.75, output: 15.00),
@@ -91,7 +112,7 @@ public enum PricingSeed {
         "cline/glm-4.5": rate(input: 0.60, cachedInput: 0.60, output: 2.20),
         "glm-4.5-air": rate(input: 0.20, cachedInput: 0.20, output: 1.10),
         "zai/glm-4.5-air": rate(input: 0.20, cachedInput: 0.20, output: 1.10),
-    ])
+    ]
 
     private static func rate(
         input: Double,
