@@ -41,14 +41,15 @@ enum AnalyticsFormat {
         }
     }
 
-    /// Caption for `overviewDelta` — the comparison is always against the
-    /// PREVIOUS window of the same length, so the caption must follow the range.
+    /// Caption for `overviewDelta`. The comparison is complete days against the same number
+    /// of complete days before them (today's part-day is left out of both), and the caption
+    /// says so, so the arrow is never read as "today vs a full day".
     static func deltaCaption(_ range: UsageRange) -> String {
         switch range {
-        case .today: return "vs yesterday"
-        case .sevenDay, .week: return "vs prev 7 days"
-        case .thirtyDay, .month: return "vs prev 30 days"
-        case .ninetyDay: return "vs prev 90 days"
+        case .today: return "yesterday vs the day before"
+        case .sevenDay, .week: return "last 7 full days vs the 7 before"
+        case .thirtyDay, .month: return "last 30 full days vs the 30 before"
+        case .ninetyDay: return "last 90 full days vs the 90 before"
         case .lifetime, .custom: return "vs previous period"
         }
     }

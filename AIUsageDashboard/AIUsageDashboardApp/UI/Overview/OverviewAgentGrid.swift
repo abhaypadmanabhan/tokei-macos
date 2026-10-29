@@ -144,12 +144,42 @@ struct AgentGridCell: View {
 
             if let substat = model.substat {
                 Text(substat)
-                    .font(.mono(size: 10))
-                    .tracking(0.2)
+                    .font(.mono(size: 12))
                     .monospacedDigit()
                     .foregroundColor(model.substatColor)
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// The agents with no tokens in the selected range, named once on one quiet line instead
+/// of as 0 and — tiles. Each name is still a way into that agent's drill-in.
+struct QuietAgentsLine: View {
+    let providers: [(id: ProviderID, name: String)]
+    let onSelect: (ProviderID) -> Void
+
+    var body: some View {
+        FlowLayout(hSpacing: 6, vSpacing: 6) {
+            Text("No usage in this range:")
+                .font(.sans(size: 15))
+                .foregroundColor(PadzyTheme.ink4)
+            ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                Button {
+                    onSelect(provider.id)
+                } label: {
+                    Text(provider.name + (index < providers.count - 1 ? "," : ""))
+                        .font(.sans(size: 15))
+                        .foregroundColor(PadzyTheme.ink3)
+                        .underline(true, color: PadzyTheme.ink5)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open \(provider.name)")
+                .accessibilityLabel("\(provider.name), no usage in this range")
+                .accessibilityHint("Opens \(provider.name) detail")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

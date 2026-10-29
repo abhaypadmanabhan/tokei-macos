@@ -48,13 +48,25 @@ struct OverviewView: View {
     }
 
     private var content: some View {
+        GeometryReader { viewport in
+            scrollingContent(viewportHeight: viewport.size.height)
+        }
+    }
+
+    /// The trend takes about a third of the visible height (200…380 pt), so a tall window
+    /// gives the chart the room instead of leaving an empty band under short content.
+    private func trendHeight(_ viewportHeight: CGFloat) -> CGFloat {
+        min(380, max(200, viewportHeight * 0.34))
+    }
+
+    private func scrollingContent(viewportHeight: CGFloat) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: PadzySpace.xl) {
                 OverviewMetricSelector(metric: $metric)
 
                 VStack(alignment: .leading, spacing: PadzySpace.l) {
                     hero
-                    mainChart
+                    mainChart(trendHeight: trendHeight(viewportHeight))
                 }
                 .animation(reduceMotion ? nil : PadzyMotion.settle, value: metric)
 
@@ -98,9 +110,11 @@ struct OverviewView: View {
 
     private func deltaLine(_ delta: Double) -> some View {
         HStack(spacing: 6) {
+            // Direction is carried by the arrow's form; both read in ink (the accent is for
+            // state and the primary action, never a change in a number).
             Text(delta >= 0 ? "▲" : "▼")
                 .font(.sans(size: 15))
-                .foregroundColor(delta >= 0 ? PadzyChartPalette.deltaUp : PadzyChartPalette.deltaDown)
+                .foregroundColor(PadzyTheme.ink2)
             Text("\(String(format: "%.1f", abs(delta)))%")
                 .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
@@ -117,11 +131,11 @@ struct OverviewView: View {
     // MARK: Main chart / quota bars
 
     @ViewBuilder
-    private var mainChart: some View {
+    private func mainChart(trendHeight: CGFloat) -> some View {
         if metric == .usage {
             rangedComparison
             LineTrendChart(points: viewModel.overviewTrend, pointDetails: trendPointDetails)
-                .frame(height: 200)
+                .frame(height: trendHeight)
                 .transition(.opacity)
         } else {
             AgentQuotaBars(rows: quotaRows, onConnect: onSelectProvider)
@@ -131,14 +145,28 @@ struct OverviewView: View {
 
     // MARK: Agents
 
+    /// Agents that used tokens in the range get a tile; the rest share one quiet line.
     private var agentsSection: some View {
-        VStack(alignment: .leading, spacing: PadzySpace.m) {
+        let models = agentModels
+        return VStack(alignment: .leading, spacing: PadzySpace.m) {
             HairlineDivider()
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                kicker("Agents · \(visibleProviders.count)")
+                kicker("Agents · \(AnalyticsFormat.rangeTitle(viewModel.range))")
                 Spacer(minLength: 8)
             }
-            AgentGrid(models: agentModels, onSelect: onSelectProvider)
+            if models.isEmpty {
+                Text("No agent used tokens in this range.")
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink3)
+            } else {
+                AgentGrid(models: models, onSelect: onSelectProvider)
+            }
+            if !quietInRange.isEmpty {
+                QuietAgentsLine(
+                    providers: quietInRange.map { (id: $0, name: displayName($0)) },
+                    onSelect: onSelectProvider
+                )
+            }
         }
     }
 

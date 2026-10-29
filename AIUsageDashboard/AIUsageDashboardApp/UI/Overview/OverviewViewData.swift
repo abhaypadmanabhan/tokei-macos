@@ -27,83 +27,43 @@ extension OverviewView {
         return .localOnly
     }
 
-    /// One resolved cell per visible provider for the agent grid, resolved for the
-    /// active lens: Usage shows today's tokens; Quota shows used% + a `% left` substat
-    /// (FIX 2), with an honest connect/fetching state for providers with no live window.
+    /// Tokens per visible provider in the selected range (the same split the ranged total
+    /// above the chart adds up).
+    var rangedTokens: [ProviderID: Int] {
+        Dictionary(viewModel.providerSplit.map { ($0.provider, $0.tokens) }, uniquingKeysWith: +)
+    }
+
+    /// Visible providers that used tokens in the range: one tile each, in `ProviderID` order.
+    var activeInRange: [ProviderID] {
+        let tokens = rangedTokens
+        return visibleProviders.filter { (tokens[$0] ?? 0) > 0 }
+    }
+
+    /// Visible providers with no tokens in the range. They collapse into one quiet line
+    /// (each name still opens its drill-in) instead of a row of 0 and — tiles.
+    var quietInRange: [ProviderID] {
+        let tokens = rangedTokens
+        return visibleProviders.filter { (tokens[$0] ?? 0) == 0 }
+    }
+
+    /// One tile per agent that used tokens in the range: the range's tokens, with today's
+    /// share of them underneath.
     var agentModels: [AgentCellModel] {
         let headroom = headroomProviderID
-        return visibleProviders.map { id in
-            switch metric {
-            case .usage: return usageCell(id, headroom: headroom)
-            case .quota: return quotaCell(id, headroom: headroom)
-            }
+        let tokens = rangedTokens
+        return activeInRange.map { id in
+            let ranged = tokens[id] ?? 0
+            let today = viewModel.snapshot(for: id)?.todayUsage
+            return AgentCellModel(
+                providerID: id, name: displayName(id),
+                stat: TokenFormatter.format(ranged), statValue: Double(ranged),
+                statColor: PadzyTheme.ink,
+                substat: today?.totalTokens.map { "\(TokenFormatter.format($0)) today" },
+                substatColor: PadzyTheme.ink4,
+                isEstimated: today?.confidence == .estimated,
+                hasHeadroom: id == headroom
+            )
         }
-    }
-
-    func usageCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
-        let today = viewModel.snapshot(for: id)?.todayUsage
-        let tightest = tightestByProvider[id]
-
-        let stat: String
-        let color: Color
-        var estimated = false
-        if let today, let total = today.totalTokens {
-            stat = TokenFormatter.format(total)
-            color = PadzyTheme.ink
-            estimated = today.confidence == .estimated
-        } else if let tightest {
-            stat = "\(Int(round(tightest.usedPercent)))%"
-            color = PadzyTheme.ink2
-        } else {
-            stat = "—"
-            color = PadzyTheme.ink5
-        }
-
-        return AgentCellModel(
-            providerID: id, name: displayName(id),
-            stat: stat, statValue: today?.totalTokens.map(Double.init) ?? tightest?.usedPercent,
-            statColor: color,
-            isEstimated: estimated, hasHeadroom: id == headroom
-        )
-    }
-
-    func quotaCell(_ id: ProviderID, headroom: ProviderID?) -> AgentCellModel {
-        let stat: String
-        let statColor: Color
-        let substat: String?
-        let substatColor: Color
-        switch quotaState(for: id) {
-        case .live(let util):
-            // D25: the quota lens already has the bars. Don't repeat % + "% left" here.
-            let used = Int(round(max(0, min(100, util.usedPercent))))
-            stat = "\(used)%"
-            if util.usedPercent >= 90 {
-                statColor = PadzyTheme.accent
-            } else if util.usedPercent >= 70 {
-                statColor = PadzyTheme.accent.opacity(0.6)
-            } else {
-                statColor = PadzyTheme.ink
-            }
-            substat = nil
-            substatColor = PadzyTheme.ink5
-        case .fetching:
-            stat = "—"; statColor = PadzyTheme.ink3
-            substat = "FETCHING…"; substatColor = PadzyTheme.ink5
-        case .connect:
-            stat = "OFF"; statColor = PadzyTheme.ink4
-            substat = "ENABLE →"; substatColor = PadzyTheme.accent
-        case .localOnly:
-            stat = "—"; statColor = PadzyTheme.ink4
-            substat = "LOCAL LOGS"; substatColor = PadzyTheme.ink5
-        }
-        let value: Double?
-        if case .live(let util) = quotaState(for: id) { value = util.usedPercent } else { value = nil }
-        return AgentCellModel(
-            providerID: id, name: displayName(id),
-            stat: stat, statValue: value, statColor: statColor,
-            substat: substat, substatColor: substatColor,
-            isEstimated: false, hasHeadroom: id == headroom && quotaState(for: id).isLive
-        )
     }
 
     /// Every visible provider as a quota bar row for the Quota-metric main view —

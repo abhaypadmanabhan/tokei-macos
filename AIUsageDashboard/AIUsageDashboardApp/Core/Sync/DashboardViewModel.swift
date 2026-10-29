@@ -223,16 +223,20 @@ public final class DashboardViewModel: ObservableObject {
         )
     }
 
+    /// Like for like: the last N complete days against the N before them. Today's part-day is
+    /// in neither side (a part-day set against a full day always reads as a drop); `nil` for
+    /// lifetime and custom ranges, or when the earlier period has no data.
     public var overviewDelta: Double? {
-        let dailyTotals = overviewDailyTotals
-        let current = overviewRangedTotal
-        let previous = UsageAnalytics.previousTotal(
-            dailyTotals: dailyTotals,
-            range: range,
-            calendar: calendar,
-            now: now()
+        guard let days = UsageAnalytics.dayCount(for: range),
+              let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now()))
+        else { return nil }
+        let totals = overviewDailyTotals
+        let previous = UsageAnalytics.filteredDailyTotals(
+            totals, range: .previousDays(days), calendar: calendar, now: yesterday
         )
-        return UsageAnalytics.delta(current: current, previous: previous)
+        guard !previous.isEmpty else { return nil }
+        let current = UsageAnalytics.filteredDailyTotals(totals, range: .days(days), calendar: calendar, now: yesterday)
+        return UsageAnalytics.delta(current: current.values.reduce(0, +), previous: previous.values.reduce(0, +))
     }
 
     /// The tightest eligible reading among visible providers (see `isEligibleReading`): the

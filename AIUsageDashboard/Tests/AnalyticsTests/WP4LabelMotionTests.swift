@@ -52,13 +52,15 @@ final class WP4LabelMotionTests: XCTestCase {
         XCTAssertEqual(vm.tightestAccountPressure?.providerID, .claudeCode)
     }
 
-    /// D12: today 10 vs 30-day 1000 vs previous 100 is +900% of the ranged total, not of today.
+    /// D12: today 10, the 30 full days to yesterday 990, the 30 before them 100: the delta is
+    /// +890% of the complete-day totals (WP-3 AC2, like for like), not growth of today's 10.
     func testD12_deltaIsNotGrowthOfTodayHeadline() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!
         let today = calendar.date(from: DateComponents(timeZone: calendar.timeZone, year: 2026, month: 9, day: 16))!
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-        let previousEnd = calendar.date(byAdding: .day, value: -30, to: today)!
+        // Last day of the previous 30 complete days (08-16); outside the ranged 30 days.
+        let previousEnd = calendar.date(byAdding: .day, value: -31, to: today)!
         let vm = DashboardViewModel(calendar: calendar, now: { today })
         vm.range = .thirtyDay
         vm.snapshots = [
@@ -77,7 +79,7 @@ final class WP4LabelMotionTests: XCTestCase {
         ]
 
         XCTAssertEqual(vm.overviewRangedTotal, 1000)
-        XCTAssertEqual(vm.overviewDelta, 900)
+        XCTAssertEqual(vm.overviewDelta, 890)
         XCTAssertEqual(vm.snapshots[0].todayUsage.totalTokens, 10)
         XCTAssertNotEqual(vm.overviewRangedTotal, vm.snapshots[0].todayUsage.totalTokens)
     }
