@@ -153,15 +153,17 @@ struct AgentGridCell: View {
     }
 }
 
-/// The agents with no tokens in the selected range, named once on one quiet line instead
-/// of as 0 and — tiles. Each name is still a way into that agent's drill-in.
+/// Agents named once on one quiet line instead of as empty tiles or bars: those with no
+/// tokens in the selected range (Usage), or with no live quota source (Quota). Each name is
+/// still a way into that agent's drill-in.
 struct QuietAgentsLine: View {
+    var lead = "No usage in this range:"
     let providers: [(id: ProviderID, name: String)]
     let onSelect: (ProviderID) -> Void
 
     var body: some View {
         FlowLayout(hSpacing: 6, vSpacing: 6) {
-            Text("No usage in this range:")
+            Text(lead)
                 .font(.sans(size: 15))
                 .foregroundColor(PadzyTheme.ink4)
             ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
@@ -176,7 +178,7 @@ struct QuietAgentsLine: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open \(provider.name)")
-                .accessibilityLabel("\(provider.name), no usage in this range")
+                .accessibilityLabel("\(provider.name)")
                 .accessibilityHint("Opens \(provider.name) detail")
             }
         }

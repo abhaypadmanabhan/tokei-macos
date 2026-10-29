@@ -190,7 +190,8 @@ struct DashboardView: View {
         case .overview:
             OverviewView(
                 onSelectProvider: { openProvider($0) },
-                onAddAgent: { showingAddAgent = true }
+                onAddAgent: { showingAddAgent = true },
+                onOpenSettings: { openSettings() }
             )
         case .value:
             ValueView(

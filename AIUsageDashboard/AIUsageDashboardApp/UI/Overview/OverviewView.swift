@@ -22,6 +22,8 @@ struct OverviewView: View {
     var onSelectProvider: (ProviderID) -> Void = { _ in }
     /// Open the `+` add-agent sheet (blank-canvas + AGENTS-row primary action).
     var onAddAgent: () -> Void = {}
+    /// Open the Settings drawer (a quota row whose live quota is off).
+    var onOpenSettings: () -> Void = {}
 
     /// Usage vs Quota lens — local pane state, animated on change (reduce-motion safe).
     @State var metric: OverviewMetric = .usage
@@ -141,8 +143,17 @@ struct OverviewView: View {
                 .frame(height: trendHeight)
                 .transition(.opacity)
         } else {
-            AgentQuotaBars(rows: quotaRows, onConnect: onSelectProvider)
-                .transition(.opacity)
+            VStack(alignment: .leading, spacing: PadzySpace.l) {
+                AgentQuotaBars(rows: quotaRows, onSelect: onSelectProvider, onOpenSettings: onOpenSettings)
+                if !noQuotaSourceProviders.isEmpty {
+                    QuietAgentsLine(
+                        lead: "No live quota source, local logs only:",
+                        providers: noQuotaSourceProviders.map { (id: $0, name: displayName($0)) },
+                        onSelect: onSelectProvider
+                    )
+                }
+            }
+            .transition(.opacity)
         }
     }
 

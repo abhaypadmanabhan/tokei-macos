@@ -11,7 +11,7 @@ import AIUsageDashboardCore
 ///   local logs; Rescan re-reads them (`viewModel.refresh()`). There is no
 ///   per-agent "pause", so the dot is an honest status indicator, not a fake
 ///   toggle.
-/// - **Live quota** only appears for the three providers that actually expose an
+/// - **Live quota** only appears for the providers that actually expose an
 ///   online connector (`ProviderMetadata.liveQuotaProviders`); its switch is
 ///   the same `@AppStorage` flag the connector reads at fetch time, and the OFF /
 ///   CONNECTING / LIVE state is derived from whether a live window has landed.
@@ -219,16 +219,6 @@ struct ConnectionRow: View {
             }
             .fixedSize()
             .help(Self.liveDisclosure(for: providerID))
-        } else if providerID == .gemini {
-            // Gemini quota needs a one-time CLI sign-in (#54) — surface the fix
-            // here instead of the generic local-only state, which would read as
-            // "nothing to do" when there actually is.
-            Text("Run `gemini` and sign in to enable Gemini quota")
-                .font(.mono(size: 9.5))
-                .tracking(9.5 * 0.1)
-                .foregroundColor(PadzyTheme.ink5)
-                .lineLimit(1)
-                .truncationMode(.tail)
         } else {
             Text("LOCAL LOGS ONLY")
                 .font(.mono(size: 9.5))
@@ -266,6 +256,9 @@ struct ConnectionRow: View {
             return "Makes an authenticated request to Cursor's servers using your local session token to fetch real token and quota usage."
         case .antigravity:
             return "Reads live quota from the running Antigravity app on your Mac. No token is stored or sent anywhere."
+        case .gemini:
+            return "Asks Google for your Gemini quota with the Gemini CLI's sign-in on this Mac."
+                + " Run `gemini` once to sign in."
         default:
             return ""
         }

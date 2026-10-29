@@ -11,6 +11,10 @@ struct AIUsageDashboardApp: App {
 
     init() {
         UserDefaults.standard.register(defaults: CodexProvider.liveQuotaDefaults)
+        // Toggles that are on until turned off: Gemini's network usage, and predictive quota
+        // warnings (§4 contract 4). Registering keeps every reader on the same default.
+        UserDefaults.standard.register(defaults: ProviderMetadata.networkDefaultsOn)
+        UserDefaults.standard.register(defaults: [AlertSettings.predictiveWarningsKey: true])
     }
 
     var body: some Scene {

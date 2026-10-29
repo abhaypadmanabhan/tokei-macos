@@ -107,6 +107,8 @@ targets:
       - path: AIUsageDashboardApp/UI/Components/PaceCopy.swift
       # Same for the "Saved 8 days ago · updating…" words shown before the first live sync.
       - path: AIUsageDashboardApp/UI/Components/SavedAgeCopy.swift
+      # Alert thresholds: the editor must write the exact §4 key and value.
+      - path: AIUsageDashboardApp/UI/Settings/AlertSettings.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
       # index, and a chart whose series collide cannot answer the question it exists for.

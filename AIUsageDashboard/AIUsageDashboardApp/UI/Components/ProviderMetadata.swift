@@ -43,7 +43,11 @@ enum ProviderCapabilityTier {
 /// Static, UI-only facts about each provider that never need Core access: local
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
-    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity]
+    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity, .gemini]
+
+    /// Network toggles that are on until the user turns them off (registered at launch, so
+    /// `UserDefaults.bool(forKey:)` and `@AppStorage` read `true` when the key is unset).
+    static let networkDefaultsOn: [String: Bool] = ["geminiNetworkUsageEnabled": true]
 
     static func showsPendingQuota(for providerID: ProviderID) -> Bool {
         // Codex still reads local logs when its optional CLI probe has no window.
@@ -56,6 +60,7 @@ enum ProviderMetadata {
         case .codex: return CodexProvider.liveQuotaEnabledKey
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
+        case .gemini: return "geminiNetworkUsageEnabled"
         default: return nil
         }
     }
@@ -101,6 +106,44 @@ enum ProviderMetadata {
                 if !text.isEmpty { return text }
             }
         }
+        return nil
+    }
+}
+
+/// What a provider's Overview › Quota row says when it has no live reading. Each case is
+/// a state a person can act on or ignore; none is a spinner that never ends.
+enum QuotaGap: Equatable {
+    /// Its live-quota toggle is off: say so, with one action into Settings.
+    case networkOff
+    /// Toggle on and a sync is running right now.
+    case checking
+    /// Toggle on, the last sync finished, nothing usable came back; the reason when known.
+    case noReading(reason: String?)
+    /// No live connector at all: named once on the "no live quota" line, never a bar.
+    case noSource
+
+    /// Why a provider with no live reading has none.
+    static func classify(
+        _ providerID: ProviderID,
+        isEnabled: (String) -> Bool,
+        isSyncing: Bool,
+        reason: String?
+    ) -> QuotaGap {
+        guard let key = ProviderMetadata.liveQuotaEnabledKey(for: providerID) else { return .noSource }
+        if !isEnabled(key) { return .networkOff }
+        // Codex reads local logs when its optional quota probe has nothing; that is not a
+        // pending reading, so it joins the no-source line.
+        guard ProviderMetadata.showsPendingQuota(for: providerID) else { return .noSource }
+        return isSyncing ? .checking : .noReading(reason: reason)
+    }
+
+    /// The provider's own account status, in words, when it says why there is no reading.
+    static func reason(for snapshot: ProviderSnapshot?) -> String? {
+        let statuses = (snapshot?.accounts ?? []).map(\.quotaStatus)
+        if statuses.contains(.expiredCredentials) { return "sign-in expired" }
+        if statuses.contains(.cooldown) { return "rate-limited, will retry" }
+        if statuses.contains(.requestFailed) { return "the request failed" }
+        if statuses.contains(.noQuotaSource) { return "the provider returned no quota" }
         return nil
     }
 }

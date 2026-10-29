@@ -10,21 +10,17 @@ import AIUsageDashboardCore
 /// than private only because Swift's `private` is file-scoped — nothing outside
 /// `OverviewView` should call them.
 extension OverviewView {
-    // MARK: Quota state (FIX 2 + FIX 3)
+    // MARK: Quota state
 
-    /// Whether the provider's live-quota flag is on (same UserDefaults key the
-    /// Connections/Agents toggle writes). `false` for local-only providers.
-    func liveQuotaEnabled(_ id: ProviderID) -> Bool {
-        guard let key = ProviderMetadata.liveQuotaEnabledKey(for: id) else { return false }
-        return UserDefaults.standard.bool(forKey: key)
-    }
-
+    /// A live reading when the provider has one, else what its row can honestly say.
     func quotaState(for id: ProviderID) -> ProviderQuotaState {
         if let util = tightestByProvider[id] { return .live(util) }
-        if ProviderMetadata.showsPendingQuota(for: id) {
-            return liveQuotaEnabled(id) ? .fetching : .connect
-        }
-        return .localOnly
+        return .gap(QuotaGap.classify(
+            id,
+            isEnabled: { UserDefaults.standard.bool(forKey: $0) },
+            isSyncing: viewModel.isLoading,
+            reason: QuotaGap.reason(for: viewModel.snapshot(for: id))
+        ))
     }
 
     /// Tokens per visible provider in the selected range (the same split the ranged total
@@ -66,9 +62,9 @@ extension OverviewView {
         }
     }
 
-    /// Every visible provider as a quota bar row for the Quota-metric main view —
-    /// live windows first (fullest-first), then the honest non-live states so nothing
-    /// the user enabled is dropped (FIX 3). Sorted so the pressure that bites is on top.
+    /// Rows for the Quota lens: live gauges first (fullest on top), then providers that
+    /// could report quota but have no reading. Providers with no quota source are not rows;
+    /// they are named once on `noQuotaSourceProviders`' line.
     var quotaRows: [AgentQuotaRow] {
         visibleProviders
             .map { id -> AgentQuotaRow in
@@ -77,10 +73,16 @@ extension OverviewView {
                 if case .live(let util) = state { pace = viewModel.pace(for: util) }
                 return AgentQuotaRow(id: id, name: displayName(id), state: state, pace: pace)
             }
+            .filter { $0.state != .gap(.noSource) }
             .sorted { lhs, rhs in
                 if lhs.sortRank != rhs.sortRank { return lhs.sortRank < rhs.sortRank }
                 return lhs.usedPercent > rhs.usedPercent
             }
+    }
+
+    /// Visible providers with no live quota connector (local logs only), in `ProviderID` order.
+    var noQuotaSourceProviders: [ProviderID] {
+        visibleProviders.filter { quotaState(for: $0) == .gap(.noSource) }
     }
 
     /// Per-day top agent for the trend hover callout — the provider that contributed
