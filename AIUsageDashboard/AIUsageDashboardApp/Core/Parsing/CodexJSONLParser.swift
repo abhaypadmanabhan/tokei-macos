@@ -189,7 +189,8 @@ public actor CodexJSONLParser {
                                    fileIdentifier: metadata.identifier, continuityTail: Data(), aggregate: .empty,
                                    malformedCount: 0, discardingOversizedRecord: false)
         guard let fingerprint = CodexCompressedLogCache.Fingerprint(
-            size: metadata.size, modified: metadata.modificationDate, inode: metadata.identifier
+            size: metadata.size, modified: metadata.modificationDate,
+            inode: metadata.identifier, device: metadata.device
         ) else {
             entry.failureWarning = compressedWarning(source.url, reason: "File fingerprint unavailable")
             return entry
@@ -535,18 +536,20 @@ public actor CodexJSONLParser {
     private struct FileMetadata {
         let size: UInt64
         let identifier: UInt64?
+        let device: UInt64?
         let modificationDate: Date?
     }
 
     private func fileMetadata(of url: URL) -> FileMetadata {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attributes[.size] as? NSNumber else {
-            return FileMetadata(size: 0, identifier: nil, modificationDate: nil)
+            return FileMetadata(size: 0, identifier: nil, device: nil, modificationDate: nil)
         }
         let identifier = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
         return FileMetadata(
             size: size.uint64Value,
             identifier: identifier,
+            device: (attributes[.systemNumber] as? NSNumber)?.uint64Value,
             modificationDate: attributes[.modificationDate] as? Date
         )
     }

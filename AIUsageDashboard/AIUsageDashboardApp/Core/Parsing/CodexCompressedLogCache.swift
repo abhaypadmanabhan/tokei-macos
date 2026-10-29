@@ -5,24 +5,27 @@ import Foundation
 actor CodexCompressedLogCache {
     static let shared = CodexCompressedLogCache()
 
-    struct Fingerprint: Equatable, Sendable {
+    struct Fingerprint: Hashable, Sendable {
         let size: UInt64
         let modified: Date
         let inode: UInt64
+        let device: UInt64
 
-        init?(size: UInt64, modified: Date?, inode: UInt64?) {
-            guard let modified, let inode else { return nil }
+        init?(size: UInt64, modified: Date?, inode: UInt64?, device: UInt64?) {
+            guard let modified, let inode, let device else { return nil }
             self.size = size
             self.modified = modified
             self.inode = inode
+            self.device = device
         }
 
         static func read(_ url: URL) -> Fingerprint? {
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
                   let size = attributes[.size] as? NSNumber,
-                  let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
+                  let inode = attributes[.systemFileNumber] as? NSNumber,
+                  let device = attributes[.systemNumber] as? NSNumber else { return nil }
             return Fingerprint(size: size.uint64Value, modified: attributes[.modificationDate] as? Date,
-                               inode: inode.uint64Value)
+                               inode: inode.uint64Value, device: device.uint64Value)
         }
     }
 
@@ -44,16 +47,13 @@ actor CodexCompressedLogCache {
         let readFromDisk: Bool
     }
 
-    private struct Entry {
-        let fingerprint: Fingerprint
-        let outcome: Outcome
-    }
-    private var entries: [String: Entry] = [:]
+    // Device + inode make /var and /private/var aliases (and hard links) share the same decode.
+    private var entries: [Fingerprint: Outcome] = [:]
 
     func read(_ url: URL, fingerprint: Fingerprint,
               parseLine: @Sendable (Data) -> CodexLineParseOutcome) -> Lookup {
-        if let entry = entries[url.path], entry.fingerprint == fingerprint {
-            return Lookup(outcome: entry.outcome, readFromDisk: false)
+        if let outcome = entries[fingerprint] {
+            return Lookup(outcome: outcome, readFromDisk: false)
         }
         let outcome: Outcome
         do {
@@ -61,7 +61,7 @@ actor CodexCompressedLogCache {
             guard Fingerprint.read(url) == fingerprint else { throw CacheError.changedDuringRead }
             outcome = .decoded(decoded)
         } catch { outcome = .failed(error.localizedDescription) }
-        entries[url.path] = Entry(fingerprint: fingerprint, outcome: outcome)
+        entries[fingerprint] = outcome
         return Lookup(outcome: outcome, readFromDisk: true)
     }
 

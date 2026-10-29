@@ -42,6 +42,11 @@ final class CodexCompressedRolloutTests: XCTestCase {
         return url
     }
 
+    private func inode(_ url: URL) throws -> UInt64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return try XCTUnwrap(attributes[.systemFileNumber] as? NSNumber).uint64Value
+    }
+
     private func source(_ url: URL) -> LogSource { LogSource(providerID: .codex, url: url) }
 
     private func parser() -> CodexJSONLParser {
@@ -87,7 +92,9 @@ final class CodexCompressedRolloutTests: XCTestCase {
             XCTAssertEqual(parsed.lifetime.totalTokens, 7)
         }
         let discovered = try await provider(parser()).discoverLogSources()
-        XCTAssertEqual(discovered.map(\.url), [plain])
+        XCTAssertEqual(discovered.map(\.url.lastPathComponent), ["same.jsonl"])
+        let discoveredURL = try XCTUnwrap(discovered.first?.url)
+        XCTAssertEqual(try inode(discoveredURL), inode(plain))
     }
 
     func testCorruptionDiscardsProvisionalRecordsAndCachesFailure() async throws {
@@ -201,6 +208,8 @@ final class CodexCompressedRolloutTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("sessions/link.jsonl.zst"),
                                                    withDestinationURL: target)
         let sources = try await provider(parser()).discoverLogSources()
-        XCTAssertEqual(sources.map(\.url), [target])
+        XCTAssertEqual(sources.map(\.url.lastPathComponent), ["regular.jsonl.zst"])
+        let discoveredURL = try XCTUnwrap(sources.first?.url)
+        XCTAssertEqual(try inode(discoveredURL), inode(target))
     }
 }
