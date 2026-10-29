@@ -57,6 +57,8 @@ targets:
       - path: AIUsageDashboardApp
         excludes:
           - Core
+      - path: ../THIRD_PARTY_NOTICES.md
+        buildPhase: resources
     dependencies:
       - target: AIUsageDashboardCore
       - package: Sparkle
@@ -96,6 +98,7 @@ targets:
       - path: Tests
         excludes:
           - Fixtures/*.py
+          - Fixtures/Zstd/generate.py
       # Pure UI-layer math (pace notch + tightest-window selection) lives under
       # UI/ per the WP-3 scope, but is a dependency-free function over the frozen
       # Core shapes. Compile that single file into this bundle so the pace/tightest

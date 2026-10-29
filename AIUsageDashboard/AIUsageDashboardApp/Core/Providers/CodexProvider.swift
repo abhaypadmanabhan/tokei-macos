@@ -237,25 +237,25 @@ public actor CodexProvider: UsageProvider, LocalLogProvider {
         guard fileManager.fileExists(atPath: sessionsDirectory.path) else { return [] }
         guard let enumerator = fileManager.enumerator(
             at: sessionsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
         var sources: [LogSource] = []
         while let file = enumerator.nextObject() as? URL {
-            guard file.pathExtension == "jsonl" else { continue }
+            guard CodexRolloutFiles.accepts(file) else { continue }
             let values = try? file.resourceValues(
-                forKeys: [.contentModificationDateKey, .isRegularFileKey]
+                forKeys: [.contentModificationDateKey, .isRegularFileKey, .isSymbolicLinkKey]
             )
-            guard values?.isRegularFile != false else { continue }
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
             sources.append(LogSource(
                 providerID: id,
                 url: file,
-                sessionID: file.deletingPathExtension().lastPathComponent,
+                sessionID: CodexRolloutFiles.sessionID(file),
                 lastModified: values?.contentModificationDate
             ))
         }
-        return sources
+        return CodexRolloutFiles.preferringPlain(sources)
     }
 
     public func updateCalendar(_ calendar: Calendar) async {
