@@ -8,16 +8,16 @@ enum PricingTierRates {
         for tier in ["priority", "ultrafast"] {
             let input = number(row["input_cost_per_token_" + tier]).map { $0 * 1_000_000 }
             let output = number(row["output_cost_per_token_" + tier]).map { $0 * 1_000_000 }
-            guard input != nil || output != nil else { continue }
+            let cached = number(row["cache_read_input_token_cost_" + tier]).map { $0 * 1_000_000 }
+            let creation = number(row["cache_creation_input_token_cost_" + tier]).map { $0 * 1_000_000 }
+            guard input != nil || output != nil || cached != nil || creation != nil else { continue }
             let ratio = standard.inputPerMillion > 0
                 ? (input ?? standard.inputPerMillion) / standard.inputPerMillion : 1
             let scaled = scale(standard, by: ratio)
             let rate = PricingRate(
                 inputPerMillion: input ?? scaled.inputPerMillion,
-                cachedInputPerMillion: number(row["cache_read_input_token_cost_" + tier])
-                    .map { $0 * 1_000_000 } ?? scaled.cachedInputPerMillion,
-                cacheCreationInputPerMillion: number(row["cache_creation_input_token_cost_" + tier])
-                    .map { $0 * 1_000_000 } ?? scaled.cacheCreationInputPerMillion,
+                cachedInputPerMillion: cached ?? scaled.cachedInputPerMillion,
+                cacheCreationInputPerMillion: creation ?? scaled.cacheCreationInputPerMillion,
                 outputPerMillion: output ?? scaled.outputPerMillion,
                 cacheCreation1hInputPerMillion: scaled.cacheCreation1hInputPerMillion
             )

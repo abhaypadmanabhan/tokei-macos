@@ -43,6 +43,16 @@ final class WP1PricingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(engine.cost(model: "sample@ultrafast", tokens: tokens)), 3.2, accuracy: 0.000001)
     }
 
+    func testCacheOnlyTierRateOverridesCacheWhileOtherRatesStayStandard() throws {
+        let data = Data((#"{"sample":{"input_cost_per_token":0.000002,"output_cost_per_token":0.000010,"#
+            + #""cache_read_input_token_cost":0.0000002,"cache_read_input_token_cost_priority":0.0000001}}"#).utf8)
+        let engine = PricingEngine(table: PricingTable(rates: PricingService.parseLiteLLM(data)))
+        let tokens = TokenUsage(inputTokens: 1_000_000, outputTokens: 100_000,
+                                cacheReadTokens: 1_000_000, confidence: .localParsed)
+        // $2 input + $1 output + $0.10 tier cache read.
+        XCTAssertEqual(try XCTUnwrap(engine.cost(model: "sample@priority", tokens: tokens)), 3.1, accuracy: 0.000001)
+    }
+
     func testLiteLLMTiersAndMissingCacheTierScaleFromInput() throws {
         let data = Data(
             (#"{"sample":{"input_cost_per_token":0.000002,"output_cost_per_token":0.000010,"cache_read_input_t"#
