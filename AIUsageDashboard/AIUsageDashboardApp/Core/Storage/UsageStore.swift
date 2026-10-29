@@ -45,6 +45,7 @@ public actor UsageStore {
         }
     }
 
+    // Saved lastSyncedAt/observedAt mean last content change; WP-3 hydration must preserve their age.
     private func persist() {
         let today = DateHelpers.startOfToday()
         if let oldest = Calendar.current.date(byAdding: .day, value: -399, to: today) {

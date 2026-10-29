@@ -118,6 +118,7 @@ public actor QuotaSeriesStore {
         }
         samples = container.samples.sorted { $0.sampledAt < $1.sampledAt }
         headlineAccountIDs = container.headlineAccountIDs ?? [:]
+        // A v1 file serves legacy nil-account rows until the first append supplies headline account context.
         lastWrittenData = data
         let loadedCount = samples.count
         enforceRetentionLimit()
