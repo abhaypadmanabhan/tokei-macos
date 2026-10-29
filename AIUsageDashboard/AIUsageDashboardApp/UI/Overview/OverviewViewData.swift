@@ -165,7 +165,11 @@ extension OverviewView {
             return "tokens \(day) across \(agents) · incl. cache · \(age.prefix(1).lowercased())\(age.dropFirst())"
         case .cost:
             let cost = viewModel.overviewCost
-            guard cost.todayUSD != nil else { return "No per-model token data to price yet." }
+            guard cost.todayUSD != nil else {
+                return cost.pricedFrom == nil
+                    ? "No per-model token data to price yet."
+                    : "No priced data for today yet."
+            }
             return (["API estimate for today at public rates"]
                 + [AnalyticsFormat.excludedPhrase(cost.todayExcludedShare)].compactMap { $0 })
                 .joined(separator: " · ")

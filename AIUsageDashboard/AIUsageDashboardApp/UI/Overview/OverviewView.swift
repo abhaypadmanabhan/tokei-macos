@@ -154,8 +154,12 @@ struct OverviewView: View {
             costComparison(cost)
             // Whole cents, so the token chart draws dollars with the same curve and style.
             LineTrendChart(
-                points: cost.trend.map { (date: $0.date, tokens: Int(($0.usd * 100).rounded())) },
-                format: { MaxxerMath.formatUSD(Double($0) / 100) }
+                points: cost.trend.compactMap { point in
+                    point.usd.map { (date: point.date, tokens: Int(($0 * 100).rounded())) }
+                },
+                format: { MaxxerMath.formatUSD(Double($0) / 100) },
+                breaks: cost.trend.filter { $0.usd == nil }.map(\.date),
+                emptyText: "No priced days in this range"
             )
             .frame(height: trendHeight)
             .transition(.opacity)
@@ -220,6 +224,11 @@ struct OverviewView: View {
             }
             if cost.rangeStartsBeforePricing, let from = cost.pricedFrom {
                 Text(AnalyticsFormat.pricedFrom(from))
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink5)
+            }
+            if cost.unpricedDays > 0 {
+                Text("\(cost.unpricedDays) day\(cost.unpricedDays == 1 ? "" : "s") without price data")
                     .font(.sans(size: 15))
                     .foregroundColor(PadzyTheme.ink5)
             }

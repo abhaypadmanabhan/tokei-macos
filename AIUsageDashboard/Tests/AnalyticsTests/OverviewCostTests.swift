@@ -32,12 +32,13 @@ final class OverviewCostTests: XCTestCase {
         _ id: ProviderID,
         models: [Date: [String: TokenUsage]]? = nil,
         totals: [Date: Int],
-        cost: CostUsage? = nil
+        cost: CostUsage? = nil,
+        synced: Date? = nil
     ) -> ProviderSnapshot {
         ProviderSnapshot(
             providerID: id, displayName: id.rawValue, authStatus: .authenticated,
             todayUsage: input(totals[day(0)] ?? 0), weekUsage: input(0), costUsage: cost,
-            dailyTotals: totals, dailyModelUsage: models
+            lastSyncedAt: synced, dailyTotals: totals, dailyModelUsage: models
         )
     }
 
@@ -120,6 +121,74 @@ final class OverviewCostTests: XCTestCase {
         ]
         XCTAssertNil(summary(both).delta)
         XCTAssertNotNil(summary([both[0]]).delta, "Claude alone is priced through both weeks")
+    }
+
+    // MARK: Fix round 1 (Codex review r1)
+
+    /// S1: 2 days ago alpha 1M ($3.00) and today alpha 1M ($3.00); yesterday had 2M tokens
+    /// and no per-model breakdown. Yesterday is unknown, a break in the line, not a $0 day.
+    func testAGapAfterPricingBeginsIsABreakNotZero() throws {
+        let claude = snapshot(.claudeCode, models: [
+            day(-2): ["alpha": input(1_000_000)], day(0): ["alpha": input(1_000_000)]
+        ], totals: [day(-2): 1_000_000, day(-1): 2_000_000, day(0): 1_000_000])
+        let cost = summary([claude])
+        XCTAssertEqual(cost.trend.map(\.date), [day(-2), day(-1), day(0)])
+        XCTAssertEqual(cost.trend.map(\.usd), [3, nil, 3])
+        XCTAssertEqual(cost.unpricedDays, 1)
+        XCTAssertEqual(try XCTUnwrap(cost.rangeUSD), 6, accuracy: 0.000_001)
+        XCTAssertEqual(try XCTUnwrap(cost.todayUSD), 3, accuracy: 0.000_001)
+    }
+
+    /// S1: a save from 8 days ago (alpha 1M then) says nothing about today or the week since:
+    /// no $0 today, no week of $0 days. A live sync today with no use since 2 days ago is
+    /// different: those days are real zeros.
+    func testAnEarlierDaySaveNeverPricesToday() throws {
+        let saved = summary([snapshot(.claudeCode, models: [day(-8): ["alpha": input(1_000_000)]],
+                                      totals: [day(-8): 1_000_000], synced: day(-8).addingTimeInterval(54_000))])
+        XCTAssertNil(saved.todayUSD)
+        XCTAssertNil(saved.rangeUSD)
+        XCTAssertEqual(saved.trend.map(\.usd), Array(repeating: nil, count: 7))
+
+        let idle = summary([snapshot(.claudeCode, models: [day(-2): ["alpha": input(1_000_000)]],
+                                     totals: [day(-2): 1_000_000], synced: now)])
+        XCTAssertEqual(try XCTUnwrap(idle.todayUSD), 0, accuracy: 0.000_001)
+        XCTAssertEqual(idle.trend.map(\.usd), [3, 0, 0])
+    }
+
+    /// S2: 1M tokens a day at $3/M for 14 days, so both weeks are $21 if fully priced. One
+    /// current-week day without a breakdown read as a 14.3% drop; one day on a model with no
+    /// rate does the same. Either way no change is claimed. All priced: flat.
+    func testNoChangeWhenAComparedDayIsNotFullyPriced() throws {
+        var models: [Date: [String: TokenUsage]] = [:]
+        for offset in -14 ... -1 { models[day(offset)] = ["alpha": input(1_000_000)] }
+        let totals = Dictionary(uniqueKeysWithValues: (-14 ... -1).map { (day($0), 1_000_000) })
+        XCTAssertEqual(try XCTUnwrap(summary([snapshot(.claudeCode, models: models, totals: totals)]).delta),
+                       0, accuracy: 0.000_001)
+
+        var gap = models
+        gap[day(-3)] = nil
+        XCTAssertNil(summary([snapshot(.claudeCode, models: gap, totals: totals)]).delta)
+
+        var lostRate = models
+        lostRate[day(-3)] = ["gamma": input(1_000_000)]
+        XCTAssertNil(summary([snapshot(.claudeCode, models: lostRate, totals: totals)]).delta)
+    }
+
+    /// S3: today's total is 2M but the breakdown names only 1M (alpha, $3.00). The other 1M
+    /// is unpriced: 50% left out, and the agent's dollars are partial.
+    func testTokensOutsideTheBreakdownAreUnpriced() throws {
+        let cost = summary([snapshot(.claudeCode, models: [day(0): ["alpha": input(1_000_000)]],
+                                     totals: [day(0): 2_000_000])])
+        XCTAssertEqual(try XCTUnwrap(cost.todayUSD), 3, accuracy: 0.000_001)
+        XCTAssertEqual(cost.todayExcludedShare, 0.5, accuracy: 0.000_001)
+        XCTAssertEqual(cost.providers[.claudeCode], .priced(usd: 3, partial: true))
+    }
+
+    /// S5: Cline recorded $0.00 of API cost (free usage): that is a reported amount, not missing data.
+    func testAReportedZeroIsReported() {
+        let free = CostUsage(amount: 0, currency: "USD", confidence: .localParsed)
+        let cost = summary([snapshot(.cline, totals: [day(0): 1_000], cost: free)])
+        XCTAssertEqual(cost.providers[.cline], .reportedAllTime(usd: 0))
     }
 
     /// Cline's logs carry each request's API cost: shown as reported, all time, not added to the

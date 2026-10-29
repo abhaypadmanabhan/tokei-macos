@@ -2,13 +2,15 @@ import Foundation
 
 /// Overview › Cost: API-equivalent dollars by day, priced from each provider's
 /// `dailyModelUsage` through the same `PricingEngine` the Value tab uses, so the two can
-/// never price a model differently. A day a provider has tokens but no per-model entry
-/// counts those tokens as unpriced; days before the first per-model day anywhere are a gap
-/// (no point, no $0), named by `pricedFrom`.
+/// never price a model differently. Dollars are known only where they were measured: a day an
+/// agent with per-model data has tokens but no breakdown, or a day after its data ends (an
+/// earlier day's save), is unknown, never $0. Days before the first per-model day anywhere are
+/// left out and named by `pricedFrom`. A day with no tokens at all is a real $0.
 public struct CostSummary: Equatable, Sendable {
     public struct Point: Equatable, Sendable {
         public let date: Date
-        public let usd: Double
+        /// `nil`: not known that day (tokens without a per-model breakdown, or after the data ends).
+        public let usd: Double?
     }
 
     public enum ProviderCost: Equatable, Sendable {
@@ -20,7 +22,7 @@ public struct CostSummary: Equatable, Sendable {
         case noPriceData
     }
 
-    /// Priced dollars today; `nil` when no per-model data reaches today.
+    /// Priced dollars today; `nil` when today is not known (no per-model data reaches it).
     public let todayUSD: Double?
     /// Share of today's tokens left out for having no price, 0…1.
     public let todayExcludedShare: Double
@@ -32,8 +34,10 @@ public struct CostSummary: Equatable, Sendable {
     public let rangeStartsBeforePricing: Bool
     /// Last N complete days against the N before, only when both periods are fully priced.
     public let delta: Double?
-    /// One point per priced day in the range, oldest first.
+    /// One point per day in the range from `pricedFrom`, oldest first.
     public let trend: [Point]
+    /// Days in `trend` whose dollars are not known.
+    public let unpricedDays: Int
     /// Providers with tokens in the range.
     public let providers: [ProviderID: ProviderCost]
 }
@@ -43,16 +47,19 @@ extension UsageAnalytics {
     /// billed (often $0 on included plans), not an API estimate, so it is not one of them.
     public static let reportedCostProviders: Set<ProviderID> = [.cline, .opencode]
 
-    /// One day's priced dollars and the tokens that were and were not priced.
+    /// One day's priced dollars, the tokens that were and were not priced, and whether the
+    /// day's dollars are known at all.
     struct CostDay: Equatable {
         var usd = 0.0
         var pricedTokens = 0
         var unpricedTokens = 0
+        var unknown = false
 
         mutating func add(_ other: CostDay) {
             usd += other.usd
             pricedTokens += other.pricedTokens
             unpricedTokens += other.unpricedTokens
+            unknown = unknown || other.unknown
         }
     }
 
@@ -63,8 +70,9 @@ extension UsageAnalytics {
         calendar: Calendar = .current,
         now: Date = Date()
     ) -> CostSummary {
+        let today = calendar.startOfDay(for: now)
         let perProvider = Dictionary(uniqueKeysWithValues: snapshots.map {
-            ($0.providerID, costDays(for: $0, pricing: pricing, calendar: calendar))
+            ($0.providerID, costDays(for: $0, pricing: pricing, calendar: calendar, today: today))
         })
         var days: [Date: CostDay] = [:]
         for providerDays in perProvider.values {
@@ -73,7 +81,6 @@ extension UsageAnalytics {
         let pricedFrom = snapshots
             .compactMap { $0.dailyModelUsage?.keys.map { calendar.startOfDay(for: $0) }.min() }
             .min()
-        let today = calendar.startOfDay(for: now)
         let bounds = dayBounds(dailyRange(for: range), calendar: calendar, today: today)
         let inRange = { (day: Date) in (bounds.start.map { day >= $0 } ?? true) && day <= bounds.end }
 
@@ -83,44 +90,61 @@ extension UsageAnalytics {
         let trend = pricedFrom.map { from in
             costTrend(days: days, from: max(bounds.start ?? from, from), to: bounds.end, calendar: calendar)
         } ?? []
+        let known = trend.compactMap(\.usd)
         return CostSummary(
-            todayUSD: pricedFrom.flatMap { $0 <= today ? todayCost.usd : nil },
+            todayUSD: pricedFrom.flatMap { $0 <= today && !todayCost.unknown ? todayCost.usd : nil },
             todayExcludedShare: todayTokens > 0 ? Double(todayCost.unpricedTokens) / Double(todayTokens) : 0,
-            rangeUSD: trend.isEmpty ? nil : trend.map(\.usd).reduce(0, +),
+            rangeUSD: known.isEmpty ? nil : known.reduce(0, +),
             pricedFrom: pricedFrom,
             rangeStartsBeforePricing: pricedFrom.map { from in bounds.start.map { $0 < from } ?? true } ?? false,
             delta: costDelta(
                 days: days, range: range, calendar: calendar, today: today,
-                histories: snapshots.map { Set(($0.dailyModelUsage ?? [:]).keys.map { calendar.startOfDay(for: $0) }) }
+                modelled: snapshots.filter(\.hasModelBreakdown).map { perProvider[$0.providerID] ?? [:] }
             ),
             trend: trend,
+            unpricedDays: trend.count - known.count,
             providers: providerCosts(snapshots: snapshots, perProvider: perProvider, inRange: inRange)
         )
     }
 
-    /// A provider's days: priced from its per-model entry when it has one that day, else
-    /// that day's tokens count as unpriced.
+    /// A provider's days. A day with a per-model entry is priced model by model, and any tokens
+    /// its total has beyond the breakdown are unpriced (never counted twice). For an agent with
+    /// per-model data, a day with tokens and no breakdown, and every day after its data ends, is
+    /// unknown. An agent with no per-model data at all only adds unpriced tokens.
     static func costDays(
         for snapshot: ProviderSnapshot,
         pricing: PricingEngine,
-        calendar: Calendar
+        calendar: Calendar,
+        today: Date
     ) -> [Date: CostDay] {
         var days: [Date: CostDay] = [:]
+        var named: [Date: Int] = [:]
         for (date, models) in snapshot.dailyModelUsage ?? [:] {
             let day = calendar.startOfDay(for: date)
+            days[day] = days[day] ?? CostDay()
             for (model, usage) in models {
                 let tokens = usage.totalTokens ?? 0
-                if let usd = pricing.cost(model: model, tokens: usage) {
-                    days[day, default: CostDay()].add(CostDay(usd: usd, pricedTokens: tokens))
-                } else {
-                    days[day, default: CostDay()].add(CostDay(unpricedTokens: tokens))
-                }
+                named[day, default: 0] += tokens
+                let usd = pricing.cost(model: model, tokens: usage)
+                days[day]?.add(usd.map { CostDay(usd: $0, pricedTokens: tokens) } ?? CostDay(unpricedTokens: tokens))
             }
         }
-        let modelled = Set(days.keys)
-        for (day, tokens) in normalizedDailyTotals(snapshot.dailyTotals ?? [:], calendar: calendar)
-        where tokens > 0 && !modelled.contains(day) {
-            days[day] = CostDay(unpricedTokens: tokens)
+        let totals = normalizedDailyTotals(snapshot.dailyTotals ?? [:], calendar: calendar).filter { $0.value > 0 }
+        for (day, tokens) in totals {
+            if let breakdown = named[day] {
+                days[day]?.add(CostDay(unpricedTokens: max(0, tokens - breakdown)))
+            } else {
+                days[day] = CostDay(unpricedTokens: tokens, unknown: snapshot.hasModelBreakdown)
+            }
+        }
+        guard snapshot.hasModelBreakdown,
+              let last = ([snapshot.lastSyncedAt.map { calendar.startOfDay(for: $0) }] + days.keys.map { $0 })
+                .compactMap({ $0 }).max(),
+              var day = calendar.date(byAdding: .day, value: 1, to: last) else { return days }
+        while day <= today {
+            days[day, default: CostDay()].unknown = true
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
         }
         return days
     }
@@ -134,27 +158,35 @@ extension UsageAnalytics {
         guard var day = start, day <= end else { return [] }
         var points: [CostSummary.Point] = []
         while day <= end {
-            points.append(CostSummary.Point(date: day, usd: days[day]?.usd ?? 0))
+            let cost = days[day] ?? CostDay()
+            points.append(CostSummary.Point(date: day, usd: cost.unknown ? nil : cost.usd))
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
         }
         return points
     }
 
-    /// Like for like, as the token delta: complete days only, and only when every agent priced
-    /// in those days is priced from the earlier period's first day (a gap is not a cheap week).
+    /// Like for like, as the token delta: complete days only, and only when every agent with
+    /// per-model data is recorded from the earlier period's first day and fully priced on every
+    /// compared day (a gap or an unpriced model is not a cheap day).
     private static func costDelta(
         days: [Date: CostDay],
         range: UsageRange,
         calendar: Calendar,
         today: Date,
-        histories: [Set<Date>]
+        modelled: [[Date: CostDay]]
     ) -> Double? {
         guard let count = dayCount(for: range),
               let yesterday = calendar.date(byAdding: .day, value: -1, to: today),
               let previousStart = dayBounds(.previousDays(count), calendar: calendar, today: yesterday).start,
-              histories.contains(where: { !$0.isEmpty }),
-              historiesCover(histories, from: previousStart, to: yesterday) else { return nil }
+              !modelled.isEmpty,
+              historiesCover(modelled.map { Set($0.filter { !$0.value.unknown }.keys) },
+                             from: previousStart, to: yesterday),
+              modelled.allSatisfy({ agent in
+                  agent.allSatisfy { day, cost in
+                      day < previousStart || day > yesterday || (!cost.unknown && cost.unpricedTokens == 0)
+                  }
+              }) else { return nil }
         let cents = { (bounds: (start: Date?, end: Date)) -> Int in
             let usd = days.filter { day, _ in day >= (bounds.start ?? day) && day <= bounds.end }
                 .values.map(\.usd).reduce(0, +)
@@ -177,7 +209,7 @@ extension UsageAnalytics {
             for (day, cost) in perProvider[snapshot.providerID] ?? [:] where inRange(day) { total.add(cost) }
             guard total.pricedTokens + total.unpricedTokens > 0 else { continue }
             if snapshot.dailyModelUsage == nil, reportedCostProviders.contains(snapshot.providerID),
-               let usd = snapshot.costUsage?.amount, usd > 0 {
+               let usd = snapshot.costUsage?.amount, usd >= 0, usd.isFinite {
                 result[snapshot.providerID] = .reportedAllTime(usd: usd)
             } else if total.pricedTokens > 0 {
                 result[snapshot.providerID] = .priced(usd: total.usd, partial: total.unpricedTokens > 0)
@@ -213,4 +245,9 @@ extension UsageAnalytics {
             return (calendar.startOfDay(for: start), calendar.startOfDay(for: end))
         }
     }
+}
+
+extension ProviderSnapshot {
+    /// Whether this agent reports tokens per model per day (what the Cost view can price).
+    var hasModelBreakdown: Bool { dailyModelUsage?.isEmpty == false }
 }
