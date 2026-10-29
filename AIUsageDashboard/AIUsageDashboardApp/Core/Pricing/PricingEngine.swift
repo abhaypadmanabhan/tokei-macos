@@ -12,7 +12,10 @@ public struct PricingEngine: Sendable {
         guard let rate = table.resolveRate(for: model) else { return nil }
 
         let input = Double(tokens.inputTokens ?? 0) * rate.inputPerMillion
-        let cacheCreation = Double(tokens.cacheCreationTokens ?? 0) * rate.cacheCreationInputPerMillion
+        let creation = max(0, tokens.cacheCreationTokens ?? 0)
+        let oneHour = min(creation, max(0, tokens.cacheCreation1hTokens ?? 0))
+        let cacheCreation = Double(creation - oneHour) * rate.cacheCreationInputPerMillion
+            + Double(oneHour) * rate.cacheCreation1hInputPerMillion
         let cacheRead = Double(tokens.cacheReadTokens ?? 0) * rate.cachedInputPerMillion
         let output = (Double(tokens.outputTokens ?? 0) + Double(tokens.reasoningTokens ?? 0)) * rate.outputPerMillion
 
@@ -21,6 +24,14 @@ public struct PricingEngine: Sendable {
 }
 
 extension UsageAggregation {
+    /// Keep today and the preceding 91 calendar days; apply at output time so caches survive midnight.
+    static func recentModelUsage(_ days: [Date: [String: TokenUsage]], calendar: Calendar,
+                                 now: Date) -> [Date: [String: TokenUsage]] {
+        let today = calendar.startOfDay(for: now)
+        let start = calendar.date(byAdding: .day, value: -91, to: today) ?? today
+        return days.filter { $0.key >= start && $0.key <= today }
+    }
+
     static func mergeModels(_ maps: [[Date: [String: TokenUsage]]]) -> [Date: [String: TokenUsage]] {
         maps.reduce(into: [:]) { result, days in
             for (day, models) in days {

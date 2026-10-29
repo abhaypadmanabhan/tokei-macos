@@ -202,14 +202,16 @@ extension ClaudeJSONLParser {
             existing.outputTokens,
             existing.inputTokens,
             existing.cacheReadInputTokens,
-            existing.cacheCreationInputTokens
+            existing.cacheCreationInputTokens,
+            existing.cacheCreation1hTokens ?? 0
         ]
         let candidateValues = [
             candidate.totalTokens,
             candidate.outputTokens,
             candidate.inputTokens,
             candidate.cacheReadInputTokens,
-            candidate.cacheCreationInputTokens
+            candidate.cacheCreationInputTokens,
+            candidate.cacheCreation1hTokens ?? 0
         ]
         for (old, new) in zip(existingValues, candidateValues) where old != new {
             return new > old

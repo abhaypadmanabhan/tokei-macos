@@ -94,6 +94,8 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+        excludes:
+          - Fixtures/*.py
       # Pure UI-layer math (pace notch + tightest-window selection) lives under
       # UI/ per the WP-3 scope, but is a dependency-free function over the frozen
       # Core shapes. Compile that single file into this bundle so the pace/tightest

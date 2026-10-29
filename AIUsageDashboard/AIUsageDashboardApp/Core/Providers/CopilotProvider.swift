@@ -1,20 +1,17 @@
 import Foundation
 
-/// Detects local GitHub Copilot installations without reading or copying credentials.
-///
-/// Copilot's supported clients keep authentication in OS-protected secret storage, and
-/// the VS Code extension obtains quota snapshots from authenticated network responses.
-/// No stable, documented local token-usage or quota record is currently available, so
-/// snapshots deliberately report unavailable metrics instead of inferring a schema.
+/// Reads Copilot CLI shutdown usage from session-state without accessing credentials.
+/// Extension-only installs remain visible with unavailable metrics until CLI logs exist.
 public actor CopilotProvider: UsageProvider {
     public let id: ProviderID = .copilot
     public let displayName: String = "GitHub Copilot"
 
-    /// No data capability is advertised until Copilot exposes a stable source that
-    /// Tokei can consume without accessing credentials.
-    public nonisolated var capabilities: ProviderCapabilities { [] }
+    public nonisolated var capabilities: ProviderCapabilities { [.localLog] }
 
+    private let sessionParser: CopilotSessionParser
     private let fileManager: FileManager
+    private var calendar: Calendar
+    private let now: @Sendable () -> Date
     private let installationMarkers: [URL]
     private let extensionDirectories: [URL]
 
@@ -25,9 +22,15 @@ public actor CopilotProvider: UsageProvider {
     public init(
         fileManager: FileManager = .default,
         installationMarkers: [URL]? = nil,
-        extensionDirectories: [URL]? = nil
+        extensionDirectories: [URL]? = nil,
+        sessionParser: CopilotSessionParser = .init(),
+        calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.fileManager = fileManager
+        self.calendar = calendar
+        self.now = now
+        self.sessionParser = sessionParser
 
         let home = fileManager.homeDirectoryForCurrentUser
         // Copilot has no single canonical install location (VS Code extension, Cursor's
@@ -93,13 +96,19 @@ public actor CopilotProvider: UsageProvider {
         await detectAvailability() == .installed ? .unknown : .unauthenticated
     }
 
+    public func updateCalendar(_ calendar: Calendar) async {
+        self.calendar = calendar
+        await sessionParser.updateCalendar(calendar)
+    }
+
     public func fetchSnapshot() async throws -> ProviderSnapshot {
+        let fetchedAt = now()
+        let history = await sessionParser.parse()
         let availability = await detectAvailability()
-        let isInstalled = availability == .installed
+        let isInstalled = availability == .installed || history.shutdownCount > 0
         let warning = isInstalled
             ? ProviderWarning(
-                message: "GitHub Copilot usage is unavailable because Copilot doesn't persist a documented "
-                    + "local usage or quota record that Tokei can safely read.",
+                message: "GitHub Copilot CLI usage appears after a session ends. No local CLI usage has been recorded.",
                 level: .info
             )
             : ProviderWarning(
@@ -112,14 +121,28 @@ public actor CopilotProvider: UsageProvider {
             displayName: displayName,
             authStatus: isInstalled ? .unknown : .unauthenticated,
             quotaWindows: [],
-            todayUsage: .unavailable,
-            weekUsage: .unavailable,
-            monthUsage: .unavailable,
-            lifetimeUsage: .unavailable,
-            costUsage: nil,
-            warnings: [warning],
-            lastSyncedAt: nil
+            todayUsage: history.today,
+            weekUsage: history.week,
+            monthUsage: history.month,
+            lifetimeUsage: history.lifetime,
+            costUsage: costUsage(history, at: fetchedAt),
+            warnings: history.warnings + (history.shutdownCount == 0 ? [warning] : []),
+            lastSyncedAt: history.shutdownCount == 0 ? nil : fetchedAt,
+            dailyTotals: history.dailyTotals,
+            dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
+    }
+
+    private func costUsage(_ history: CopilotSessionParser.AggregateUsage, at reference: Date) -> CostUsage? {
+        let pricing = PricingEngine(table: PricingService.cachedTable())
+        let month = calendar.dateInterval(of: .month, for: reference)
+        let models = UsageAggregation.sumModels(history.dailyModelUsage.compactMap { day, models in
+            guard let month, day >= month.start, day <= reference else { return nil }
+            return models
+        })
+        let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
+        guard !amounts.isEmpty else { return nil }
+        return CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)
     }
 
     private nonisolated static func isCopilotExtension(_ url: URL) -> Bool {
@@ -127,3 +150,5 @@ public actor CopilotProvider: UsageProvider {
         return name == "github.copilot" || name.hasPrefix("github.copilot-")
     }
 }
+
+extension CopilotProvider: CalendarAwareProvider {}
