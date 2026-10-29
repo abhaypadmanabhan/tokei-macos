@@ -24,13 +24,31 @@ final class UsageHTTPSessionTests: XCTestCase {
         }
     }
 
+    func testSameHostDifferentPortRedirectIsRefused() async throws {
+        for (source, destination) in [
+            ("https://first.test/start", "https://first.test:8443/end"),
+            ("https://first.test:8443/start", "https://first.test:9443/end")
+        ] {
+            let session = UsageHTTPSession.make(protocolClasses: [RedirectUsageProtocol.self])
+            defer { session.invalidateAndCancel() }
+            RedirectUsageProtocol.destination = URL(string: destination)!
+            RedirectUsageProtocol.hits = []
+            var request = URLRequest(url: URL(string: source)!)
+            request.setValue("Bearer fixture", forHTTPHeaderField: "Authorization")
+            _ = try await session.data(for: request)
+            XCTAssertEqual(RedirectUsageProtocol.hits, ["first.test"])
+        }
+    }
+
     func testSameHostHTTPSRedirectIsFollowed() async throws {
-        let session = UsageHTTPSession.make(protocolClasses: [RedirectUsageProtocol.self])
-        defer { session.invalidateAndCancel() }
-        RedirectUsageProtocol.destination = URL(string: "https://first.test/end")!
-        RedirectUsageProtocol.hits = []
-        _ = try await session.data(from: URL(string: "https://first.test/start")!)
-        XCTAssertEqual(RedirectUsageProtocol.hits, ["first.test", "first.test"])
+        for origin in ["https://first.test", "https://first.test:8443"] {
+            let session = UsageHTTPSession.make(protocolClasses: [RedirectUsageProtocol.self])
+            defer { session.invalidateAndCancel() }
+            RedirectUsageProtocol.destination = URL(string: origin + "/end")!
+            RedirectUsageProtocol.hits = []
+            _ = try await session.data(from: URL(string: origin + "/start")!)
+            XCTAssertEqual(RedirectUsageProtocol.hits, ["first.test", "first.test"])
+        }
     }
 }
 
