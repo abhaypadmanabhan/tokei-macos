@@ -19,3 +19,6 @@ dist/
 AGENTS.md
 # Separate Next.js website project (#10) — tracked independently when ready
 website/
+
+# WP-5 read-only upstream reference and local proof outputs
+.scratch/
