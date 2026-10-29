@@ -286,6 +286,14 @@ private final class CopyCalls: @unchecked Sendable {
 
 extension AntigravityConversationParserTests {
     func testVirtualStepsTableIsReportedAsUnreadable() async throws {
+        try await assertVirtualStepsAreUnreadable(rewriteSchema: false)
+    }
+
+    func testVirtualStepsWithNonCanonicalSchemaIsReportedAsUnreadable() async throws {
+        try await assertVirtualStepsAreUnreadable(rewriteSchema: true)
+    }
+
+    private func assertVirtualStepsAreUnreadable(rewriteSchema: Bool) async throws {
         let url = directory.appendingPathComponent("virtual.db")
         var database: OpaquePointer?
         XCTAssertEqual(sqlite3_open(url.path, &database), SQLITE_OK)
@@ -295,6 +303,13 @@ extension AntigravityConversationParserTests {
         }
         sqlite3_close(database)
         guard created else { throw XCTSkip("System SQLite has no FTS module") }
+        if rewriteSchema {
+            // Plant valid alternate SQL spelling without changing SQLite page sizes.
+            var image = try Data(contentsOf: url)
+            let range = try XCTUnwrap(image.range(of: Data("CREATE VIRTUAL TABLE steps".utf8)))
+            image.replaceSubrange(range, with: Data("CREATE\tVIRTUAL TABLE steps".utf8))
+            try image.write(to: url)
+        }
 
         XCTAssertThrowsError(try AntigravityConversationDatabase.read(url, modifiedAt: Date()))
         let result = await parser().parse()
