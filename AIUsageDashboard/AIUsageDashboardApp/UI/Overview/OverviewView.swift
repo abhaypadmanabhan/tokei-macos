@@ -24,6 +24,8 @@ struct OverviewView: View {
     var onAddAgent: () -> Void = {}
     /// Open the Settings drawer (a quota row whose live quota is off).
     var onOpenSettings: () -> Void = {}
+    /// Open the Value tab (the Cost lens's per-model breakdown).
+    var onOpenValue: () -> Void = {}
 
     /// Usage vs Quota lens — local pane state, animated on change (reduce-motion safe).
     @State var metric: OverviewMetric = .usage
@@ -50,7 +52,7 @@ struct OverviewView: View {
         #if DEBUG
         .onAppear { if ProofRoute.wantsQuotaLens { metric = .quota } }
         .onReceive(NotificationCenter.default.publisher(for: ProofRoute.metricNotification)) { note in
-            metric = (note.object as? String) == "quota" ? .quota : .usage
+            metric = OverviewMetric(rawValue: note.object as? String ?? "") ?? .usage
         }
         #endif
     }
@@ -78,8 +80,10 @@ struct OverviewView: View {
                 }
                 .animation(reduceMotion ? nil : PadzyMotion.settle, value: metric)
 
-                if metric == .usage {
-                    agentsSection
+                switch metric {
+                case .usage: agentsSection(agentModels)
+                case .cost: agentsSection(costAgentModels(viewModel.overviewCost), linksToValue: true)
+                case .quota: EmptyView()
                 }
             }
             .padding(PadzySpace.xl)
@@ -140,12 +144,23 @@ struct OverviewView: View {
 
     @ViewBuilder
     private func mainChart(trendHeight: CGFloat) -> some View {
-        if metric == .usage {
+        switch metric {
+        case .usage:
             rangedComparison
             LineTrendChart(points: viewModel.overviewTrend, pointDetails: trendPointDetails)
                 .frame(height: trendHeight)
                 .transition(.opacity)
-        } else {
+        case .cost:
+            let cost = viewModel.overviewCost
+            costComparison(cost)
+            // Whole cents, so the token chart draws dollars with the same curve and style.
+            LineTrendChart(
+                points: cost.trend.map { (date: $0.date, tokens: Int(($0.usd * 100).rounded())) },
+                format: { MaxxerMath.formatUSD(Double($0) / 100) }
+            )
+            .frame(height: trendHeight)
+            .transition(.opacity)
+        case .quota:
             VStack(alignment: .leading, spacing: PadzySpace.l) {
                 AgentQuotaBars(rows: quotaRows, onSelect: onSelectProvider, onOpenSettings: onOpenSettings)
                 if !noQuotaSourceProviders.isEmpty {
@@ -163,9 +178,8 @@ struct OverviewView: View {
     // MARK: Agents
 
     /// Agents that used tokens in the range get a tile; the rest share one quiet line.
-    private var agentsSection: some View {
-        let models = agentModels
-        return VStack(alignment: .leading, spacing: PadzySpace.m) {
+    private func agentsSection(_ models: [AgentCellModel], linksToValue: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
             HairlineDivider()
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 kicker("Agents · \(AnalyticsFormat.rangeTitle(viewModel.range))")
@@ -184,7 +198,37 @@ struct OverviewView: View {
                     onSelect: onSelectProvider
                 )
             }
+            if linksToValue {
+                Button("Per-model breakdown in Value →") { onOpenValue() }
+                    .buttonStyle(.plain)
+                    .font(.sans(size: 13, weight: .medium))
+                    .foregroundColor(PadzyTheme.ink2)
+                    .help("Open Value (⌘2)")
+            }
         }
+    }
+
+    /// The Cost lens's range total, its like-for-like change, and where pricing starts when
+    /// the range reaches further back than the per-model data.
+    private func costComparison(_ cost: CostSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(cost.rangeUSD.map { MaxxerMath.formatUSD($0) } ?? "—")
+                .font(.mono(size: 15, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(PadzyTheme.ink)
+            Text(AnalyticsFormat.rangeTitle(viewModel.range))
+                .font(.mono(size: 13.5))
+                .foregroundColor(PadzyTheme.ink5)
+            if let delta = cost.delta {
+                deltaLine(delta)
+            }
+            if cost.rangeStartsBeforePricing, let from = cost.pricedFrom {
+                Text(AnalyticsFormat.pricedFrom(from))
+                    .font(.sans(size: 15))
+                    .foregroundColor(PadzyTheme.ink5)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     /// D12: the ranged delta sits beside the ranged total it was computed from.

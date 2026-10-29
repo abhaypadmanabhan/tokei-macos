@@ -23,6 +23,9 @@ struct LineTrendChart: View {
     /// Hover detail keyed by the point's start-of-day date. Empty → the hover callout
     /// shows date + total only (no top-agent line).
     var pointDetails: [Date: TrendPointDetail] = [:]
+    /// How a value reads on the axis, the last point and the hover callout. Tokens by
+    /// default; Overview › Cost passes whole cents with a dollar format.
+    var format: (Int) -> String = { TokenFormatter.format($0) }
 
     /// The series index under the pointer (nil when not hovering).
     @State private var hoveredID: Int?
@@ -97,7 +100,7 @@ struct LineTrendChart: View {
                     .symbolSize(46)
                     .foregroundStyle(PadzyTheme.accent)
                     .annotation(position: .topTrailing, spacing: 4) {
-                        Text(TokenFormatter.format(point.tokens))
+                        Text(format(point.tokens))
                             .font(.mono(size: 13.5))
                             .monospacedDigit()
                             .foregroundColor(PadzyTheme.ink)
@@ -149,7 +152,7 @@ struct LineTrendChart: View {
                     .foregroundStyle(PadzyTheme.hairline.opacity(0.8))
                 AxisValueLabel {
                     if let tokens = value.as(Int.self) {
-                        Text(TokenFormatter.format(tokens))
+                        Text(format(tokens))
                             .font(.mono(size: 13.5))
                             .foregroundStyle(PadzyTheme.ink5)
                             .rollingNumber(Double(tokens), reduceMotion: reduceMotion)
@@ -200,7 +203,7 @@ struct LineTrendChart: View {
                 .font(.mono(size: 9))
                 .tracking(0.3)
                 .foregroundColor(PadzyTheme.ink5)
-            Text(TokenFormatter.format(point.tokens))
+            Text(format(point.tokens))
                 .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(PadzyTheme.ink)

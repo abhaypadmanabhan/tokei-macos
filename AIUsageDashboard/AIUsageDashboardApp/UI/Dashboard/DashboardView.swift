@@ -196,7 +196,8 @@ struct DashboardView: View {
             OverviewView(
                 onSelectProvider: { openProvider($0) },
                 onAddAgent: { showingAddAgent = true },
-                onOpenSettings: { openSettings() }
+                onOpenSettings: { openSettings() },
+                onOpenValue: { navigator.select(.value, viewModel: viewModel) }
             )
         case .value:
             ValueView(

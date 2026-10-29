@@ -240,6 +240,14 @@ public final class DashboardViewModel: ObservableObject {
         return UsageAnalytics.delta(current: current.values.reduce(0, +), previous: previous.values.reduce(0, +))
     }
 
+    /// Overview › Cost for the visible providers, priced with the Value tab's table.
+    public var overviewCost: CostSummary {
+        UsageAnalytics.costSummary(
+            snapshots: visibleSnapshots, range: range,
+            pricing: PricingEngine(table: PricingService.cachedTable()), calendar: calendar, now: now()
+        )
+    }
+
     /// The tightest eligible reading among visible providers (see `isEligibleReading`): the
     /// one definition behind the Overview quota hero, the menu-bar "Tightest quota" and the
     /// status-item percentage, so no two surfaces name a different number (D13).

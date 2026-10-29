@@ -2,15 +2,18 @@ import SwiftUI
 import AIUsageDashboardCore
 
 /// Which lens the Overview hero + main chart present. `usage` = tokens over time;
-/// `quota` = how close each plan is to its ceiling. Local pane state — never Core.
+/// `cost` = what those tokens would cost at public API rates; `quota` = how close each
+/// plan is to its ceiling. Local pane state — never Core.
 enum OverviewMetric: String, CaseIterable, Identifiable {
     case usage
+    case cost
     case quota
 
     var id: String { rawValue }
     var title: String {
         switch self {
         case .usage: return "Usage"
+        case .cost: return "Cost"
         case .quota: return "Quota"
         }
     }

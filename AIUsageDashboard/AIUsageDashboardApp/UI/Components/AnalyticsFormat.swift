@@ -41,6 +41,19 @@ enum AnalyticsFormat {
         }
     }
 
+    /// "excludes 3% of tokens with no price data" under the Cost headline; `nil` when every
+    /// token was priced.
+    static func excludedPhrase(_ share: Double) -> String? {
+        guard share > 0 else { return nil }
+        let percent = share * 100
+        return "excludes \(percent < 1 ? "under 1" : String(Int(percent.rounded())))% of tokens with no price data"
+    }
+
+    /// "priced from Oct 1": where the priced days start when the range reaches further back.
+    static func pricedFrom(_ date: Date) -> String {
+        "priced from \(date.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+
     /// Caption for `overviewDelta`. The comparison is complete days against the same number
     /// of complete days before them (today's part-day is left out of both), and the caption
     /// says so, so the arrow is never read as "today vs a full day".

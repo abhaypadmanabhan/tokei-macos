@@ -16,6 +16,8 @@ struct AgentCellModel: Identifiable {
     /// "ENABLE →" / "LOCAL LOGS" caption. `nil` in the Usage lens.
     var substat: String? = nil
     var substatColor: Color = PadzyTheme.ink5
+    /// A caption of words ("no price data") reads in the body font; mono is for numbers.
+    var substatIsWords = false
     /// Estimated today tokens → subtle dotted underline + a `.help` tooltip.
     let isEstimated: Bool
     /// The single emptiest quota-bearing agent → a green "route here" dot.
@@ -144,7 +146,7 @@ struct AgentGridCell: View {
 
             if let substat = model.substat {
                 Text(substat)
-                    .font(.mono(size: 12))
+                    .font(model.substatIsWords ? .sans(size: 12) : .mono(size: 12))
                     .monospacedDigit()
                     .foregroundColor(model.substatColor)
                     .lineLimit(1)

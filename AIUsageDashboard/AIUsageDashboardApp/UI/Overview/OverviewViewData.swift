@@ -62,6 +62,31 @@ extension OverviewView {
         }
     }
 
+    /// One tile per agent with tokens in the range, in the Cost lens: the range's API
+    /// estimate, a provider-reported all-time figure, or "no price data", never $0.
+    func costAgentModels(_ cost: CostSummary) -> [AgentCellModel] {
+        activeInRange.map { id in
+            let stat: String
+            let caption: String?
+            switch cost.providers[id] ?? .noPriceData {
+            case let .priced(usd, partial):
+                stat = MaxxerMath.formatUSD(usd)
+                caption = partial ? "some tokens unpriced" : nil
+            case let .reportedAllTime(usd):
+                stat = MaxxerMath.formatUSD(usd)
+                caption = "reported, all time"
+            case .noPriceData:
+                stat = "—"
+                caption = "no price data"
+            }
+            return AgentCellModel(
+                providerID: id, name: displayName(id), stat: stat, statColor: PadzyTheme.ink,
+                substat: caption, substatColor: PadzyTheme.ink4, substatIsWords: true,
+                isEstimated: false, hasHeadroom: false
+            )
+        }
+    }
+
     /// Rows for the Quota lens: live gauges first (fullest on top), then providers that
     /// could report quota but have no reading. Providers with no quota source are not rows;
     /// they are named once on `noQuotaSourceProviders`' line.
@@ -110,6 +135,7 @@ extension OverviewView {
     var heroNumber: String {
         switch metric {
         case .usage: return mergedToday.totalTokens.map { TokenFormatter.format($0) } ?? "—"
+        case .cost: return viewModel.overviewCost.todayUSD.map { MaxxerMath.formatUSD($0) } ?? "—"
         case .quota:
             guard let reading = viewModel.tightestAccountPressure else { return "—" }
             return "\(Int(round(reading.usedPercent)))%"
@@ -119,6 +145,7 @@ extension OverviewView {
     var heroNumericValue: Double? {
         switch metric {
         case .usage: return mergedToday.totalTokens.map(Double.init)
+        case .cost: return viewModel.overviewCost.todayUSD
         case .quota: return viewModel.tightestAccountPressure?.usedPercent
         }
     }
@@ -136,6 +163,12 @@ extension OverviewView {
                 savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: now
             )
             return "tokens \(day) across \(agents) · incl. cache · \(age.prefix(1).lowercased())\(age.dropFirst())"
+        case .cost:
+            let cost = viewModel.overviewCost
+            guard cost.todayUSD != nil else { return "No per-model token data to price yet." }
+            return (["API estimate for today at public rates"]
+                + [AnalyticsFormat.excludedPhrase(cost.todayExcludedShare)].compactMap { $0 })
+                .joined(separator: " · ")
         case .quota:
             // The same reading the menu bar calls "Tightest quota", named in full.
             guard let reading = viewModel.tightestAccountPressure else {
