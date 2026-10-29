@@ -26,6 +26,35 @@ final class SecureFileWriterReviewTests: XCTestCase {
         XCTAssertEqual(manager.failedChildren, 1)
     }
 
+    func testHardeningDoesNotChmodTargetAfterChildIsSwappedForSymlink() throws {
+        try assertSwappedChildKeepsTargetMode(isDirectory: false)
+    }
+
+    func testHardeningDoesNotChmodTargetAfterDirectoryIsSwappedForSymlink() throws {
+        try assertSwappedChildKeepsTargetMode(isDirectory: true)
+    }
+
+    private func assertSwappedChildKeepsTargetMode(isDirectory: Bool) throws {
+        let root = directory.appendingPathComponent("support")
+        let child = root.appendingPathComponent("swapped")
+        let outside = directory.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        if isDirectory {
+            for url in [child, outside] {
+                try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            }
+        } else {
+            for url in [child, outside] { try Data("fixture".utf8).write(to: url) }
+        }
+        let mode = isDirectory ? 0o755 : 0o644
+        try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: outside.path)
+        let manager = SwappingChildManager(target: outside)
+        try SecureFileWriter.hardenExistingDirectory(at: root, using: manager)
+        XCTAssertTrue(manager.didSwap)
+        let actual = try FileManager.default.attributesOfItem(atPath: outside.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(actual?.intValue, mode)
+    }
+
     func testHardeningResolvesRootButDoesNotFollowChildFileLink() throws {
         let root = directory.appendingPathComponent("real")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -59,15 +88,36 @@ private final class FailingChildManager: FileManager, @unchecked Sendable {
         at url: URL, includingPropertiesForKeys keys: [URLResourceKey]?,
         options mask: FileManager.DirectoryEnumerationOptions = []
     ) throws -> [URL] {
-        try super.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: mask)
+        let children = try super.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: mask)
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
-    }
-
-    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
-        if URL(fileURLWithPath: path).lastPathComponent == "a-fail.json" {
+        for child in children where child.lastPathComponent == "a-fail.json" {
+            _ = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey])
+            try removeItem(at: child)
             lock.withLock { failed += 1 }
-            throw CocoaError(.fileWriteNoPermission)
         }
-        try super.setAttributes(attributes, ofItemAtPath: path)
+        return children
+    }
+}
+
+private final class SwappingChildManager: FileManager, @unchecked Sendable {
+    let target: URL
+    private(set) var didSwap = false
+
+    init(target: URL) { self.target = target; super.init() }
+
+    override func contentsOfDirectory(
+        at url: URL, includingPropertiesForKeys keys: [URLResourceKey]?,
+        options mask: FileManager.DirectoryEnumerationOptions = []
+    ) throws -> [URL] {
+        let children = try super.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: mask)
+        for child in children where child.lastPathComponent == "swapped" && !didSwap {
+            // Keep the observed regular-file/directory values, then simulate the
+            // directory entry changing before the later permission syscall.
+            _ = try child.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .isDirectoryKey])
+            try removeItem(at: child)
+            try createSymbolicLink(at: child, withDestinationURL: target)
+            didSwap = true
+        }
+        return children
     }
 }

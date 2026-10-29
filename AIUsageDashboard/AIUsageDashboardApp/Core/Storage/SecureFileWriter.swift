@@ -50,7 +50,7 @@ public enum SecureFileWriter {
                 if values.isDirectory == true {
                     try hardenDirectory(at: child, using: fileManager)
                 } else if values.isRegularFile == true {
-                    try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: child.path)
+                    try setPermissions(0o600, at: child)
                 }
             } catch {
                 logger.error("Could not harden support child \(child.path, privacy: .private): \(error)")
@@ -68,6 +68,12 @@ public enum SecureFileWriter {
                 at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
             )
         }
-        try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        try setPermissions(0o700, at: directory)
+    }
+
+    private static func setPermissions(_ mode: mode_t, at url: URL) throws {
+        guard fchmodat(AT_FDCWD, url.path, mode, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
     }
 }
