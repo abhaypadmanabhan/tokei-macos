@@ -21,6 +21,7 @@ public actor QuotaSeriesStore {
     private var samples: [QuotaSample] = []
     private var didLoad = false
     private var lastWrittenData: Data?
+    private var needsPersist = false
     // Empty identity means the provider has accounts but no known headline: never read legacy rows for it.
     private var headlineAccountIDs: [String: String] = [:]
 
@@ -49,6 +50,7 @@ public actor QuotaSeriesStore {
         ensureLoaded()
         let sampledAt = now()
         var didAppend = false
+        let previousHeadlines = headlineAccountIDs
 
         for snapshot in snapshots {
             let readings: [(String?, [QuotaWindow])]
@@ -78,7 +80,12 @@ public actor QuotaSeriesStore {
             }
         }
 
-        if didAppend { enforceRetentionLimit() }
+        if didAppend {
+            enforceRetentionLimit()
+            needsPersist = true
+        }
+        needsPersist = needsPersist || previousHeadlines != headlineAccountIDs
+        guard needsPersist else { return }
         persist()
     }
 
@@ -112,7 +119,9 @@ public actor QuotaSeriesStore {
         samples = container.samples.sorted { $0.sampledAt < $1.sampledAt }
         headlineAccountIDs = container.headlineAccountIDs ?? [:]
         lastWrittenData = data
+        let loadedCount = samples.count
         enforceRetentionLimit()
+        needsPersist = samples.count != loadedCount
     }
 
     private func enforceRetentionLimit() {
@@ -149,10 +158,14 @@ public actor QuotaSeriesStore {
     private func persist() {
         let container = QuotaSeriesContainer(version: 2, samples: samples, headlineAccountIDs: headlineAccountIDs)
         guard let data = try? Self.encoder.encode(container) else { return }
-        guard data != lastWrittenData else { return }
+        guard data != lastWrittenData else {
+            needsPersist = false
+            return
+        }
         do {
             try SecureFileWriter.write(data, to: fileURL)
             lastWrittenData = data
+            needsPersist = false
         } catch {
             // Keep the previous bytes so a later append retries the failed write.
         }
