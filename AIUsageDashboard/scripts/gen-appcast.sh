@@ -49,7 +49,7 @@ for DD in "${DERIVED_ROOTS[@]}"; do
   if [ -n "$SIGN_UPDATE" ]; then break; fi
 done
 
-if [ -z "$SIGN_UPDATE" ]; then
+if [ -z "$SIGN_UPDATE" ] && [ -z "${TOKEI_SPARKLE_SIG_ATTRS:-}" ]; then
   echo "Sparkle sign_update not found. Searched:" >&2
   for DD in "${DERIVED_ROOTS[@]}"; do echo "  $DD/SourcePackages/artifacts" >&2; done
   echo "Run scripts/build-app.sh (or TOKEI_RELEASE=1 scripts/build-app.sh) first to resolve packages." >&2
@@ -57,8 +57,20 @@ if [ -z "$SIGN_UPDATE" ]; then
 fi
 echo "Using Sparkle sign_update: $SIGN_UPDATE"
 
-# sign_update prints: sparkle:edSignature="..." length="..." (both attrs)
-SIG_ATTRS="$("$SIGN_UPDATE" --account "$SPARKLE_ACCOUNT" "$DMG")"
+# sign_update prints: sparkle:edSignature="..." length="..." (both attrs).
+# TOKEI_SPARKLE_SIG_ATTRS supplies that line from a Mac that holds the key (run
+# sign_update there on the published DMG); it is public data, never the key.
+if [ -n "${TOKEI_SPARKLE_SIG_ATTRS:-}" ]; then
+  SIG_ATTRS="$TOKEI_SPARKLE_SIG_ATTRS"
+else
+  SIG_ATTRS="$("$SIGN_UPDATE" --account "$SPARKLE_ACCOUNT" "$DMG")" || {
+    echo "gen-appcast: sign_update found no '$SPARKLE_ACCOUNT' key in this Mac's keychain." >&2
+    echo "Sign the published DMG on the Mac that has it and rerun with TOKEI_SPARKLE_SIG_ATTRS='<its output>'." >&2
+    exit 1
+  }
+fi
+# Never publish a feed whose signature the installed apps would reject.
+"$ROOT/scripts/verify-update-signature.sh" "$DMG" "$APP" "$SIG_ATTRS"
 DATE="$(LC_ALL=en_US.UTF-8 date -u "+%a, %d %b %Y %H:%M:%S +0000")"
 URL="https://github.com/$REPO/releases/download/v$VERSION/Tokei-$VERSION-arm64.dmg"
 
