@@ -155,7 +155,7 @@ private struct BurnHero: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
                         .rollingNumber(snapshot.today.valueUSD ?? Double(snapshot.today.tokens), reduceMotion: reduceMotion)
-                    Text("burned today, \(BurnCopy.goalPhrase(snapshot.today.goal) ?? "")")
+                    Text("burned \(BurnCopy.todayOnPlans), \(BurnCopy.goalPhrase(snapshot.today.goal) ?? "")")
                         .font(.sans(size: 15))
                         .foregroundColor(PadzyTheme.ink3)
                 }

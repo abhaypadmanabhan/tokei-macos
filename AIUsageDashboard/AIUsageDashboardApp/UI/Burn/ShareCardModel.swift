@@ -5,7 +5,8 @@ import AIUsageDashboardCore
 /// has no field that can hold an account label, email, path or project name, and
 /// `ShareCardModelTests` fails if one appears. Pure Foundation, compiled into the test bundle.
 struct ShareCardModel: Equatable {
-    /// This calendar week's API-equivalent value across agents; `nil` when nothing was priced.
+    /// This calendar week's plan usage across agents at public API prices (burn counts plan
+    /// providers only); `nil` when nothing was priced.
     let weekValueUSD: Double?
     let weekTokens: Int
     let monthMultiple: Double?
@@ -33,7 +34,7 @@ struct ShareCardModel: Equatable {
     }
 
     var headlineCaption: String {
-        weekValueUSD == nil ? "tokens burned this week" : "of API-equivalent usage this week"
+        weekValueUSD == nil ? "tokens burned on my plans this week" : "burned on my plans this week, at API prices"
     }
 
     /// "2.3× my plans' cost this month"; `nil` without plan costs.

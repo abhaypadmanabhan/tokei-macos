@@ -146,7 +146,7 @@ struct LeaderboardSection: View {
                 .font(.mono(size: 14, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(entry.valueUSD == nil ? BurnTone.caption : PadzyTheme.ink)
-                .help(entry.valueUSD == nil ? "No public rate for this agent's tokens" : "API-equivalent value this week")
+                .help(entry.valueUSD == nil ? "No public rate for this agent's tokens" : "Plan usage this week, at public API prices")
             Text(TokenFormatter.format(entry.tokens))
                 .font(.mono(size: 13.5))
                 .monospacedDigit()

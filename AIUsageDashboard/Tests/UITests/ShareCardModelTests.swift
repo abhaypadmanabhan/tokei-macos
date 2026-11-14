@@ -45,7 +45,7 @@ final class ShareCardModelTests: XCTestCase {
         // Sample leaderboard: 71.2 + 38.5 + 9.1 priced (Gemini unpriced), 68.7M tokens.
         XCTAssertEqual(card.lines(calendar: utc), [
             "$118.80",
-            "of API-equivalent usage this week",
+            "burned on my plans this week, at API prices",
             "2.3× my plans' cost this month",
             "Maxxing",
             "11-day streak",
@@ -67,7 +67,7 @@ final class ShareCardModelTests: XCTestCase {
         )
         let card = ShareCardModel(snapshot: unpriced, calendar: utc)
         XCTAssertEqual(card.lines(calendar: utc), [
-            "1.20M", "tokens burned this week", "No streak yet", "Top agent: Gemini", "Week of Nov 9",
+            "1.20M", "tokens burned on my plans this week", "No streak yet", "Top agent: Gemini", "Week of Nov 9",
             "Tracked on my Mac with Tokei"
         ])
     }

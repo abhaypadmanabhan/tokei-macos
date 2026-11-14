@@ -72,7 +72,7 @@ struct BurnStrip: View {
                     .font(.mono(size: 12.5))
                     .monospacedDigit()
                     .foregroundColor(PadzyTheme.ink2)
-                + Text(" " + (BurnCopy.goalPhrase(snapshot.today.goal) ?? ""))
+                + Text(" " + BurnCopy.todayOnPlans)
                     .font(.sans(size: 12.5))
                     .foregroundColor(BurnTone.caption)
             } else {
@@ -157,7 +157,8 @@ struct BurnStrip: View {
         var parts: [String] = []
         if hasGoal {
             parts.append("Today \(BurnCopy.progressText(snapshot.today.progress)) of goal, "
-                + "\(BurnCopy.todayAmount(snapshot.today)) \(BurnCopy.goalPhrase(snapshot.today.goal) ?? "")")
+                + "\(BurnCopy.todayAmount(snapshot.today)) \(BurnCopy.todayOnPlans), "
+                + "\(BurnCopy.goalPhrase(snapshot.today.goal) ?? "")")
         } else {
             parts.append(BurnCopy.noGoalTitle)
         }

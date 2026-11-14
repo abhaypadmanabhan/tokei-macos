@@ -82,6 +82,7 @@ final class BurnCopyTests: XCTestCase {
         XCTAssertEqual(BurnCopy.todayAmount(tokens), "4.20M tokens", "a token goal shows tokens even when priced")
         XCTAssertEqual(BurnCopy.goalPhrase(tokens.goal), "of a 6.20M-token goal")
         XCTAssertNil(BurnCopy.goalPhrase(nil))
+        XCTAssertEqual(BurnCopy.todayOnPlans, "on your plans today", "plan burn, never the Cost view's today")
     }
 
     // MARK: Streak

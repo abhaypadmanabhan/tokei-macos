@@ -97,6 +97,10 @@ enum BurnCopy {
         return MaxxerMath.formatUSD(day.valueUSD)
     }
 
+    /// Burn counts plan usage only (bible §7), so its dollars can differ from the Cost view's
+    /// today and are never labelled as that number.
+    static let todayOnPlans = "on your plans today"
+
     /// "of a $9.68 goal" / "of a 6.20M-token goal"; `nil` without a goal.
     static func goalPhrase(_ goal: BurnGoal?) -> String? {
         guard let goal else { return nil }
