@@ -49,11 +49,13 @@ extension BurnEngine {
     }
 
     static func badgeProgress(
-        history: BurnHistory, planProviders: Set<ProviderID>, multiple: Double?,
+        history: BurnHistory, multiple: Double?,
         outcomes: [BurnWindowOutcome], longestStreak: Int, now: Date, calendar: Calendar
     ) -> [BurnBadge: Double] {
         let maxTokens = Double(history.tokens.values.max() ?? 0)
-        let plannedValue = planProviders.flatMap { history.providerDollars[$0]?.values.map { $0 } ?? [] }.contains { $0 > 0 }
+        // History has already crossed BurnEligibility; even fallback products without a
+        // configured price qualify as plan providers. There is no second badge-specific rule.
+        let plannedValue = history.providerDollars.values.contains { $0.values.contains { $0 > 0 } }
         var maxAgents = 0
         for day in history.tokens.keys {
             maxAgents = max(maxAgents, history.providerTokens.values.filter { ($0[day] ?? 0) > 0 }.count)

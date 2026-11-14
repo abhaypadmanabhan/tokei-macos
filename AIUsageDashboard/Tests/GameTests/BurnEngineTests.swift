@@ -89,7 +89,7 @@ final class BurnEngineTests: XCTestCase {
             f.snapshot(.claudeCode, days: [0: 3_000_000]),
             f.snapshot(.cursor, days: [0: 10_000_000], priced: false),
             f.snapshot(.cline, days: [0: 100_000_000])
-        ], hidden: [.cline]).snapshot.leaderboard
+        ], plans: [.codex: 31, .claudeCode: 31, .cursor: 31], hidden: [.cline]).snapshot.leaderboard
         XCTAssertEqual(result.map(\.providerID), [.claudeCode, .codex, .cursor])
         XCTAssertEqual(result.map(\.rank), [1, 2, 3])
         XCTAssertEqual(result.map(\.tokens), [3_000_000, 2_000_000, 10_000_000])

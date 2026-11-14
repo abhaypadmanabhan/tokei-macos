@@ -7,11 +7,12 @@ public enum BurnEngine {
         state: BurnState, now: Date, calendar: Calendar, pricing: PricingEngine,
         hiddenProviders: Set<ProviderID> = [], emitMoments: Bool = true
     ) -> (snapshot: BurnSnapshot, state: BurnState) {
-        let visible = snapshots.filter { !hiddenProviders.contains($0.providerID) }.sorted { $0.providerID.rawValue < $1.providerID.rawValue }
+        let eligibility = BurnEligibility(monthlyPlanUSD: monthlyPlanUSD)
+        let eligibleVisible = eligibility.providers.subtracting(hiddenProviders)
+        let visible = snapshots.filter { eligibleVisible.contains($0.providerID) }
+            .sorted { $0.providerID.rawValue < $1.providerID.rawValue }
         let history = BurnHistory(snapshots: visible, pricing: pricing, now: now, calendar: calendar)
-        let plans = monthlyPlanUSD.filter { id, cost in
-            cost.isFinite && cost > 0 && visible.contains { $0.providerID == id }
-        }
+        let plans = eligibility.monthlyPlanUSD.filter { id, _ in visible.contains { $0.providerID == id } }
         let monthlyUSD = plans.sorted { $0.key.rawValue < $1.key.rawValue }.map(\.value).reduce(0, +)
         let today = calendar.startOfDay(for: now)
         let goal = history.goal(on: today, monthlyUSD: monthlyUSD, calendar: calendar)
@@ -28,7 +29,7 @@ public enum BurnEngine {
         let multiple = UsageAnalytics.burnMonthMultiple(snapshots: visible, monthlyPlanUSD: plans,
                                                        pricing: pricing, now: now, calendar: calendar)
         let tier = multiple.map(tier(for:))
-        let outcomes = windowOutcomes(samples: quotaSamples.filter { !hiddenProviders.contains($0.providerID) }, now: now)
+        let outcomes = windowOutcomes(samples: quotaSamples.filter { eligibleVisible.contains($0.providerID) }, now: now)
         let since = calendar.date(byAdding: .day, value: -7, to: now) ?? now
         let recent = outcomes.filter { $0.resetAt >= since }
         var next = state
@@ -48,10 +49,7 @@ public enum BurnEngine {
         }
         next.longestStreak = streak.longest
         let bestMultiple = max(multiple ?? 0, next.records[BurnRecordKind.bestMonthMultiple.rawValue]?.value ?? 0)
-        let planProviders = Set(plans.keys).union(visible.filter { snapshot in
-            snapshot.quotaWindows.contains { ExpiringHeadroomFinder.Policy.standard.horizon(for: $0.type) != nil }
-        }.map(\.providerID))
-        let badges = badgeProgress(history: history, planProviders: planProviders, multiple: bestMultiple,
+        let badges = badgeProgress(history: history, multiple: bestMultiple,
                                    outcomes: outcomes, longestStreak: streak.longest, now: now, calendar: calendar)
         for badge in BurnBadge.allCases where (badges[badge] ?? 0) >= 1 && next.badges[badge.rawValue] == nil {
             next.badges[badge.rawValue] = now

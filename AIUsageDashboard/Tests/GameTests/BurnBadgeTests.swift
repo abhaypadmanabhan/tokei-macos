@@ -28,7 +28,8 @@ final class BurnBadgeTests: XCTestCase {
                 case .nothingLeft:
                     samples = [f.sample(used: 100, account: "a"), f.sample(used: hit ? 80 : 79.999, account: "b")]
                 }
-                return f.evaluate([f.snapshot(days: days)] + agents, samples: samples)
+                return f.evaluate([f.snapshot(days: days)] + agents,
+                                  plans: badge == .fleet ? [:] : [.codex: 31], samples: samples)
             }
             let miss = fixture(hit: false)
             let locked = try XCTUnwrap(miss.snapshot.badges.first { $0.badge == badge })
