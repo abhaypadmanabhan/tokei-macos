@@ -1,11 +1,15 @@
 import SwiftUI
 import AIUsageDashboardCore
 
-/// The three plain tabs at the top of the dashboard: OVERVIEW / VALUE / AGENTS.
+/// The plain tabs at the top of the dashboard: Overview / Burn / Value / Agents.
 /// The mockup dropped the numbered `NN /` kickers and the per-tab live number —
 /// each tab is now pure navigation, a plain word with a 2px accent tick when active.
+///
+/// Burn sits right after Overview (2026-11-14): it is the daily destination the menu bar strip
+/// opens, while Value stays the calm month-to-date ledger it was.
 enum DashboardTab: String, CaseIterable, Identifiable {
     case overview
+    case burn
     case value
     case agents
 
@@ -15,6 +19,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .overview: return "Overview"
+        case .burn: return "Burn"
         case .value: return "Value"
         case .agents: return "Agents"
         }
@@ -23,6 +28,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     var section: AppSection {
         switch self {
         case .overview: return .overview
+        case .burn: return .burn
         case .value: return .value
         case .agents: return .connections
         }
@@ -31,12 +37,13 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     /// Spoken label — identical to the visible label now that the kicker is gone.
     var accessibilityName: String { label }
 
-    /// ⌘1 / ⌘2 / ⌘3, in tab order (View menu).
+    /// ⌘1 … ⌘4, in tab order (View menu).
     var shortcutKey: KeyEquivalent {
         switch self {
         case .overview: return "1"
-        case .value: return "2"
-        case .agents: return "3"
+        case .burn: return "2"
+        case .value: return "3"
+        case .agents: return "4"
         }
     }
 
@@ -44,7 +51,8 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     /// holding an arrow key stops at the end of the strip instead of cycling.
     var next: DashboardTab? {
         switch self {
-        case .overview: return .value
+        case .overview: return .burn
+        case .burn: return .value
         case .value: return .agents
         case .agents: return nil
         }
@@ -53,7 +61,8 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     var previous: DashboardTab? {
         switch self {
         case .overview: return nil
-        case .value: return .overview
+        case .burn: return .overview
+        case .value: return .burn
         case .agents: return .value
         }
     }
@@ -69,6 +78,8 @@ enum DashboardTab: String, CaseIterable, Identifiable {
 /// driven directly by `viewModel.showingSettings`.
 enum AppSection: Equatable {
     case overview
+    /// Today's goal, streak, expiring windows, leaderboard, records, tier and badges.
+    case burn
     /// Plan value vs. API-equivalent cost, and lifetime totals (#23 / #41).
     case value
     case provider(ProviderID)
@@ -80,6 +91,7 @@ enum AppSection: Equatable {
     var tab: DashboardTab? {
         switch self {
         case .overview: return .overview
+        case .burn: return .burn
         case .value: return .value
         case .connections: return .agents
         case .provider: return nil
@@ -96,7 +108,7 @@ enum AppSection: Equatable {
     var usesTimeRange: Bool {
         switch self {
         case .overview, .provider: return true
-        case .value, .connections: return false
+        case .burn, .value, .connections: return false
         }
     }
 }

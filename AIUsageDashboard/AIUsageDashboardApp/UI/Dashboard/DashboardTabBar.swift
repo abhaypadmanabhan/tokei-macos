@@ -10,6 +10,8 @@ import AIUsageDashboardCore
 /// accent tick under the label (the only accent on this surface); an inactive tab
 /// is muted, never a second hue.
 struct DashboardTabBar: View {
+    /// The active tab's underline slides between tabs on the navigation spring.
+    @Namespace private var underline
     /// The active tab, or `nil` while a drill-in pane (provider / settings) owns
     /// the content.
     let activeTab: DashboardTab?
@@ -60,9 +62,12 @@ struct DashboardTabBar: View {
                 .foregroundColor(isActive ? PadzyTheme.ink : PadzyTheme.ink5)
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isActive ? PadzyTheme.accent : Color.clear)
-                        .frame(height: 2)
+                    if isActive {
+                        Rectangle()
+                            .fill(PadzyTheme.accent)
+                            .frame(height: 2)
+                            .matchedGeometryEffect(id: "active-tab", in: underline)
+                    }
                 }
                 .contentShape(Rectangle())
         }

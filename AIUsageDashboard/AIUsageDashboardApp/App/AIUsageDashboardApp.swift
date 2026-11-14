@@ -6,8 +6,9 @@ import Sparkle
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var windowVisibility = WindowVisibilityMonitor()
-    /// Observed here so the View and Go menus rebuild when Back becomes available.
-    @ObservedObject private var navigator = DashboardNavigator.shared
+    /// Observed here so the Go menu rebuilds when Back becomes available. Only that fact: the
+    /// navigator itself changes on every tab switch (see `NavigationMenuState`).
+    @ObservedObject private var menuState = NavigationMenuState.shared
 
     init() {
         UserDefaults.standard.register(defaults: CodexProvider.liveQuotaDefaults)
@@ -15,12 +16,15 @@ struct AIUsageDashboardApp: App {
         // warnings (§4 contract 4). Registering keeps every reader on the same default.
         UserDefaults.standard.register(defaults: ProviderMetadata.networkDefaultsOn)
         UserDefaults.standard.register(defaults: [AlertSettings.predictiveWarningsKey: true])
+        // Burn nudges are on until turned off (Abhay 2026-11-14; contract `BurnNudgePolicy`).
+        UserDefaults.standard.register(defaults: [BurnNudgePolicy.enabledKey: true])
     }
 
     var body: some Scene {
         Window("Tokei", id: DashboardWindow.id) {
             DashboardView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         }
         .windowStyle(.titleBar)
@@ -34,9 +38,9 @@ struct AIUsageDashboardApp: App {
                 }
             }
             DashboardCommands(
-                navigator: navigator,
+                navigator: DashboardNavigator.shared,
                 viewModel: appDelegate.viewModel,
-                canGoBack: navigator.canGoBack
+                canGoBack: menuState.canGoBack
             )
         }
 
@@ -46,6 +50,7 @@ struct AIUsageDashboardApp: App {
         Window("Menu bar popover", id: ProofRoute.popoverWindowID) {
             MenuBarView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
         }
         .windowResizability(.contentSize)
         #endif
@@ -53,10 +58,10 @@ struct AIUsageDashboardApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         } label: {
-            MenuBarLabel()
-                .environmentObject(appDelegate.viewModel)
+            MenuBarLabel(model: appDelegate.menuBarLabelModel)
         }
         .menuBarExtraStyle(.window)
         // Settings live in-app (dashboard right pane via the sidebar SETTINGS entry),
@@ -72,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// when neither the dashboard window nor the menu-bar popover is ever shown (a hidden
     /// launch, e.g. `open -j` or a login item set to hide). Views only read it.
     let viewModel = DashboardViewModel()
+    /// The burn surfaces' model: follows `viewModel.burn` and holds the pending celebration.
+    private(set) lazy var burnBoard = BurnBoard(viewModel: viewModel)
+    /// The status item's label values, narrowed from `viewModel` (see `MenuBarLabelModel`).
+    private(set) lazy var menuBarLabelModel = MenuBarLabelModel(viewModel: viewModel)
 
     // Feed URL + EdDSA key live in Info.plist (SUFeedURL/SUPublicEDKey); checks
     // are background-only unless an update exists or checkForUpdates() is called.

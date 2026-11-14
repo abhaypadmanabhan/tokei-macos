@@ -172,3 +172,32 @@ enum StatusFormatting {
         return "\(seconds / 86400)d"
     }
 }
+
+/// One terminal screen; account identities stay in JSON, never in the human summary.
+enum BurnFormatting {
+    static func render(_ snapshot: AgentSnapshot, now: Date) -> String {
+        var lines = ["Use it or lose it"]
+        if snapshot.stale == true || snapshot.generatedAt > now.addingTimeInterval(60) {
+            lines.append("Saved data is out of date. Open Tokei to refresh before choosing work.")
+        } else {
+            let windows = snapshot.burn?.opportunities(asOf: now) ?? []
+            if windows.isEmpty { lines.append("No fresh plan windows are expiring with plenty left.") }
+            lines += windows.prefix(8).map { $0.advice(asOf: now) }
+            if windows.count > 8 { lines.append("\(windows.count - 8) more windows; use get_burn_opportunities for all of them.") }
+        }
+        if let streak = snapshot.burn?.streak {
+            lines.append("Streak: \(streak.current) days · \(streak.todayHit ? "today's goal hit" : "today's goal still open")")
+        }
+        if let today = snapshot.burn?.today {
+            var line = "Today: " + (today.valueUSD.map { String(format: "$%.2f API-equivalent value", $0) } ?? "value unavailable")
+            if let goal = today.goal {
+                line += goal.unit == "usd" ? String(format: " · goal $%.2f", goal.target)
+                    : String(format: " · goal %.0f tokens", goal.target)
+            }
+            if let progress = today.progress { line += String(format: " · %.0f%%", progress * 100) }
+            lines.append(line)
+        }
+        lines.append("Use capacity already in your plan. Never buy credits or overage to burn it.")
+        return lines.joined(separator: "\n")
+    }
+}

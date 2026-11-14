@@ -1,0 +1,33 @@
+# Run journal 2026-11-14 (Tokei 0.12.0 Burn)
+
+- 00:58 contract a4a8894 on dev; worktrees made; panes w1:p1X (A codex), w1:p1Y (C claude), w1:p1Z (W claude).
+- 01:05 A started: GPT-6.1-Sol xhigh, Pro, weekly 91% left.
+- 01:12 C (c-ui, w1:p1Y) and W (w-site, w1:p1Z) started: Opus 5.5 xhigh, Claude Ultra, weekly 10% used. B worktree made, waits for a free slot.
+- 01:08 A result BLOCKED (all ACs pass; paid-usage attribution). Decision §7 burn eligibility; delta sent to A.
+- 01:30 A READY (5 commits, 216 targeted tests). Starting A reviewer (Claude) and B (Codex).
+- 01:34 r-engine (w1:p26, Claude Opus, review r1 of A) and b-agent (w1:p27, Codex Sol xhigh) started.
+- 01:27 A review r1 CHANGES (S1 blocker, S2-S4 should; S5,S6,S10,S11 accepted nits; S7,S8 declined). Fix round sent (A-fix-r1.md).
+- 01:35 W READY r1 (Paper, 9 Mobbin refs, Higgsfield $0.381, gates). Round 2a: next 16.2.10 -> 16.4.3 (critical RCE advisories). 2b reconcile after C merges.
+- 01:41 W round 2a done: next 16.4.3, audit critical 6->1 (proxy-addr via shadcn CLI, unused), high 44->34, 0 new.
+- 01:43 A r1 fixes READY (7d875a8, 526be36; 9 failing-first tests; 225 pass). Review r2 started.
+- 01:48 A review r2 APPROVE; merged dev 8dedb49; panes p1X, p26 closed. C told to merge dev.
+- 01:48 B done (AC1-6,8 pass; AC7 GUI proof deferred to integration). r-agent (w1:p2B) review r1 started.
+- 01:58 B review r1 CHANGES (S1 blocker wrong Claude config file; S2-S4 should). Fix round sent (B-fix-r1.md).
+- 01:58 r-site (w1:p2D, Codex Sol xhigh) review r1 of the website started.
+- 02:08 W review r1 CHANGES (S1 overage claim, S2 gate bypass; S3,S4 nits accepted). Round 2b sent (W-fix-r1.md).
+- 02:08 C: 13 commits, A/B perf measurement running (~50 min). r-ui (w1:p2E, Codex Sol) review r1 started early on the code.
+- 02:15 W round 2b done (S1-S4 fixed; shadcn removed; audit critical 0, high 6 build-only). Delta review deferred to after 2c.
+- 02:16 C review r1 CHANGES (S1 celebration consumed while covered, S2 share PNG stale). Sent C-fix-r1.md.
+- 02:17 B r1 fixes READY (502b80a, 05ee62d; 118 tests). Review r2 started.
+- 02:23 B review r2 APPROVE; merged 669328a. Orchestrator wiring: burn -> agent snapshot (SyncEngine.publishBurn), failing-first test, 32 related tests pass.
+- 02:34 Security review A+B: PASS (L1 low fixed + S16) in this commit; secscan PASS.
+- 02:35 W round 2c sent (match app captures + CLI strings, prune unused deps).
+- 02:53 C time-boxed: result by 03:25, no new measurement runs.
+- 02:58 C code final b861b73 (35/35, Release OK, secscan PASS). C review r2 started; proof placeholders due 03:20.
+- 03:02 C review r2 CHANGES (S1 remains for share sheet case). Sent one-line fix; r3 is the last round.
+- 03:08 C DONE (f16da97). C review r3 (final) started.
+- 03:09 W round 2c done (9d778e6; deps = next, react, react-dom). Review r2 started.
+- 03:12 C review r3 APPROVE; merged into dev. Panes p1Y, p2E closed. Full suite + Release build next.
+- 03:19 Full suite once: 1044 tests, 3 unexpected failures, all baseline on 3fd3e98 (date-dependent provider clock); fixed in tests, 33/33 pass.
+- 03:21 RELEASE BLOCKED: notarytool HTTP 403 "A required agreement is missing or has expired" (submit + history). Needs Abhay to accept the Apple Developer agreement. App built + Developer ID signed (verify-app static PASS). Proceeding: live proof on dist app, PR dev->main, site preview deploy.
+- 03:25 Live proof on dist/Tokei.app 0.12.0 (12), Developer ID signed: launch 343-368 ms warm, dropdown 145 ms warm, Burn tab real data, Settings Connect agents rendered (Debug route), tokei burn/dry-run/MCP 3 tools OK, snapshot has streak+today, idle CPU closed 0.28% (180 s). Installed 0.11 relaunched.

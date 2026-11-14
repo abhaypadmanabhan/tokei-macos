@@ -41,15 +41,15 @@ public actor AgentSnapshotWriter {
     /// atomically. Returns whether the write succeeded; a failure is logged, never
     /// thrown, so it can't take down a refresh cycle.
     @discardableResult
-    public func write(from snapshots: [ProviderSnapshot], generatedAt: Date = Date()) -> Bool {
-        persist(Self.buildSnapshot(from: snapshots, generatedAt: generatedAt))
+    public func write(from snapshots: [ProviderSnapshot], generatedAt: Date = Date(), burn: BurnSnapshot? = nil) -> Bool {
+        persist(Self.buildSnapshot(from: snapshots, generatedAt: generatedAt, burn: burn))
     }
 
     // MARK: - Pure mapping (internal stores → public schema)
 
     /// Map `[ProviderSnapshot]` to the public `AgentSnapshot`. Pure — no I/O, no clock
     /// beyond the injected `generatedAt` — so schema encoding is directly testable.
-    public static func buildSnapshot(from snapshots: [ProviderSnapshot], generatedAt: Date) -> AgentSnapshot {
+    public static func buildSnapshot(from snapshots: [ProviderSnapshot], generatedAt: Date, burn: BurnSnapshot? = nil) -> AgentSnapshot {
         let headlineDecisions = Dictionary(
             uniqueKeysWithValues: snapshots.compactMap { snapshot -> (ProviderID, AccountQuotaDecision)? in
                 guard let accounts = snapshot.accounts,
@@ -98,7 +98,21 @@ public actor AgentSnapshotWriter {
             generatedAt: generatedAt,
             providers: providers,
             aggregateUtilizationPercent: aggregate,
-            recommendation: recommendation
+            recommendation: recommendation,
+            burn: AgentBurn(
+                expiring: ExpiringHeadroomFinder.find(in: snapshots, now: generatedAt).map {
+                    AgentBurnWindow(provider: $0.providerID.rawValue, providerName: $0.providerName,
+                                    accountID: $0.accountID, type: $0.windowType.rawValue,
+                                    label: $0.windowLabel, usedPercent: $0.usedPercent,
+                                    unusedPercent: $0.unusedPercent, resetAt: $0.resetAt, observedAt: $0.observedAt)
+                },
+                streak: burn.map { AgentBurnStreak(current: $0.streak.current, todayHit: $0.streak.todayHit) },
+                today: burn.map {
+                    AgentBurnToday(valueUSD: $0.today.valueUSD,
+                                   goal: $0.today.goal.map { AgentBurnGoal(unit: $0.unit.rawValue, target: $0.target) },
+                                   progress: $0.today.progress)
+                }
+            )
         )
     }
 

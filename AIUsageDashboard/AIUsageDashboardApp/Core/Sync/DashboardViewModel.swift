@@ -23,36 +23,59 @@ public final class DashboardViewModel: ObservableObject {
     /// When the shown saved snapshots were last synced (the newest `lastSyncedAt` among
     /// them); `nil` when not showing saved numbers or no provider stamped a time.
     @Published public private(set) var savedSnapshotsDate: Date?
+    /// The burn game's state for the current snapshots (contract 2026-11-14). WP-A's
+    /// `BurnEngine` sets it after each refresh; surfaces only read it.
+    @Published public internal(set) var burn: BurnSnapshot = .empty(now: Date())
 
-    private let syncEngine: SyncEngine
+    let syncEngine: SyncEngine
     private let store: UsageStore
     private var calendar: Calendar
     /// Injected clock; internal so the pace extension reads the same "now".
     let now: @Sendable () -> Date
     private var updatesTask: Task<Void, Never>?
     private var timeZoneObserver: NSObjectProtocol?
+    let burnStateStore: BurnStateStore
+    let burnQuotaSeriesStore: QuotaSeriesStore
+    let burnDefaults: UserDefaults
+    let burnPricing: @Sendable () -> PricingEngine
+    let notifyBurn: @Sendable (BurnSnapshot, Calendar) async -> Void
+    var burnTask: Task<Void, Never>?
+    var burnGeneration = 0
 
     public init(
         syncEngine: SyncEngine = .shared,
         store: UsageStore = .shared,
         calendar: Calendar = .current,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        burnStateStore: BurnStateStore = .shared,
+        quotaSeriesStore: QuotaSeriesStore = .shared,
+        burnDefaults: UserDefaults = .standard,
+        burnPricing: @escaping @Sendable () -> PricingEngine = { PricingEngine(table: PricingService.cachedTable()) },
+        notifyBurn: @escaping @Sendable (BurnSnapshot, Calendar) async -> Void = {
+            await NotificationEngine.shared.evaluateBurn($0, calendar: $1)
+        }
     ) {
         self.syncEngine = syncEngine
         self.store = store
         self.calendar = calendar
         self.now = now
+        self.burnStateStore = burnStateStore
+        self.burnQuotaSeriesStore = quotaSeriesStore
+        self.burnDefaults = burnDefaults
+        self.burnPricing = burnPricing
+        self.notifyBurn = notifyBurn
     }
 
     deinit {
         updatesTask?.cancel()
+        burnTask?.cancel()
     }
 
     public func refresh() async {
         isLoading = true
         errorMessage = nil
         let live = await syncEngine.refreshAll()
-        applyLive(live)
+        await applyLive(live)
         isLoading = false
     }
 
@@ -71,13 +94,15 @@ public final class DashboardViewModel: ObservableObject {
             .sorted { (order[$0.providerID] ?? 0) < (order[$1.providerID] ?? 0) }
         savedSnapshotsDate = saved.compactMap(\.lastSyncedAt).max()
         showingSavedSnapshots = true
+        await recomputeBurn(saved: true)
     }
 
-    private func applyLive(_ live: [ProviderSnapshot]) {
+    private func applyLive(_ live: [ProviderSnapshot]) async {
         snapshots = live
-        lastSyncedAt = Date()
+        lastSyncedAt = now()
         showingSavedSnapshots = false
         savedSnapshotsDate = nil
+        await recomputeBurn(saved: false)
     }
 
     /// Starts the file watcher and subscribes to sync results so auto-refreshes
@@ -90,7 +115,7 @@ public final class DashboardViewModel: ObservableObject {
             await syncEngine.startAutoSync()
             for await snapshots in stream {
                 guard let self else { return }
-                await MainActor.run { self.applyLive(snapshots) }
+                await self.applyLive(snapshots)
             }
         }
     }
@@ -345,9 +370,9 @@ public final class DashboardViewModel: ObservableObject {
         )
     }
 
-    private var hiddenProviders: Set<ProviderID> {
+    var hiddenProviders: Set<ProviderID> {
         Set(ProviderID.allCases.filter { providerID in
-            UserDefaults.standard.bool(forKey: "provider_hidden_\(providerID.rawValue)")
+            burnDefaults.bool(forKey: "provider_hidden_\(providerID.rawValue)")
         })
     }
 

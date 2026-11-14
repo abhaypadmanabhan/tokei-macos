@@ -44,7 +44,10 @@ final class WindowVisibilityMonitor: ObservableObject {
         #if DEBUG
         // A capture tour must not depend on other apps leaving the window uncovered: covered,
         // the dashboard drops to a plain fill and its proof hooks leave the view tree.
-        if ProofRoute.isTour { isVisible = true; return }
+        // `-TokeiProofVisible YES` does the same for own-window captures and recordings, which
+        // must not depend on what another app puts in front (captures run 2026-11-14 01:44:
+        // a covered window captured as a plain fill).
+        if ProofRoute.isTour || ProofRoute.forceVisible { isVisible = true; return }
         #endif
         isVisible = NSApp?.occlusionState.contains(.visible) ?? true
     }

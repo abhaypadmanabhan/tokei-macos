@@ -110,6 +110,7 @@ struct SettingsDrawer: View {
 
     var body: some View {
         DrawerScaffold(title: "Settings", onClose: onClose) {
+            AgentConnectSection()
             planCostSection
             LiveQuotaSettingsSection(
                 providers: quotaProviders,
@@ -117,6 +118,7 @@ struct SettingsDrawer: View {
                 onChange: { Task { await viewModel.refresh() } }
             )
             QuotaAlertsSection(providers: quotaProviders, displayName: displayName)
+            BurnNudgesSection()
             appearanceSection
             LaunchAtLoginSection()
             versionSection

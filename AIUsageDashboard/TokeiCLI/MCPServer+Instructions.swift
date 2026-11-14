@@ -43,6 +43,10 @@ extension MCPServer {
         • If `stale` is true, Tokei may not be running or the recommendation expired. \
         Say so instead of presenting the numbers as current.
 
+        Before optional, batch or exploratory work, check `get_burn_opportunities` and \
+        use expiring flat-rate plan capacity first. Check the account's other limits too. \
+        Never spend credits or paid overage to burn capacity.
+
         Read-only. No network, no credentials, no other application's data.
         """
 }
@@ -55,7 +59,10 @@ extension MCPServer {
             "additionalProperties": false
         ]
         var usageInput = emptyInput
-        usageInput["properties"] = ["provider": ["type": "string", "enum": SnapshotReader.providerIDs.sorted()]]
+        usageInput["properties"] = [
+            "provider": ["type": "string", "enum": SnapshotReader.providerIDs.sorted()],
+            "detail": ["type": "string", "enum": ["summary"]]
+        ]
         var definitions: [[String: Any]] = [
             [
                 "name": ToolName.usage.rawValue,
@@ -67,7 +74,7 @@ extension MCPServer {
                     + "specific providers. Returns per-provider quota windows (used %, reset "
                     + "time, confidence, source), aggregate utilization, token counts, and "
                     + "timestamps. Includes a `stale` flag when the data is old or Tokei isn't "
-                    + "running. " + Self.accountContract + " Read-only; no network or credentials.",
+                    + "running. Set detail to summary for one short line per provider; omit it for the full schema. " + Self.accountContract + " Read-only; no network or credentials.",
                 "inputSchema": usageInput
             ],
             [
@@ -80,14 +87,26 @@ extension MCPServer {
                     + "reason, with generatedAt, ageSeconds, validUntil, and stale metadata. "
                     + Self.accountContract + " Cheap and read-only: prefer calling it over guessing.",
                 "inputSchema": emptyInput
+            ],
+            [
+                "name": ToolName.burnOpportunities.rawValue,
+                "description": "Before optional, batch or exploratory work, find fresh flat-rate plan windows "
+                    + "that reset soon with unused capacity. Spend these first, within the account's other limits. "
+                    + "Never spend credits or paid overage. Returns expiring windows soonest first and plain advice.",
+                "inputSchema": emptyInput
             ]
         ]
         for index in definitions.indices {
             let usage = index == 0
-            definitions[index]["title"] = usage ? "Usage and quota" : "Route recommendation"
+            definitions[index]["title"] = ["Usage and quota", "Route recommendation", "Use it or lose it"][index]
             definitions[index]["annotations"] = ["readOnlyHint": true, "idempotentHint": true, "openWorldHint": false]
             if negotiatedVersion == Self.protocolVersion {
-                definitions[index]["outputSchema"] = outputSchema(usage: usage)
+                definitions[index]["outputSchema"] = index == 2
+                    ? ["type": "object", "required": ["generatedAt", "stale", "expiring"],
+                       "properties": ["generatedAt": ["type": "string", "format": "date-time"],
+                                      "stale": ["type": "boolean"],
+                                      "expiring": ["type": "array", "items": ["type": "object"]]]]
+                    : outputSchema(usage: usage)
             }
         }
         return definitions

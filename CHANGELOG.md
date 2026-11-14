@@ -3,6 +3,55 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.12.0] — 2026-11-14
+
+Build 12. "Burn": Tokei turns the plans you already pay for into a game, tells you before unused capacity
+expires, connects to your agents in one click, and gets lighter on the main thread. Audit trail:
+`tasks/patch-bibles/2026-11-14.md` (Abhay's overnight answers, contract, four work packages, §7 burn
+eligibility), `tasks/herd/2026-11-14/` (briefs, results, every review round, journal),
+`tasks/reports/release-2026-11-14.md`. Every package was reviewed by a different model family than its
+author (Codex ↔ Claude), two rounds each; every CHANGES verdict led to a fix round with failing-first tests.
+
+### Added — the burn game
+- **Burn tab** (⌘2; Value and Agents move to ⌘3 and ⌘4): today's burn ring against a daily goal (break-even
+  pace: your plans' monthly cost spread over the month's days; without plan prices, your usual day's tokens),
+  a second lap past 1×, a streak of goal days, use-it-or-lose-it windows, this week's agents ranked, records
+  (best day, best week, best month multiple, longest streak), 13 badges with one plain rule each, and "left on
+  the table" from windows that reset in the last 7 days.
+- **Menu bar burn strip**: the ring, today's plan burn, the streak and the soonest expiring window.
+- **Celebrations** for a new badge, a broken record or a tier up (Goblin mode gets the biggest); one shot,
+  never while the Burn tab is covered, a static highlight under Reduce Motion.
+- **Share my week**: a 1200×630 card (week's value, multiple, tier, streak, top agent; no account names, emails
+  or paths) to copy or save.
+- **Use it or lose it nudges**: a quiet notification when a plan window resets soon with 40 % or more left, plus
+  badge and record moments, at most 2 a day, once per window; Settings › Burn nudges turns them off.
+- Burn counts **plan usage only**: agents with a plan price set, or (with none set) Claude Code, Codex, Cursor,
+  Antigravity and Copilot. Pay-per-token keys (Cline, opencode, Gemini) never count, and nudges never point at
+  credits or overage. Known limit: Claude extra-usage tokens sit inside Claude Code's logs and cannot be split out.
+
+### Added — agents
+- **Settings › Connect agents**: one-click Connect/Disconnect of Tokei's MCP server for Claude Code, Codex and
+  Cursor, and "Install the tokei command" (`~/.local/bin/tokei`).
+- `tokei mcp install|uninstall [--client claude|codex|cursor|all] [--dry-run]`, `tokei install [--force]`,
+  `tokei burn` (one screen: expiring windows, streak, today).
+- MCP: new `get_burn_opportunities` ("Use it or lose it": plan windows to spend first, with one advice line
+  each); `get_usage` takes `detail: "summary"` (81.7 % smaller text on the audited Mac); the agent snapshot gains
+  an additive `burn` block (expiring windows, streak, today). Existing tools, inputs and shapes are unchanged.
+- Registration never clobbers a user's config: a different existing `tokei` entry is refused, symlinked
+  dotfiles stay links, a backup keeps the original bytes, and a temporary app location (DMG, App Translocation)
+  is refused.
+
+### Changed — smoother
+- The menu bar item redraws only when its label changes, and the Value view computes its scorecard once per
+  render instead of about fifteen times. Measured on the audited Mac (Release, same rig, back to back): idle CPU
+  with the window closed 3.68 % → 2.17 %, open 6.20 % → 4.95 %; cold launch to window 335 → 293 ms; main-thread
+  stalls over 16.7 ms in a 40 s session 58 → 38 (longest 72 → 59 ms). Tab-switch hitches showed no measurable
+  change at this sample size.
+- Tab switches, drill-ins and the Settings drawers share one spring; instant under Reduce Motion.
+
+### Security
+- Provider window labels reach the terminal and agents only as short plain text.
+
 ## [0.11.0] — 2026-10-29
 
 Build 11. Accurate numbers, dollars on the main screen, a lighter footprint, safer network calls and a
