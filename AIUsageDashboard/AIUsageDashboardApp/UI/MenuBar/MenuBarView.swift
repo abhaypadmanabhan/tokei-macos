@@ -10,6 +10,9 @@ import AIUsageDashboardCore
 struct MenuBarView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(BurnBoard.self) private var burnBoard
+    /// True only while the panel is open. A celebration plays (and is used up) only where a
+    /// person can see it, never in a closed panel whose view SwiftUI kept alive.
+    @State private var onScreen = false
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -122,7 +125,7 @@ struct MenuBarView: View {
             } else {
                 BurnStrip(
                     snapshot: burnBoard.snapshot,
-                    celebration: burnBoard.celebration,
+                    celebration: onScreen ? burnBoard.celebration : nil,
                     onOpen: openBurn,
                     onCelebrationFinished: { burnBoard.finish($0) }
                 )
@@ -147,6 +150,8 @@ struct MenuBarView: View {
         .padding(10)
         .background(PadzyTheme.ground)
         .preferredColorScheme(.dark)
+        .onAppear { onScreen = true }
+        .onDisappear { onScreen = false }
         // Reload the previous-period pace baselines after each sync (and on open).
         .task(id: viewModel.lastSyncedAt) {
             await loadPaceBaselines()
