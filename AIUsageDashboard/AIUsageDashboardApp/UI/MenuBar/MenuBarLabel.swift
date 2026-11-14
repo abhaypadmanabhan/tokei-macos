@@ -15,7 +15,8 @@ import AIUsageDashboardCore
 /// IS the state). While a sync is in flight a small circular spinner trails the
 /// value (static frame under Reduce Motion).
 struct MenuBarLabel: View {
-    @EnvironmentObject private var viewModel: DashboardViewModel
+    /// Narrow on purpose: see `MenuBarLabelModel` (a label render redraws the status item).
+    let model: MenuBarLabelModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage(MenuBarDisplayMode.storageKey)
@@ -38,18 +39,7 @@ struct MenuBarLabel: View {
     }
 
     /// The constraining reading across every provider — what the bars fill by.
-    private var tightestPercent: Double? {
-        viewModel.tightestAccountPressure?.usedPercent
-    }
-
-    /// All-time tokens across visible providers (#41). Hidden agents are skipped
-    /// here exactly as they are in the chip strip and the rest of the menu bar.
-    private var lifetimeTotal: MaxxerMath.LifetimeTotal? {
-        MaxxerMath.lifetimeTotal(
-            in: viewModel.snapshots,
-            hiddenProviders: Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
-        )
-    }
+    private var tightestPercent: Double? { model.tightestPercent }
 
     private var mark: some View {
         Image(nsImage: TokeiStatusIcon.image(percent: tightestPercent))
@@ -57,7 +47,7 @@ struct MenuBarLabel: View {
 
     @ViewBuilder
     private var syncSpinner: some View {
-        if viewModel.isLoading {
+        if model.isLoading {
             Image(nsImage: TokeiStatusIcon.spinnerImage(phase: reduceMotion ? 0 : spinnerPhase))
                 .accessibilityLabel("Syncing")
         }
@@ -68,7 +58,7 @@ struct MenuBarLabel: View {
     /// instant it ends — nothing wakes the main runloop at idle (the 0.4.0
     /// `Timer.publish(…).autoconnect()` ran ~6.6×/s for the whole app lifetime).
     private func spinnerLoop() async {
-        guard viewModel.isLoading, !reduceMotion else { return }
+        guard model.isLoading, !reduceMotion else { return }
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: UInt64(Self.spinnerTick * 1_000_000_000))
             if Task.isCancelled { break }
@@ -85,13 +75,13 @@ struct MenuBarLabel: View {
                 EmptyView()
 
             case .todayTokens:
-                if viewModel.todayIsUnknown {
+                if model.todayIsUnknown {
                     // Saved numbers from an earlier day: their "today" is not today.
                     Text("—")
                 } else {
-                    Text(TokenFormatter.format(viewModel.menuBarTodayTotal))
+                    Text(TokenFormatter.format(model.todayTotal))
                         .monospacedDigit()
-                        .rollingNumber(Double(viewModel.menuBarTodayTotal), reduceMotion: reduceMotion)
+                        .rollingNumber(Double(model.todayTotal), reduceMotion: reduceMotion)
                 }
 
             case .tightestPercent:
@@ -105,12 +95,12 @@ struct MenuBarLabel: View {
                 }
 
             case .lifetime:
-                if let lifetimeTotal {
+                if let lifetimeTokens = model.lifetimeTokens {
                     // Still ONE aggregate value: `TokenFormatter` caps it at a
                     // "1.2B"-shaped string, so the item's width stays fixed.
-                    Text(TokenFormatter.format(lifetimeTotal.tokens))
+                    Text(TokenFormatter.format(lifetimeTokens))
                         .monospacedDigit()
-                        .rollingNumber(Double(lifetimeTotal.tokens), reduceMotion: reduceMotion)
+                        .rollingNumber(Double(lifetimeTokens), reduceMotion: reduceMotion)
                 } else {
                     // No provider reports a lifetime figure or keeps daily logs.
                     Text("—")
@@ -119,7 +109,7 @@ struct MenuBarLabel: View {
 
             syncSpinner
         }
-        .task(id: viewModel.isLoading) {
+        .task(id: model.isLoading) {
             await spinnerLoop()
         }
     }

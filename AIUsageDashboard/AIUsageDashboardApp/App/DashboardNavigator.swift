@@ -11,7 +11,9 @@ final class DashboardNavigator: ObservableObject {
     static let shared = DashboardNavigator()
 
     /// The pane on screen: a tab's own content or a provider drill-in.
-    @Published private(set) var section: AppSection = .overview
+    @Published private(set) var section: AppSection = .overview {
+        didSet { NavigationMenuState.shared.update(canGoBack: section.isDrillIn) }
+    }
     /// The tab a drill-in returns to, and the pane that stays rendered underneath one.
     /// Only a tab selection writes it, so drilling in and backing out is a round trip.
     @Published private(set) var homeTab: DashboardTab = .overview
@@ -20,20 +22,27 @@ final class DashboardNavigator: ObservableObject {
 
     func select(_ tab: DashboardTab, viewModel: DashboardViewModel) {
         navigate(to: tab.section, homeTab: tab)
-        viewModel.showingSettings = false
+        closeSettings(viewModel)
     }
 
     func open(_ providerID: ProviderID, viewModel: DashboardViewModel) {
-        viewModel.selectedProvider = providerID
+        if viewModel.selectedProvider != providerID { viewModel.selectedProvider = providerID }
         navigate(to: .provider(providerID))
-        viewModel.showingSettings = false
+        closeSettings(viewModel)
     }
 
     /// Leaves a drill-in for the tab that owns the content behind it; no-op on a tab.
     func back(viewModel: DashboardViewModel) {
         guard canGoBack else { return }
         navigate(to: homeTab.section)
-        viewModel.showingSettings = false
+        closeSettings(viewModel)
+    }
+
+    /// Writes only when the drawer is open. A `@Published` write sends `objectWillChange` even
+    /// when the value is unchanged, and every view model observer re-renders on it (WP-C AC 6:
+    /// each tab switch used to redraw the menu bar item this way).
+    private func closeSettings(_ viewModel: DashboardViewModel) {
+        if viewModel.showingSettings { viewModel.showingSettings = false }
     }
 
     /// Single write point for `section` (and `homeTab` on a tab switch), so tab switches and
@@ -48,6 +57,19 @@ final class DashboardNavigator: ObservableObject {
         } else {
             withAnimation(PadzyMotion.navigate, apply)
         }
+    }
+}
+
+/// The one navigation fact the menu bar's commands need: whether Go › Back applies. The App
+/// observes this instead of the navigator, so a tab switch (which never changes it) does not
+/// re-evaluate the App's scenes, the menu bar item's label among them (WP-C AC 6).
+@MainActor
+final class NavigationMenuState: ObservableObject {
+    static let shared = NavigationMenuState()
+    @Published private(set) var canGoBack = false
+
+    func update(canGoBack value: Bool) {
+        if canGoBack != value { canGoBack = value }
     }
 }
 

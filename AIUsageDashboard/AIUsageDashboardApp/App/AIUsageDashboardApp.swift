@@ -6,8 +6,9 @@ import Sparkle
 struct AIUsageDashboardApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var windowVisibility = WindowVisibilityMonitor()
-    /// Observed here so the View and Go menus rebuild when Back becomes available.
-    @ObservedObject private var navigator = DashboardNavigator.shared
+    /// Observed here so the Go menu rebuilds when Back becomes available. Only that fact: the
+    /// navigator itself changes on every tab switch (see `NavigationMenuState`).
+    @ObservedObject private var menuState = NavigationMenuState.shared
 
     init() {
         UserDefaults.standard.register(defaults: CodexProvider.liveQuotaDefaults)
@@ -37,9 +38,9 @@ struct AIUsageDashboardApp: App {
                 }
             }
             DashboardCommands(
-                navigator: navigator,
+                navigator: DashboardNavigator.shared,
                 viewModel: appDelegate.viewModel,
-                canGoBack: navigator.canGoBack
+                canGoBack: menuState.canGoBack
             )
         }
 
@@ -60,8 +61,7 @@ struct AIUsageDashboardApp: App {
                 .environment(appDelegate.burnBoard)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         } label: {
-            MenuBarLabel()
-                .environmentObject(appDelegate.viewModel)
+            MenuBarLabel(model: appDelegate.menuBarLabelModel)
         }
         .menuBarExtraStyle(.window)
         // Settings live in-app (dashboard right pane via the sidebar SETTINGS entry),
@@ -79,6 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = DashboardViewModel()
     /// The burn surfaces' model: follows `viewModel.burn` and holds the pending celebration.
     private(set) lazy var burnBoard = BurnBoard(viewModel: viewModel)
+    /// The status item's label values, narrowed from `viewModel` (see `MenuBarLabelModel`).
+    private(set) lazy var menuBarLabelModel = MenuBarLabelModel(viewModel: viewModel)
 
     // Feed URL + EdDSA key live in Info.plist (SUFeedURL/SUPublicEDKey); checks
     // are background-only unless an update exists or checkForUpdates() is called.
