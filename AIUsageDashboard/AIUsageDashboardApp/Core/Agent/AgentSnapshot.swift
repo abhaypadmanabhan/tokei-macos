@@ -113,6 +113,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
     /// provider reported usable quota.
     public let aggregateUtilizationPercent: Double?
     public let recommendation: AgentRecommendation?
+    /// Optional additive v1 burn signals. Feature-detect when reading older snapshots.
+    public let burn: AgentBurn?
 
     /// Reader-computed, **omitted on disk** (the writer never sets them). The `tokei`
     /// helper populates these when emitting a response so agents never treat old data
@@ -133,7 +135,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         aggregateUtilizationPercent: Double?,
         recommendation: AgentRecommendation?,
         stale: Bool? = nil,
-        ageSeconds: Int? = nil
+        ageSeconds: Int? = nil,
+        burn: AgentBurn? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -142,6 +145,7 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         self.recommendation = recommendation
         self.stale = stale
         self.ageSeconds = ageSeconds
+        self.burn = burn
     }
 }
 
@@ -392,7 +396,7 @@ public extension AgentSnapshot {
             .appendingPathComponent(defaultFileName, isDirectory: false)
     }
 
-    /// Canonical encoder — ISO8601 dates, stable key order, pretty-printed. Matches
+    /// Canonical encoder — ISO8601 dates, stable key order, compact. Matches
     /// the house style in `QuotaSeriesStore`/`CooldownStore`.
     static func makeEncoder() -> JSONEncoder {
         let encoder = JSONEncoder()
@@ -476,7 +480,8 @@ public extension AgentSnapshot {
             aggregateUtilizationPercent: aggregateUtilizationPercent,
             recommendation: replacement,
             stale: stale,
-            ageSeconds: ageSeconds
+            ageSeconds: ageSeconds,
+            burn: burn
         )
     }
 }
@@ -493,4 +498,104 @@ public extension AgentSnapshot {
         if interval >= 60 { return "\(Int(interval / 60))m" }
         return "<1m"
     }
+}
+
+
+/// Foundation-only projection: no game engine or app framework is linked into the helper.
+public struct AgentBurn: Codable, Sendable, Equatable {
+    public let expiring: [AgentBurnWindow]
+    public let streak: AgentBurnStreak?
+    public let today: AgentBurnToday?
+
+    public init(expiring: [AgentBurnWindow], streak: AgentBurnStreak? = nil, today: AgentBurnToday? = nil) {
+        self.expiring = expiring
+        self.streak = streak
+        self.today = today
+    }
+
+    /// A saved opportunity stops being actionable when its reset or reading expires.
+    public func opportunities(asOf now: Date) -> [AgentBurnWindow] {
+        expiring.filter { window in
+            guard window.resetAt > now,
+                  ["session", "fiveHour", "daily", "weekly", "monthly"].contains(window.type),
+                  window.usedPercent.isFinite, (0...75).contains(window.usedPercent),
+                  window.unusedPercent.isFinite,
+                  abs(window.unusedPercent - (100 - window.usedPercent)) < 0.01 else { return false }
+            if let observed = window.observedAt {
+                return (-60...1_800).contains(now.timeIntervalSince(observed))
+            }
+            return true
+        }.sorted { $0.resetAt < $1.resetAt }
+    }
+}
+
+public struct AgentBurnWindow: Codable, Sendable, Equatable {
+    public let provider: String
+    public let providerName: String
+    public let accountID: String?
+    public let type: String
+    public let label: String?
+    public let usedPercent: Double
+    public let unusedPercent: Double
+    public let resetAt: Date
+    public let observedAt: Date?
+
+    public init(provider: String, providerName: String, accountID: String? = nil,
+                type: String, label: String? = nil, usedPercent: Double, unusedPercent: Double,
+                resetAt: Date, observedAt: Date? = nil) {
+        self.provider = provider
+        self.providerName = providerName
+        self.accountID = accountID
+        self.type = type
+        self.label = label
+        self.usedPercent = usedPercent
+        self.unusedPercent = unusedPercent
+        self.resetAt = resetAt
+        self.observedAt = observedAt
+    }
+
+    public var windowName: String {
+        if let label, !label.isEmpty { return label }
+        switch type {
+        case "fiveHour": return "5-hour window"
+        case "session": return "session window"
+        case "daily": return "daily window"
+        case "weekly": return "weekly window"
+        case "monthly": return "monthly window"
+        default: return "plan window"
+        }
+    }
+
+    public func advice(asOf now: Date) -> String {
+        let seconds = max(0, resetAt.timeIntervalSince(now))
+        let remaining: String
+        if seconds < 60 { remaining = "less than 1 min" }
+        else if seconds < 3_600 { remaining = "\(Int(seconds / 60)) min" }
+        else if seconds < 86_400 { remaining = "\(Int(seconds / 3_600)) h" }
+        else { remaining = "\(Int(seconds / 86_400)) d" }
+        return "\(providerName) \(windowName) has \(Int(unusedPercent.rounded()))% left and resets in \(remaining): run optional or batch work there first"
+    }
+}
+
+public struct AgentBurnStreak: Codable, Sendable, Equatable {
+    public let current: Int
+    public let todayHit: Bool
+    public init(current: Int, todayHit: Bool) { self.current = current; self.todayHit = todayHit }
+}
+
+public struct AgentBurnToday: Codable, Sendable, Equatable {
+    public let valueUSD: Double?
+    public let goal: AgentBurnGoal?
+    public let progress: Double?
+    public init(valueUSD: Double?, goal: AgentBurnGoal?, progress: Double?) {
+        self.valueUSD = valueUSD
+        self.goal = goal
+        self.progress = progress
+    }
+}
+
+public struct AgentBurnGoal: Codable, Sendable, Equatable {
+    public let unit: String
+    public let target: Double
+    public init(unit: String, target: Double) { self.unit = unit; self.target = target }
 }
