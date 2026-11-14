@@ -3,7 +3,7 @@
 # a worker whose turn ended (not "working") on two polls in a row, or the time limit.
 RUN=/Users/abhayp/src/tokei-macos/tasks/herd/2026-11-14
 max=$1; shift
-tmp=$(mktemp -d)
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 end=$(( $(date +%s) + max ))
 while [ "$(date +%s)" -lt "$end" ]; do
   for pair in "$@"; do
