@@ -70,8 +70,8 @@ struct DashboardView: View {
         .frame(minWidth: 640, minHeight: 480)
         .preferredColorScheme(.dark)
         // Slide/fade the drawers in and out; static under Reduce Motion.
-        .animation(reduceMotion ? nil : PadzyMotion.quick, value: viewModel.showingSettings)
-        .animation(reduceMotion ? nil : PadzyMotion.quick, value: showingAddAgent)
+        .animation(reduceMotion ? nil : PadzyMotion.navigate, value: viewModel.showingSettings)
+        .animation(reduceMotion ? nil : PadzyMotion.navigate, value: showingAddAgent)
     }
 
     /// The dashboard shell — tab bar, routed content, and the status strip.
@@ -166,7 +166,11 @@ struct DashboardView: View {
     /// selector rather than as navigation to somewhere else.
     private var content: some View {
         ZStack(alignment: .topLeading) {
+            // The new tab fades in on the navigation spring; the old one leaves at once, so a
+            // switch never renders two heavy panes together.
             tabPane
+                .id(homeTab)
+                .transition(reduceMotion ? .identity : .asymmetric(insertion: .opacity, removal: .identity))
             if section.isDrillIn {
                 VStack(spacing: 0) {
                     backBar

@@ -3,7 +3,7 @@ import SwiftUI
 import AIUsageDashboardCore
 
 /// Where the dashboard window is: the tab, and the drill-in over it. Lives outside the view
-/// so the menu bar's View and Go menus (⌘1/⌘2/⌘3, ⌘[) drive the same state the tab bar
+/// so the menu bar's View and Go menus (⌘1 … ⌘4, ⌘[) drive the same state the tab bar
 /// and arrow keys do. The App observes it, which is what rebuilds the menus when Back
 /// becomes available (SwiftUI `Commands` do not observe models themselves).
 @MainActor
@@ -19,8 +19,7 @@ final class DashboardNavigator: ObservableObject {
     var canGoBack: Bool { section.isDrillIn }
 
     func select(_ tab: DashboardTab, viewModel: DashboardViewModel) {
-        homeTab = tab
-        navigate(to: tab.section)
+        navigate(to: tab.section, homeTab: tab)
         viewModel.showingSettings = false
     }
 
@@ -37,13 +36,17 @@ final class DashboardNavigator: ObservableObject {
         viewModel.showingSettings = false
     }
 
-    /// Single write point for `section`, so the drill-in transition animates in one place
-    /// and is skipped under Reduce Motion (the pane swaps instantly instead of sliding).
-    private func navigate(to destination: AppSection) {
+    /// Single write point for `section` (and `homeTab` on a tab switch), so tab switches and
+    /// drill-ins share one spring (`PadzyMotion.navigate`) and Reduce Motion swaps instantly.
+    private func navigate(to destination: AppSection, homeTab tab: DashboardTab? = nil) {
+        let apply = {
+            if let tab { self.homeTab = tab }
+            self.section = destination
+        }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            section = destination
+            apply()
         } else {
-            withAnimation(.easeOut(duration: 0.18)) { section = destination }
+            withAnimation(PadzyMotion.navigate, apply)
         }
     }
 }
