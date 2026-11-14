@@ -23,6 +23,9 @@ public final class DashboardViewModel: ObservableObject {
     /// When the shown saved snapshots were last synced (the newest `lastSyncedAt` among
     /// them); `nil` when not showing saved numbers or no provider stamped a time.
     @Published public private(set) var savedSnapshotsDate: Date?
+    /// The burn game's state for the current snapshots (contract 2026-11-14). WP-A's
+    /// `BurnEngine` sets it after each refresh; surfaces only read it.
+    @Published public internal(set) var burn: BurnSnapshot = .empty(now: Date())
 
     private let syncEngine: SyncEngine
     private let store: UsageStore
