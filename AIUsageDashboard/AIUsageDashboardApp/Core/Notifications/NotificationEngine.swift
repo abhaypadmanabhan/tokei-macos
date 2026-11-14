@@ -52,6 +52,9 @@ public actor NotificationEngine {
     private var firedKeys: Set<FiredNotificationKey>
     private var predictiveKeys: Set<PredictiveQuotaWarning.Key>
     private var isEvaluating = false
+    private static let burnStateKey = "burnNotificationState"
+    private var burnState: BurnNudgeState
+    private var isEvaluatingBurn = false
 
     public init(
         notificationCenter: UserNotificationCenter = UserNotificationCenterWrapper(),
@@ -62,6 +65,9 @@ public actor NotificationEngine {
         self.clock = clock
         self.userDefaults = userDefaults
         self.firedKeys = Self.loadFiredKeys(from: userDefaults)
+        self.burnState = userDefaults.data(forKey: Self.burnStateKey).flatMap {
+            try? JSONDecoder().decode(BurnNudgeState.self, from: $0)
+        } ?? BurnNudgeState()
         self.predictiveKeys = userDefaults.data(forKey: Self.predictiveKeysDefaultsKey).flatMap {
             try? JSONDecoder().decode(Set<PredictiveQuotaWarning.Key>.self, from: $0)
         } ?? []
@@ -107,6 +113,43 @@ public actor NotificationEngine {
 
         firedKeys = result.fired
         await deliver(thresholds: result.notifications, predictions: predictions)
+    }
+
+    /// Quiet burn notifications share one persisted cap per local day. Failed or denied
+    /// deliveries never consume that cap or suppress a later successful attempt.
+    public func evaluateBurn(_ snapshot: BurnSnapshot, calendar: Calendar = .current) async {
+        guard burnNotificationsEnabled, !isEvaluatingBurn else { return }
+        isEvaluatingBurn = true
+        defer { isEvaluatingBurn = false }
+        let now = clock.now()
+        burnState.advance(to: now, calendar: calendar)
+        guard burnState.count < BurnNudgePolicy.maxPerDay,
+              !BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, windowKeys: burnState.windows, now: now).isEmpty else { return }
+        do {
+            guard try await notificationCenter.requestAuthorization(options: [.alert, .sound]) else { return }
+        } catch { return }
+        let deliveryTime = clock.now()
+        burnState.advance(to: deliveryTime, calendar: calendar)
+        let candidates = BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, windowKeys: burnState.windows, now: deliveryTime)
+        for candidate in candidates {
+            guard burnNotificationsEnabled, burnState.count < BurnNudgePolicy.maxPerDay else { break }
+            let request = NotificationRequest(identifier: "burn_" + candidate.key,
+                                              title: "Tokei", body: candidate.body, sound: false)
+            do {
+                try await notificationCenter.add(request: request)
+                burnState.count += 1
+                burnState.delivered[candidate.key] = deliveryTime
+                if let key = candidate.windowKey { burnState.windows.update(with: key) }
+                if let data = try? JSONEncoder().encode(burnState) {
+                    userDefaults.set(data, forKey: Self.burnStateKey)
+                }
+            } catch { continue }
+        }
+    }
+
+    private var burnNotificationsEnabled: Bool {
+        (userDefaults.object(forKey: Self.notificationsEnabledKey) as? Bool ?? true) &&
+            (userDefaults.object(forKey: BurnNudgePolicy.enabledKey) as? Bool ?? true)
     }
 
     private func deliver(thresholds: [ThresholdEvaluation], predictions: [PredictiveQuotaWarning]) async {
