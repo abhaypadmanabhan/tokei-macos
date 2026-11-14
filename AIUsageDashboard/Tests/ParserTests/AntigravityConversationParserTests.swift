@@ -132,7 +132,8 @@ final class AntigravityConversationParserTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "antigravityOnlineQuotaEnabled")
         let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
-                                          conversationParser: parser(), userDefaults: defaults)
+                                          conversationParser: parser(), userDefaults: defaults, calendar: calendar,
+                                          now: { Date(timeIntervalSince1970: 1_793_188_800) })
         let snapshot = try await provider.fetchSnapshot()
         XCTAssertEqual(snapshot.todayUsage.inputTokens, 1_000_000)
         XCTAssertEqual(snapshot.todayUsage.confidence, .localParsed)
@@ -162,7 +163,8 @@ final class AntigravityConversationParserTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }
         let provider = AntigravityProvider(stateDatabaseURL: directory.appendingPathComponent("missing-state"),
-                                          conversationParser: parser(), userDefaults: defaults)
+                                          conversationParser: parser(), userDefaults: defaults, calendar: calendar,
+                                          now: { Date(timeIntervalSince1970: 1_793_188_800) })
         let availability = await provider.detectAvailability()
         XCTAssertEqual(availability, .installed)
         let snapshot = try await provider.fetchSnapshot()

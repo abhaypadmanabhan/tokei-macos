@@ -120,7 +120,8 @@ final class CopilotSessionParserTests: XCTestCase {
 
     func testProviderPricesCLIModelAndPublishesLocalDailyUsage() async throws {
         try write(shutdown("2026-10-28T10:00:00Z", input: 1_000_000, output: 100_000))
-        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser())
+        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser(), calendar: calendar,
+                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })
         let snapshot = try await provider.fetchSnapshot()
         XCTAssertEqual(snapshot.todayUsage.inputTokens, 1_000_000)
         XCTAssertEqual(snapshot.todayUsage.confidence, .localParsed)
@@ -134,7 +135,8 @@ final class CopilotSessionParserTests: XCTestCase {
             + #""claude-sonnet-4.6":{"usage":{"inputTokens":1000000,"outputTokens":100000}},"#
             + #""claude-opus-5.5":{"usage":{"inputTokens":1000000,"outputTokens":100000}}}}}"#
         try write(record)
-        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser())
+        let provider = CopilotProvider(installationMarkers: [], extensionDirectories: [], sessionParser: parser(), calendar: calendar,
+                                       now: { Date(timeIntervalSince1970: 1_793_188_800) })
         let snapshot = try await provider.fetchSnapshot()
         let models = try XCTUnwrap(snapshot.dailyModelUsage?.values.first)
         XCTAssertEqual(Set(models.keys), ["claude-sonnet-4.6", "claude-opus-5.5"])
