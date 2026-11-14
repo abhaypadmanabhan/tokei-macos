@@ -75,7 +75,7 @@ extension UsageAnalytics {
             ($0.providerID, costDays(for: $0, pricing: pricing, calendar: calendar, today: today))
         })
         var days: [Date: CostDay] = [:]
-        for providerDays in perProvider.values {
+        for (_, providerDays) in perProvider.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             for (day, cost) in providerDays { days[day, default: CostDay()].add(cost) }
         }
         let pricedFrom = snapshots
@@ -119,10 +119,10 @@ extension UsageAnalytics {
     ) -> [Date: CostDay] {
         var days: [Date: CostDay] = [:]
         var named: [Date: Int] = [:]
-        for (date, models) in snapshot.dailyModelUsage ?? [:] {
+        for (date, models) in (snapshot.dailyModelUsage ?? [:]).sorted(by: { $0.key < $1.key }) {
             let day = calendar.startOfDay(for: date)
             days[day] = days[day] ?? CostDay()
-            for (model, usage) in models {
+            for (model, usage) in models.sorted(by: { $0.key < $1.key }) {
                 let tokens = usage.totalTokens ?? 0
                 named[day, default: 0] += tokens
                 let usd = pricing.cost(model: model, tokens: usage)
@@ -206,7 +206,7 @@ extension UsageAnalytics {
         var result: [ProviderID: CostSummary.ProviderCost] = [:]
         for snapshot in snapshots {
             var total = CostDay()
-            for (day, cost) in perProvider[snapshot.providerID] ?? [:] where inRange(day) { total.add(cost) }
+            for (day, cost) in (perProvider[snapshot.providerID] ?? [:]).sorted(by: { $0.key < $1.key }) where inRange(day) { total.add(cost) }
             guard total.pricedTokens + total.unpricedTokens > 0 else { continue }
             if snapshot.dailyModelUsage == nil, reportedCostProviders.contains(snapshot.providerID),
                let usd = snapshot.costUsage?.amount, usd >= 0, usd.isFinite {
