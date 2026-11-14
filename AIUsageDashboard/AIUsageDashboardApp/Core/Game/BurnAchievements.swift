@@ -3,7 +3,7 @@ import Foundation
 extension BurnEngine {
     static func recordCandidates(
         history: BurnHistory, plans: [ProviderID: Double], multiple: Double?, month: Date,
-        streak: BurnStreak, now: Date, calendar: Calendar
+        streak: BurnStreak, longestStreakStart: Date?, now: Date, calendar: Calendar
     ) -> [BurnRecord] {
         let priced = !history.dollars.isEmpty
         let values = priced ? history.dollars : history.tokens.mapValues(Double.init)
@@ -42,8 +42,9 @@ extension BurnEngine {
                 result.append(BurnRecord(kind: .bestMonthMultiple, value: best.value, unit: nil, achievedAt: best.key))
             }
         }
-        if streak.longest > 0 {
-            result.append(BurnRecord(kind: .longestStreak, value: Double(streak.longest), unit: nil, achievedAt: now))
+        if streak.longest > 0, let longestStreakStart {
+            result.append(BurnRecord(kind: .longestStreak, value: Double(streak.longest), unit: nil,
+                                     achievedAt: longestStreakStart))
         }
         return result
     }

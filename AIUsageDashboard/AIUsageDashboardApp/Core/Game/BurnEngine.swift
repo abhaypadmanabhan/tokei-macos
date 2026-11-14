@@ -23,8 +23,9 @@ public enum BurnEngine {
         let hits = Set(history.tokens.keys).union(history.dollars.keys).filter {
             history.hit(on: $0, monthlyUSD: monthlyUSD, calendar: calendar)
         }.sorted()
-        let streak = streak(hits: hits, today: today, todayHit: day.goalHit,
-                            storedLongest: state.longestStreak, calendar: calendar)
+        let runs = streak(hits: hits, today: today, todayHit: day.goalHit,
+                          storedLongest: state.longestStreak, calendar: calendar)
+        let streak = runs.value
         let month = calendar.dateInterval(of: .month, for: now)?.start ?? today
         let multiple = UsageAnalytics.burnMonthMultiple(snapshots: visible, monthlyPlanUSD: plans,
                                                        pricing: pricing, now: now, calendar: calendar)
@@ -35,14 +36,16 @@ public enum BurnEngine {
         var next = state
         var moments: [BurnMoment] = []
         let candidates = recordCandidates(history: history, plans: plans, multiple: multiple,
-                                          month: month, streak: streak, now: now, calendar: calendar)
+                                          month: month, streak: streak, longestStreakStart: runs.longestStart, now: now, calendar: calendar)
         for record in candidates {
             let old = next.records[record.kind.rawValue]
             // Units cannot be compared. Changing from token goals to dollar goals seeds
             // that record without claiming that dollars beat a number of tokens.
             if old == nil || old?.unit != record.unit?.rawValue || record.value > (old?.value ?? 0) {
                 next.records[record.kind.rawValue] = BurnState.Record(record)
-                if state.initialized && (old == nil || old?.unit == record.unit?.rawValue) {
+                if state.initialized, let old, old.unit == record.unit?.rawValue,
+                   isNewCurrentPeriod(record, beating: old, today: today,
+                                      currentStreakStart: runs.currentStart, calendar: calendar) {
                     moments.append(.record(record.kind))
                 }
             }
@@ -90,23 +93,49 @@ public enum BurnEngine {
 
     private static func tierRank(_ tier: MaxxerTier) -> Int { MaxxerTier.allCases.firstIndex(of: tier) ?? 0 }
 
+    private static func isNewCurrentPeriod(
+        _ record: BurnRecord, beating old: BurnState.Record, today: Date,
+        currentStreakStart: Date?, calendar: Calendar
+    ) -> Bool {
+        let currentStart: Date?
+        switch record.kind {
+        case .bestDay: currentStart = today
+        case .bestWeek: currentStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start
+        case .bestMonthMultiple: currentStart = calendar.dateInterval(of: .month, for: today)?.start
+        case .longestStreak: currentStart = currentStreakStart
+        }
+        guard let currentStart else { return false }
+        return record.achievedAt == currentStart && old.achievedAt < currentStart
+    }
+
     private static func streak(hits: [Date], today: Date, todayHit: Bool,
-                               storedLongest: Int, calendar: Calendar) -> BurnStreak {
+                               storedLongest: Int, calendar: Calendar)
+        -> (value: BurnStreak, longestStart: Date?, currentStart: Date?) {
         var run = 0, longest = 0
-        var previous: Date?
+        var previous: Date?, runStart: Date?, longestStart: Date?
         for day in hits {
-            run = previous.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } == day ? run + 1 : 1
-            longest = max(longest, run)
+            if previous.flatMap({ calendar.date(byAdding: .day, value: 1, to: $0) }) == day {
+                run += 1
+            } else {
+                run = 1
+                runStart = day
+            }
+            if run > longest { longest = run; longestStart = runStart }
             previous = day
         }
         let hitSet = Set(hits)
-        var end = todayHit ? today : calendar.date(byAdding: .day, value: -1, to: today)
+        let currentEnd = todayHit ? today : calendar.date(byAdding: .day, value: -1, to: today)
+        var end = currentEnd
         var current = 0
         while let date = end, hitSet.contains(date) {
             current += 1
             end = calendar.date(byAdding: .day, value: -1, to: date)
         }
-        return BurnStreak(current: current, longest: max(storedLongest, longest), todayHit: todayHit)
+        let currentStart = current > 0 ? currentEnd.flatMap {
+            calendar.date(byAdding: .day, value: -(current - 1), to: $0)
+        } : nil
+        return (BurnStreak(current: current, longest: max(storedLongest, longest), todayHit: todayHit),
+                longest >= storedLongest ? longestStart : nil, currentStart)
     }
 
     private static func leaderboard(history: BurnHistory, visible: [ProviderSnapshot],

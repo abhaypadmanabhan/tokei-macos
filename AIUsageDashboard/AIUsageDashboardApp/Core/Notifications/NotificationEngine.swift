@@ -124,13 +124,13 @@ public actor NotificationEngine {
         let now = clock.now()
         burnState.advance(to: now, calendar: calendar)
         guard burnState.count < BurnNudgePolicy.maxPerDay,
-              !BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, now: now).isEmpty else { return }
+              !BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, windowKeys: burnState.windows, now: now).isEmpty else { return }
         do {
-            guard try await notificationCenter.requestAuthorization(options: [.alert]) else { return }
+            guard try await notificationCenter.requestAuthorization(options: [.alert, .sound]) else { return }
         } catch { return }
         let deliveryTime = clock.now()
         burnState.advance(to: deliveryTime, calendar: calendar)
-        let candidates = BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, now: deliveryTime)
+        let candidates = BurnNudge.candidates(snapshot: snapshot, delivered: burnState.delivered, windowKeys: burnState.windows, now: deliveryTime)
         for candidate in candidates {
             guard burnNotificationsEnabled, burnState.count < BurnNudgePolicy.maxPerDay else { break }
             let request = NotificationRequest(identifier: "burn_" + candidate.key,
@@ -139,6 +139,7 @@ public actor NotificationEngine {
                 try await notificationCenter.add(request: request)
                 burnState.count += 1
                 burnState.delivered[candidate.key] = deliveryTime
+                if let key = candidate.windowKey { burnState.windows.update(with: key) }
                 if let data = try? JSONEncoder().encode(burnState) {
                     userDefaults.set(data, forKey: Self.burnStateKey)
                 }

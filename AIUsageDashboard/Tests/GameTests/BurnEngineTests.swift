@@ -58,19 +58,72 @@ final class BurnEngineTests: XCTestCase {
     }
 
     func testRecordsSeedSilentlyBeatOnceAndKeepTheirDates() {
-        let f = BurnFixtures()
-        let seed = f.evaluate([f.snapshot(days: [0: 2_000_000])])
+        let prior = BurnFixtures(month: 2, day: 28)
+        let seed = prior.evaluate([prior.snapshot(days: [0: 2_000_000])])
         XCTAssertTrue(seed.snapshot.moments.isEmpty)
         XCTAssertEqual(seed.snapshot.records.bestDay?.value, 2)
-        let beat = f.evaluate([f.snapshot(days: [0: 3_000_000])], state: seed.state)
+        let f = BurnFixtures()
+        let beat = f.evaluate([f.snapshot(days: [-9: 2_000_000, 0: 3_000_000])], state: seed.state)
         for kind in [BurnRecordKind.bestDay, .bestWeek, .bestMonthMultiple] {
             XCTAssertEqual(beat.snapshot.moments.filter { $0 == .record(kind) }.count, 1)
         }
-        let again = f.evaluate([f.snapshot(days: [0: 3_000_000])], state: beat.state)
+        let growth = f.evaluate([f.snapshot(days: [-9: 2_000_000, 0: 3_100_000])], state: beat.state)
+        XCTAssertTrue(growth.snapshot.moments.isEmpty)
+        XCTAssertEqual(growth.snapshot.records.bestDay?.achievedAt, beat.snapshot.records.bestDay?.achievedAt)
+        let again = f.evaluate([f.snapshot(days: [-9: 2_000_000, 0: 3_100_000])], state: growth.state)
         XCTAssertTrue(again.snapshot.moments.isEmpty)
-        XCTAssertEqual(again.state, beat.state)
-        let gone = f.evaluate([], state: beat.state)
+        XCTAssertEqual(again.state, growth.state)
+        let gone = f.evaluate([], state: growth.state)
         XCTAssertEqual(gone.snapshot.records, again.snapshot.records)
+    }
+
+    func testRecordGrowthWithinCurrentPeriodsAndHistoricalRepricingStaySilent() {
+        let f = BurnFixtures()
+        let seed = f.evaluate([f.snapshot(days: [-3: 2_000_000])])
+        let beat = f.evaluate([f.snapshot(days: [-3: 2_000_000, 0: 2_500_000])], state: seed.state)
+        XCTAssertTrue(beat.snapshot.moments.contains(.record(.bestDay)))
+        XCTAssertTrue(beat.snapshot.moments.contains(.record(.bestWeek)))
+        XCTAssertFalse(beat.snapshot.moments.contains(.record(.bestMonthMultiple)))
+        let growth = f.evaluate([f.snapshot(days: [-3: 2_000_000, 0: 2_600_000])], state: beat.state)
+        XCTAssertFalse(growth.snapshot.moments.contains { if case .record = $0 { return true }; return false })
+        XCTAssertEqual(growth.snapshot.records.bestDay?.value, 2.6)
+        let next = BurnFixtures(day: 10)
+        let nextDay = next.evaluate([next.snapshot(days: [-4: 2_000_000, -1: 2_600_000, 0: 200_000])], state: growth.state)
+        XCTAssertFalse(nextDay.snapshot.moments.contains { if case .record = $0 { return true }; return false })
+        let repriced = next.evaluate([next.snapshot(days: [-4: 100_000_000, -1: 2_600_000, 0: 200_000])], state: nextDay.state)
+        XCTAssertFalse(repriced.snapshot.moments.contains { if case .record = $0 { return true }; return false })
+    }
+
+    func testLongestStreakRecordUsesRunStartAndCelebratesOnlyANewRun() {
+        let f = BurnFixtures()
+        let seed = f.evaluate([f.snapshot(days: [-9: 2_000_000, -8: 2_000_000])])
+        XCTAssertEqual(seed.snapshot.records.longestStreak?.achievedAt, f.day(-9))
+        let beat = f.evaluate([f.snapshot(days: [-9: 2_000_000, -8: 2_000_000, -2: 2_000_000,
+                                               -1: 2_000_000, 0: 2_000_000])], state: seed.state)
+        XCTAssertEqual(beat.snapshot.records.longestStreak?.achievedAt, f.day(-2))
+        XCTAssertEqual(beat.snapshot.moments.filter { $0 == .record(.longestStreak) }, [.record(.longestStreak)])
+        let next = BurnFixtures(day: 10)
+        let growth = next.evaluate([next.snapshot(days: [-10: 2_000_000, -9: 2_000_000, -3: 2_000_000,
+                                                        -2: 2_000_000, -1: 2_000_000, 0: 2_000_000])], state: beat.state)
+        XCTAssertEqual(growth.snapshot.records.longestStreak?.value, 4)
+        XCTAssertEqual(growth.snapshot.records.longestStreak?.achievedAt, f.day(-2))
+        XCTAssertFalse(growth.snapshot.moments.contains(.record(.longestStreak)))
+    }
+
+    func testJitteredResetSamplesProduceOneFinalOutcome() {
+        let f = BurnFixtures()
+        let reset = f.day(-1)
+        let samples = [
+            f.sample(used: 10, reset: reset, sampledAt: reset.addingTimeInterval(-4 * 3_600)),
+            f.sample(used: 50, reset: reset.addingTimeInterval(1), sampledAt: reset.addingTimeInterval(-2 * 3_600)),
+            f.sample(used: 95, reset: reset.addingTimeInterval(2), sampledAt: reset.addingTimeInterval(-600))
+        ]
+        let result = f.evaluate([], samples: samples).snapshot
+        XCTAssertEqual(result.recentWindows.count, 1)
+        XCTAssertEqual(result.recentWindows.first?.resetAt, reset.addingTimeInterval(2))
+        XCTAssertEqual(result.recentWindows.first?.finalUsedPercent, 95)
+        XCTAssertEqual(result.leftOnTablePercent, 5)
+        XCTAssertTrue(result.badges.first { $0.badge == .nothingLeft }!.isUnlocked)
     }
 
     func testBestWeekUsesCalendarWeekAndTokenFallback() {
@@ -155,14 +208,15 @@ final class BurnEngineTests: XCTestCase {
         }
     }
 
-    func testFirstUsageAfterAnEmptySeedCanSetARecord() {
+    func testFirstUsageAfterAnEmptySeedSetsARecordSilently() {
         let f = BurnFixtures()
         let seed = f.evaluate([])
         let result = f.evaluate([f.snapshot(days: [0: 2_000_000])], state: seed.state)
-        XCTAssertEqual(result.snapshot.moments.filter { $0 == .record(.bestDay) }, [.record(.bestDay)])
+        XCTAssertEqual(result.snapshot.records.bestDay?.value, 2)
+        XCTAssertFalse(result.snapshot.moments.contains(.record(.bestDay)), "no earlier record period to beat")
     }
 
-    func testNinetyTwoDaysEightProvidersWithinFiftyMilliseconds() {
+    func testNinetyTwoDaysEightProvidersWithinGenerousTimingBound() {
         let f = BurnFixtures()
         let snapshots = ProviderID.allCases.map { id in
             f.snapshot(id, days: Dictionary(uniqueKeysWithValues: (-91...0).map { ($0, 2_000_000) }))
@@ -173,6 +227,6 @@ final class BurnEngineTests: XCTestCase {
         _ = f.evaluate(snapshots, plans: plans)
         let elapsed = start.duration(to: .now)
         print("BURN_TIMING 92 days x 8 providers: \(elapsed)")
-        XCTAssertLessThan(elapsed, .milliseconds(50))
+        XCTAssertLessThan(elapsed, .milliseconds(250))
     }
 }

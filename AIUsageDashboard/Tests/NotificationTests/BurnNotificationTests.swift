@@ -21,15 +21,15 @@ final class BurnNotificationTests: XCTestCase {
     }
     private func window(_ type: QuotaWindowType = .fiveHour, unused: Double = 62,
                         inSeconds: TimeInterval = 41 * 60, account: String? = nil,
-                        bucket: String = "five") -> ExpiringHeadroom {
+                        bucket: String = "five", observedAt: Date? = nil) -> ExpiringHeadroom {
         ExpiringHeadroom(providerID: .codex, providerName: "Codex", accountID: account, windowType: type,
                          bucketKey: bucket, usedPercent: 100 - unused, resetAt: f.now.addingTimeInterval(inSeconds),
-                         observedAt: f.now, confidence: .providerReported)
+                         observedAt: observedAt ?? f.now, confidence: .providerReported)
     }
-    private func snapshot(windows: [ExpiringHeadroom] = [], moments: [BurnMoment] = []) -> BurnSnapshot {
+    private func snapshot(windows: [ExpiringHeadroom] = [], moments: [BurnMoment] = [], recordValue: Double = 10) -> BurnSnapshot {
         let empty = BurnSnapshot.empty(now: f.now, calendar: f.calendar)
         return BurnSnapshot(generatedAt: f.now, today: empty.today, streak: empty.streak, expiring: windows,
-                            records: BurnRecords(bestDay: BurnRecord(kind: .bestDay, value: 10, unit: .usd, achievedAt: f.day(0)),
+                            records: BurnRecords(bestDay: BurnRecord(kind: .bestDay, value: recordValue, unit: .usd, achievedAt: f.day(0)),
                                                  bestWeek: nil, bestMonthMultiple: nil, longestStreak: nil),
                             leaderboard: [], badges: [], recentWindows: [], tier: nil, monthValueMultiple: nil, moments: moments)
     }
@@ -131,6 +131,41 @@ final class BurnNotificationTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
     }
 
+    func testRecordNudgeIsOncePerPeriodDespiteValueGrowth() async {
+        let center = BurnTestCenter()
+        let engine = engine(center)
+        await engine.evaluateBurn(snapshot(moments: [.record(.bestDay)], recordValue: 10), calendar: f.calendar)
+        await engine.evaluateBurn(snapshot(moments: [.record(.bestDay)], recordValue: 11), calendar: f.calendar)
+        let sent = await center.requests
+        XCTAssertEqual(sent.count, 1)
+    }
+
+    func testResetJitterSuppressesNudgesAcrossRestartButNextWindowCanNotify() async {
+        let center = BurnTestCenter()
+        await engine(center).evaluateBurn(snapshot(windows: [window()]), calendar: f.calendar)
+        await engine(center, now: f.now.addingTimeInterval(300)).evaluateBurn(
+            snapshot(windows: [window(inSeconds: 41 * 60 + 1)]), calendar: f.calendar)
+        await engine(center, now: f.now.addingTimeInterval(600)).evaluateBurn(
+            snapshot(windows: [window(inSeconds: 41 * 60 + 600)]), calendar: f.calendar)
+        let jittered = await center.requests
+        XCTAssertEqual(jittered.count, 1)
+        let next = f.now.addingTimeInterval(5 * 3_600)
+        await engine(center, now: next).evaluateBurn(
+            snapshot(windows: [window(inSeconds: 5 * 3_600 + 41 * 60, observedAt: next)]), calendar: f.calendar)
+        let sent = await center.requests
+        XCTAssertEqual(sent.count, 2)
+    }
+
+    func testBurnAuthorizesAlertAndSoundButDeliversSilently() async {
+        let center = BurnTestCenter()
+        await engine(center).evaluateBurn(snapshot(windows: [window()]), calendar: f.calendar)
+        let options = await center.authorizationOptions
+        XCTAssertEqual(options, [[.alert, .sound]])
+        let sent = await center.requests
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertFalse(sent[0].sound)
+    }
+
     func testConcurrentEvaluationsCannotExceedCap() async {
         let center = BurnTestCenter()
         let engine = engine(center)
@@ -151,11 +186,13 @@ private struct BurnTestClock: Clock {
 private actor BurnTestCenter: UserNotificationCenter {
     private(set) var requests: [NotificationRequest] = []
     private(set) var authorizationCount = 0
+    private(set) var authorizationOptions: [UNAuthorizationOptions] = []
     private var granted = true
     private var fails = false
     func configure(granted: Bool, fails: Bool) { self.granted = granted; self.fails = fails }
     func requestAuthorization(options: UNAuthorizationOptions) async throws -> Bool {
         authorizationCount += 1
+        authorizationOptions.append(options)
         await Task.yield()
         return granted
     }
