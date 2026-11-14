@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import XCTest
+@testable import AIUsageDashboardCore
 
 enum MCPProcessHarnessError: Error {
   case helperMissing(URL)
@@ -16,7 +17,7 @@ final class MCPProcessHarness {
   private let error = Pipe()
   private var bufferedOutput = Data()
 
-  init() throws {
+  init(snapshotURL: URL? = nil) throws {
     let helperURL = Bundle(for: MCPProcessHarness.self).bundleURL
       .deletingLastPathComponent()
       .appendingPathComponent("tokei")
@@ -24,6 +25,11 @@ final class MCPProcessHarness {
       throw MCPProcessHarnessError.helperMissing(helperURL)
     }
 
+    if let snapshotURL {
+      var environment = ProcessInfo.processInfo.environment
+      environment["TOKEI_SNAPSHOT_PATH"] = snapshotURL.path
+      process.environment = environment
+    }
     process.executableURL = helperURL
     process.arguments = ["mcp"]
     process.standardInput = input
@@ -131,4 +137,27 @@ final class MCPServerProcessTests: XCTestCase {
     XCTAssertNotNil(response["result"])
     XCTAssertTrue(helper.isRunning, "the response must not depend on stdin reaching EOF")
   }
+  func testBurnToolStdioListsThreeToolsAndReadsFixture() throws {
+    let directory = try CLITestSupport.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let now = Date()
+    let snapshot = AgentSnapshot(generatedAt: now, providers: [], aggregateUtilizationPercent: nil,
+      recommendation: nil, burn: AgentBurn(expiring: [
+        AgentBurnWindow(provider: "codex", providerName: "Codex", type: "fiveHour", usedPercent: 38,
+          unusedPercent: 62, resetAt: now.addingTimeInterval(2_460), observedAt: now)
+      ]))
+    let helper = try MCPProcessHarness(snapshotURL: CLITestSupport.writeSnapshot(snapshot, in: directory))
+    defer { helper.stop() }
+    try helper.write(#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"# + "\n")
+    let list = try XCTUnwrap(try helper.response(id: 1, timeout: 2)["result"] as? [String: Any])
+    XCTAssertEqual((list["tools"] as? [[String: Any]])?.count, 3)
+    try helper.write(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_burn_opportunities"}}"# + "\n")
+    let result = try XCTUnwrap(try helper.response(id: 2, timeout: 2)["result"] as? [String: Any])
+    let payload = try XCTUnwrap(result["structuredContent"] as? [String: Any])
+    let rows = try XCTUnwrap(payload["expiring"] as? [[String: Any]])
+    XCTAssertEqual(rows.count, 1)
+    XCTAssertEqual(rows[0]["unusedPercent"] as? Int, 62)
+    XCTAssertTrue((rows[0]["advice"] as? String)?.hasPrefix("Codex 5-hour window has 62% left") == true)
+  }
+
 }

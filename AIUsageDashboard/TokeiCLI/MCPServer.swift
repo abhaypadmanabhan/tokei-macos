@@ -16,10 +16,11 @@ import AIUsageDashboardCore
 /// stdin/stdout — the stdio transport every major client supports without caveats.
 ///
 /// Deliberately dependency-free: read-only and no network, so pulling in the MCP
-/// Swift SDK (and a build-time package fetch) buys nothing. Exactly two tools, to keep
+/// Swift SDK (and a build-time package fetch) buys nothing. Three tools, to keep
 /// an agent's context cost low:
 ///   • `get_usage`                → full snapshot
 ///   • `get_route_recommendation` → recommendation object only
+///   • `get_burn_opportunities`   → expiring flat-rate plan capacity
 ///
 /// Protocol messages are line-delimited JSON; logs/diagnostics go to stderr so they
 /// never corrupt the protocol stream on stdout.
@@ -32,6 +33,7 @@ final class MCPServer {
     private static let maximumDiagnosticNameBytes = 128
 
     enum ToolName: String {
+        case burnOpportunities = "get_burn_opportunities"
         case usage = "get_usage"
         case routeRecommendation = "get_route_recommendation"
     }
@@ -159,8 +161,8 @@ final class MCPServer {
             respond(id: request.id, result: ["tools": toolDefinitions()])
         case "tools/call":
             switch validateToolCall(params: request.object["params"]) {
-            case let .valid(name, provider):
-                respond(id: request.id, result: toolCallResult(name: name, provider: provider))
+            case let .valid(name, provider, summary):
+                respond(id: request.id, result: toolCallResult(name: name, provider: provider, summary: summary))
             case let .invalid(message):
                 if !request.isNotification {
                     send(errorResponse(id: request.id, code: -32602, message: message))
@@ -216,13 +218,14 @@ final class MCPServer {
         return AgentSnapshot(schemaVersion: snapshot.schemaVersion, generatedAt: snapshot.generatedAt,
                              providers: snapshot.providers.filter { $0.id == provider },
                              aggregateUtilizationPercent: nil, recommendation: nil,
-                             stale: snapshot.stale, ageSeconds: snapshot.ageSeconds)
+                             stale: snapshot.stale, ageSeconds: snapshot.ageSeconds,
+                             burn: snapshot.burn.map { AgentBurn(expiring: $0.expiring.filter { $0.provider == provider }) })
     }
 
     // MARK: - tools/call
 
     private enum ToolCallValidation {
-        case valid(ToolName, provider: String?)
+        case valid(ToolName, provider: String?, summary: Bool)
         case invalid(String)
     }
 
@@ -243,7 +246,7 @@ final class MCPServer {
         } else {
             arguments = [:]
         }
-        guard Set(arguments.keys).isSubset(of: tool == .usage ? ["provider"] : []) else {
+        guard Set(arguments.keys).isSubset(of: tool == .usage ? ["provider", "detail"] : []) else {
             return .invalid("Unknown tool argument.")
         }
         var provider: String?
@@ -253,15 +256,22 @@ final class MCPServer {
             }
             provider = name
         }
-        return .valid(tool, provider: provider)
+        if let detail = arguments["detail"], detail as? String != "summary" {
+            return .invalid("Unknown detail; use summary or omit detail for the full snapshot.")
+        }
+        return .valid(tool, provider: provider, summary: arguments["detail"] != nil)
     }
 
-    private func toolCallResult(name: ToolName, provider: String?) -> [String: Any] {
+    private func toolCallResult(name: ToolName, provider: String?, summary: Bool) -> [String: Any] {
         do {
             let snapshot = try reader.read()
             switch name {
             case .usage:
-                return textContent(try encode(filtered(snapshot, provider: provider)), warning: staleWarning(snapshot))
+                let selected = filtered(snapshot, provider: provider)
+                let text = try summary ? summaryText(selected) : encode(selected)
+                return textContent(text, warning: staleWarning(snapshot))
+            case .burnOpportunities:
+                return textContent(try burnText(snapshot), warning: staleWarning(snapshot))
             case .routeRecommendation:
                 return textContent(try recommendationText(snapshot), warning: staleWarning(snapshot))
             }
@@ -294,6 +304,59 @@ private extension MCPServer {
         guard snapshot.stale == true else { return nil }
         let age = snapshot.ageSeconds.map(StatusFormatting.humanAge(seconds:)) ?? "unknown age"
         return "⚠︎ Tokei data is stale (\(age) old); the app may not be running. Values may be outdated."
+    }
+
+    struct UsageSummary: Encodable {
+        let schemaVersion: Int
+        let generatedAt: Date
+        let stale: Bool
+        let ageSeconds: Int?
+        let providers: [ProviderSummary]
+    }
+
+    struct ProviderSummary: Encodable {
+        let id: String
+        let summary: String
+    }
+
+    func summaryText(_ snapshot: AgentSnapshot) throws -> String {
+        let rows = snapshot.providers.map { provider in
+            let windows = provider.windows.filter { $0.type != "credits" }.map { window in
+                let age = window.observedAt.map { ", observed \(AgentSnapshot.compactDuration(max(0, reader.now().timeIntervalSince($0)))) ago" } ?? ", reading age unknown"
+                return "\(window.label ?? window.type) \(String(format: "%.0f", window.usedPercent))% used (\(window.confidence)\(age))"
+            }.joined(separator: "; ")
+            let tokens = provider.tokensToday.map { "; \($0) tokens today" } ?? ""
+            return ProviderSummary(id: provider.id,
+                                   summary: "\(provider.displayName): \(windows.isEmpty ? "quota unavailable" : windows)\(tokens)")
+        }
+        return try encode(UsageSummary(schemaVersion: snapshot.schemaVersion, generatedAt: snapshot.generatedAt,
+                                       stale: snapshot.stale == true, ageSeconds: snapshot.ageSeconds, providers: rows))
+    }
+
+    struct BurnOpportunity: Encodable {
+        let window: AgentBurnWindow
+        let advice: String
+        private enum CodingKeys: String, CodingKey { case advice }
+        func encode(to encoder: Encoder) throws {
+            try window.encode(to: encoder)
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(advice, forKey: .advice)
+        }
+    }
+
+    struct BurnPayload: Encodable {
+        let available: Bool
+        let generatedAt: Date
+        let stale: Bool
+        let expiring: [BurnOpportunity]
+    }
+
+    func burnText(_ snapshot: AgentSnapshot) throws -> String {
+        let now = reader.now()
+        let stale = snapshot.stale == true || snapshot.generatedAt > now.addingTimeInterval(60)
+        let windows = stale ? [] : snapshot.burn?.opportunities(asOf: now) ?? []
+        return try encode(BurnPayload(available: snapshot.burn != nil, generatedAt: snapshot.generatedAt, stale: stale,
+                                      expiring: windows.map { BurnOpportunity(window: $0, advice: $0.advice(asOf: now)) }))
     }
 
     func recommendationText(_ snapshot: AgentSnapshot) throws -> String {

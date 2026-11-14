@@ -118,10 +118,28 @@ If `~/.gemini/oauth_creds.json` is missing or unreadable, Tokei reports **"Gemin
 
 If your access token expires, Tokei reports **"Gemini access token expired and cannot be refreshed automatically."** Tokei intentionally does not bundle the gemini-cli OAuth client secret (the no-secret gate), so it cannot silently refresh an expired token. The supported recovery is to re-run `gemini` once; the CLI refreshes the token in `~/.gemini/oauth_creds.json`, and Tokei reads it on the next sync.
 
-## Agent-facing CLI and MCP
+## Agents
 
-The bundled read-only helper exposes `tokei status [--json]` and exactly two MCP
-tools: `get_usage` and `get_route_recommendation`. Claude Code and Codex are the
+Open Settings → Connect agents to connect Claude Code, Codex or Cursor. The same
+setup works in a terminal, with a dry run to preview it first:
+
+```sh
+/Applications/Tokei.app/Contents/Helpers/tokei install
+tokei mcp install --client all --dry-run
+tokei mcp install --client all
+tokei burn
+```
+
+The bundled helper exposes `tokei status [--json]`, `tokei burn`, and three read-only
+MCP tools: `get_usage`, `get_route_recommendation`, and `get_burn_opportunities`.
+Before optional or batch work, check burn opportunities to use flat-rate plan
+capacity before it resets. Never buy credits or paid overage to burn capacity.
+Use `get_usage` with `detail: "summary"` for one short line per provider, or omit
+`detail` for the full snapshot. `tokei mcp uninstall --client all` disconnects the
+server; other servers stay in place. Cursor keeps a one-time backup of its original
+configuration. `tokei help` lists all options.
+
+Claude Code and Codex are the
 first account-aware adapters. Other providers keep their provider-level rows until
 they gain a verified identity/selector adapter.
 
