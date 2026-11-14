@@ -34,3 +34,4 @@
 - 03:27 PR #67 opened (dev->main). Vercel preview build failed (gate path on Vercel layout); round 2d sent to W.
 - 03:28 PR #67 squash-merged to main 9504efa; main merged back into dev; pushed. No tag yet (after notarized release).
 - 03:34 Site preview (prebuilt, gates passed locally): https://tokei-website-25sfv4u5q-abhay-padmanabhans-projects.vercel.app (Vercel login). Cloud build path differs (fonts); deploy uses prebuilt output.
+- 12:08 Apple agreement accepted by Abhay; notary open. 12:20 release.sh: app + DMG notarized (appcast step failed: no tokei key here). 12:23 tag v0.12.0 + GitHub release (DMG sha matches). 12:30 site prod deployed (prebuilt). Key brought over by Grok/T3; 12:54 feed signed + verified; PR #68 merged; 12:56 live feed 0.12.0, signature verified on the downloadable DMG. SHIPPED.
