@@ -345,6 +345,7 @@ private extension MCPServer {
     }
 
     struct BurnPayload: Encodable {
+        let available: Bool
         let generatedAt: Date
         let stale: Bool
         let expiring: [BurnOpportunity]
@@ -354,7 +355,7 @@ private extension MCPServer {
         let now = reader.now()
         let stale = snapshot.stale == true || snapshot.generatedAt > now.addingTimeInterval(60)
         let windows = stale ? [] : snapshot.burn?.opportunities(asOf: now) ?? []
-        return try encode(BurnPayload(generatedAt: snapshot.generatedAt, stale: stale,
+        return try encode(BurnPayload(available: snapshot.burn != nil, generatedAt: snapshot.generatedAt, stale: stale,
                                       expiring: windows.map { BurnOpportunity(window: $0, advice: $0.advice(asOf: now)) }))
     }
 

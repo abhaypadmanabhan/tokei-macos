@@ -69,6 +69,12 @@ final class BurnMCPTests: XCTestCase {
         XCTAssertLessThan(try JSONSerialization.data(withJSONObject: summary).count, data.count / 2)
     }
 
+    func testS13MissingBurnBlockIsUnavailableRatherThanEmptyCapacity() throws {
+        let old = AgentSnapshot(generatedAt: now, providers: [], aggregateUtilizationPercent: nil, recommendation: nil)
+        XCTAssertEqual(try call(snapshot: old)["available"] as? Bool, false)
+        XCTAssertEqual(try call(snapshot: fixture())["available"] as? Bool, true)
+    }
+
     func testBurnFormattingIsOneScreenAndIncludesGoalAndStreak() {
         let text = BurnFormatting.render(fixture().withStaleness(asOf: now), now: now)
         XCTAssertTrue(text.contains("62% left and resets in 41 min"))

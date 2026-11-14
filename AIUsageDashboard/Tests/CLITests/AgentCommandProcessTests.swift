@@ -2,7 +2,7 @@ import XCTest
 import Foundation
 
 final class AgentCommandProcessTests: XCTestCase {
-    func run(_ arguments: [String], root: URL) throws -> (Int32, String) {
+    func run(_ arguments: [String], root: URL, input: String = "") throws -> (Int32, String) {
         let binary = Bundle(for: Self.self).bundleURL.deletingLastPathComponent().appendingPathComponent("tokei")
         let process = Process()
         process.executableURL = binary
@@ -11,10 +11,14 @@ final class AgentCommandProcessTests: XCTestCase {
             "CLAUDE_CONFIG_DIR": root.appendingPathComponent("fake-claude").path,
             "CODEX_HOME": root.appendingPathComponent("fake-codex").path]
         process.currentDirectoryURL = root
+        let stdin = Pipe()
+        process.standardInput = stdin
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
         try process.run()
+        try stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+        try stdin.fileHandleForWriting.close()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: data, as: UTF8.self))
@@ -40,11 +44,22 @@ final class AgentCommandProcessTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".cursor").path))
     }
 
+    func testS12LegacyExtraMCPArgumentsStillRunTheServer() throws {
+        let root = try CLITestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (status, output) = try run(["mcp", "--legacy-option", "ignored"], root: root,
+            input: #"{"jsonrpc":"2.0","id":42,"method":"ping"}"# + "\n")
+        XCTAssertEqual(status, 0)
+        let response = try XCTUnwrap(try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        XCTAssertEqual(response["id"] as? Int, 42)
+        XCTAssertNotNil(response["result"])
+    }
+
     func testInvalidOptionsFailBeforeAnyClientCanRun() throws {
         let root = try CLITestSupport.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         for args in [["mcp", "install", "--client"], ["mcp", "install", "--client", "typo"],
-                     ["mcp", "install", "--dry-run", "--dry-run"], ["mcp", "unknown"],
+                     ["mcp", "install", "--dry-run", "--dry-run"],
                      ["install", "--unknown"], ["burn", "--unknown"]] {
             XCTAssertEqual(try run(args, root: root).0, 64, args.joined(separator: " "))
         }

@@ -57,7 +57,9 @@ case "burn":
     guard arguments.count == 1 else { printUsage(to: .standardError); exit(64) }
     exit(AgentCommands.burn())
 case "mcp":
-    if arguments.count > 1 { exit(AgentCommands.mcp(Array(arguments.dropFirst()))) }
+    if arguments.dropFirst().first.map({ ["install", "uninstall"].contains($0) }) == true {
+        exit(AgentCommands.mcp(Array(arguments.dropFirst())))
+    }
     signal(SIGPIPE, SIG_IGN)
     MCPServer(version: TokeiCLI.version).run()
     exit(0)

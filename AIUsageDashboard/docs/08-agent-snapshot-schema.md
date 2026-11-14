@@ -337,7 +337,7 @@ The newline-delimited JSON-RPC server exposes three read-only tools:
 |---|---|
 | `get_usage` | Snapshot with reader-side `stale` and `ageSeconds`; optional `provider` filters to one known provider ID. Optional `detail: "summary"` returns metadata plus `providers: [{id, summary}]`, one plain line per provider. Omit `detail` for the full documented snapshot. |
 | `get_route_recommendation` | Flat recommendation plus `generatedAt`, `ageSeconds`, `validUntil`, and `stale`. |
-| `get_burn_opportunities` | `{generatedAt, stale, expiring}` with expiring-window fields and one `advice` line each, soonest first. No input arguments. Stale data returns an empty list. |
+| `get_burn_opportunities` | `{available, generatedAt, stale, expiring}` with expiring-window fields and one `advice` line each, soonest first. No input arguments. Stale data returns an empty list. |
 
 All tools publish a title and read-only, idempotent, closed-world annotations.
 The handshake echoes a supported revision (`2025-06-18`, `2025-03-26`, `2024-11-05`),
@@ -351,6 +351,8 @@ Null optional fields are omitted. Required arrays (`providers`, `windows`, `avoi
 `expiring`) stay present even when empty. Structured output duplicates the JSON text
 on the newest protocol revision as required by the existing MCP contract.
 The server performs no network or credential access, and closed stdout exits cleanly.
+For compatibility, `tokei mcp` ignores extra arguments unless the first is `install` or
+`uninstall`, which select the configuration commands.
 
 `tokei guard [--provider P] [--min-headroom N]` prints one line and exits 0 for
 fresh eligible headroom at least N (default 15), 1 below N, 69 for stale, missing,
@@ -379,6 +381,9 @@ optional `label`, `usedPercent`, `unusedPercent`, `resetAt`, and optional `obser
 Entries are ordered by soonest reset. The helper removes passed resets and expired
 readings before offering work; a stale snapshot offers no burn opportunities.
 Unknown reading age remains unknown, as in the shared finder.
+The burn tool's additive `available` flag is false when the snapshot has no burn block,
+and true when the block exists, even if no window currently qualifies. Feature-detect
+this field when using an older helper.
 
 When the writer receives a `BurnSnapshot`, the block also contains
 `streak: {current, todayHit}` and `today: {valueUSD?, goal?, progress?}`.
@@ -411,14 +416,24 @@ The server name is `tokei`, running `<absolute path of the current helper> mcp`.
 Claude Code uses `claude mcp add --scope user tokei -- <helper> mcp`; Codex uses
 `codex mcp add tokei -- <helper> mcp`. Commands are found on PATH, in `~/.local/bin`,
 `/opt/homebrew/bin`, or `/usr/local/bin`. A matching registration is left alone;
-a different Claude/Codex registration is kept with a request to disconnect first.
+a different registration in Claude Code, Codex or Cursor is kept with a request to disconnect first.
+Claude matching requires user scope. A local registration must be removed in its original
+folder with `claude mcp remove tokei -s local` before connecting in user scope.
+Tokei preserves the user's environment; it never invents CLAUDE_CONFIG_DIR or CODEX_HOME.
+For GUI launches it adds the found client directory and fallback directories to the child PATH.
 The client confirms each write before Tokei reports success. Uninstall removes
 only the `tokei` server. Other servers stay in place.
 
 Cursor merges `~/.cursor/mcp.json`, preserving all other servers and top-level
 keys. Invalid JSON is refused. The original file is backed up once as `mcp.json.bak`,
-and replacements are atomic with owner-only permissions. Repeated installs are
+and replacements are atomic with owner-only permissions. A symlinked mcp.json stays a
+symlink: Tokei resolves its target, stages beside that target and renames there. The
+backup is an independent copy of the original bytes, never a copied link. Repeated installs are
 unchanged. This is the only client file Tokei edits directly.
+
+Connect and command installation refuse a helper on a mounted volume or in App Translocation;
+move Tokei to Applications, then retry. Settings omits shell PATH advice; the terminal
+installer prints the hint when its directory is absent from PATH.
 
 `tokei install --force` can replace an existing command file or symlink; it refuses
 to replace a directory. Without `--force`, a different target is kept.
