@@ -105,6 +105,13 @@ public actor QuotaSeriesStore {
             .sorted { $0.sampledAt < $1.sampledAt }
     }
 
+    /// All account-owned series for Burn's window outcomes; unlike the chart API this
+    /// never selects a headline account or merges accounts. Legacy rows remain identifiable.
+    public func allSamples(since: Date? = nil) -> [QuotaSample] {
+        ensureLoaded()
+        return samples.filter { sample in since.map { sample.sampledAt >= $0 } ?? true }
+    }
+
     private var fileURL: URL {
         directory.appendingPathComponent(fileName)
     }
