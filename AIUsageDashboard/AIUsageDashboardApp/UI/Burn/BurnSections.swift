@@ -122,10 +122,10 @@ struct LeaderboardSection: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(entries) { entry in
+                        // The Button keeps its own accessibility element (and its press action);
+                        // only the label is replaced with one sentence.
                         Button { onSelectProvider(entry.providerID) } label: { row(entry) }
                             .buttonStyle(.plain)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityAddTraits(.isButton)
                             .accessibilityLabel("Rank \(entry.rank), \(BurnCopy.agentName(entry.providerID)), "
                                 + "\(BurnCopy.leaderboardValue(entry)), \(BurnCopy.leaderboardTokens(entry))")
                         if entry.id != entries.last?.id { HairlineDivider() }

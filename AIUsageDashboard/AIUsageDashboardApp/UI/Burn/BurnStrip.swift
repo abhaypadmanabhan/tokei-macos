@@ -44,8 +44,7 @@ struct BurnStrip: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Open Burn in Tokei")
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isButton)
+        // The Button keeps its own element and press action; the label is one summary.
         .accessibilityLabel(spokenSummary)
         .accessibilityHint("Opens the Burn tab")
     }
