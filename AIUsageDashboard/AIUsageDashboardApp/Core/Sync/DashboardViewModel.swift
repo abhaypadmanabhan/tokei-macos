@@ -27,7 +27,7 @@ public final class DashboardViewModel: ObservableObject {
     /// `BurnEngine` sets it after each refresh; surfaces only read it.
     @Published public internal(set) var burn: BurnSnapshot = .empty(now: Date())
 
-    private let syncEngine: SyncEngine
+    let syncEngine: SyncEngine
     private let store: UsageStore
     private var calendar: Calendar
     /// Injected clock; internal so the pace extension reads the same "now".

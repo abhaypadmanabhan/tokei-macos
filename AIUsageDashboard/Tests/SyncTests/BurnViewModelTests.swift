@@ -84,6 +84,19 @@ final class BurnViewModelTests: XCTestCase {
         XCTAssertEqual(live.count, 1)
     }
 
+    func testLiveBurnReachesTheAgentSnapshotAndSurvivesTheNextRefresh() async throws {
+        let probe = BurnProbe()
+        let (model, sync, _, _, _) = setup(snapshot: f.snapshot(days: [0: 2_000_000]), probe: probe)
+        await model.refresh()
+        let file = directory.appendingPathComponent("output").appendingPathComponent(AgentSnapshot.defaultFileName)
+        let first = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: Data(contentsOf: file))
+        XCTAssertEqual(first.burn?.today?.valueUSD, 2)
+        XCTAssertEqual(first.burn?.streak?.current, model.burn.streak.current)
+        _ = await sync.refreshAll()
+        let next = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: Data(contentsOf: file))
+        XCTAssertEqual(next.burn?.today?.valueUSD, 2, "a refresh before the next evaluation keeps the last burn")
+    }
+
     func testHiddenProviderMatchesOverviewAndNoSavedTodayInvented() async {
         let probe = BurnProbe()
         let (model, _, _, usageStore, _) = setup(snapshot: f.snapshot(days: [0: 2_000_000]), probe: probe)

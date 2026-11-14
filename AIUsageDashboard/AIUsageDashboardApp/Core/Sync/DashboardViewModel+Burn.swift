@@ -35,6 +35,7 @@ extension DashboardViewModel {
             // A saved snapshot is a preview, not new evidence. In particular it must not
             // lower the stored tier and then celebrate the same tier on the live refresh.
             guard !saved else { return }
+            await self.syncEngine.publishBurn(evaluation.snapshot)
             do { try await self.burnStateStore.save(evaluation.state) } catch {
                 Logger(subsystem: "ai.padzy.tokei", category: "Burn")
                     .error("Could not save burn achievements; will retry on the next refresh.")

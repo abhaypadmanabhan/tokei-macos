@@ -16,6 +16,11 @@ public actor SyncEngine {
     private var refreshDirty = false
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
+    /// The last refresh's snapshots and the view model's latest burn state, so the agent
+    /// snapshot carries streak and today's burn on every write (the burn is evaluated after
+    /// the refresh, by the view model).
+    private var lastSnapshots: [ProviderSnapshot]?
+    private var lastBurn: BurnSnapshot?
 
     public let updates: AsyncStream<[ProviderSnapshot]>
 
@@ -86,8 +91,17 @@ public actor SyncEngine {
         updatesContinuation?.yield(snapshots)
         // Last: nothing in-process reads this back (only the external `tokei` CLI/MCP
         // helper does), so it shouldn't gate notification delivery or the UI-facing yield.
-        await agentSnapshotWriter.write(from: snapshots)
+        lastSnapshots = snapshots
+        await agentSnapshotWriter.write(from: snapshots, burn: lastBurn)
         return snapshots
+    }
+
+    /// Hands the view model's freshly evaluated live burn state to the agent snapshot.
+    /// Saved (preview) evaluations are never published.
+    public func publishBurn(_ burn: BurnSnapshot) async {
+        lastBurn = burn
+        guard let lastSnapshots else { return }
+        await agentSnapshotWriter.write(from: lastSnapshots, burn: burn)
     }
 
     public func startAutoSync() {
