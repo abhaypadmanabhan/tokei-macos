@@ -109,6 +109,34 @@ struct QuotaAlertsSection: View {
     }
 }
 
+/// The burn nudge switch (2026-11-14 contract `BurnNudgePolicy`): on unless turned off. The burn
+/// engine also needs the alerts master switch, so with that off this one is disabled and says why.
+struct BurnNudgesSection: View {
+    @AppStorage(BurnNudgePolicy.enabledKey) private var nudgesEnabled = true
+    @AppStorage(NotificationEngine.notificationsEnabledKey) private var notificationsEnabled = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            SectionHeading("Burn nudges")
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: $nudgesEnabled) {
+                    Text("Nudge me before unused plan capacity resets")
+                        .font(.sans(size: 13))
+                        .foregroundColor(PadzyTheme.ink2)
+                }
+                .toggleStyle(.padzy)
+                .disabled(!notificationsEnabled)
+                Text(notificationsEnabled
+                    ? "Up to \(BurnNudgePolicy.maxPerDay) a day, when a window resets soon with plenty left."
+                    : "Alerts are off above, so nudges are off too.")
+                    .font(.sans(size: 11))
+                    .foregroundColor(PadzyTheme.ink5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// One provider's thresholds as "80, 95": committed on Return or blur like the plan-cost
 /// field; a value the engine cannot use reverts with a one-line hint instead of being saved.
 private struct AlertThresholdRow: View {

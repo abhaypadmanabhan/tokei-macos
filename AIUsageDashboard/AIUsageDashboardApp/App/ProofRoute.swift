@@ -10,8 +10,10 @@ import AIUsageDashboardCore
 ///     Tokei -TokeiProofRoute overview.quota -TokeiProofRange 30
 ///     Tokei -TokeiSelfTest menus        # prints PASS/FAIL per check, exits 0 or 1
 ///
-/// Routes: `overview.usage`, `overview.quota`, `value`, `agents`, `settings`, `popover`,
-/// `provider.<ProviderID raw value>` and `provider.<raw>.scrolled`. `-TokeiProofFixture
+/// Routes: `overview.usage`, `overview.quota`, `burn`, `burn.share` (the share sheet over Burn),
+/// `value`, `agents`, `settings`, `popover`, `provider.<ProviderID raw value>` and
+/// `provider.<raw>.scrolled`. Burn state flags (`-TokeiBurnSample`, `-TokeiBurnEmpty`,
+/// `-TokeiBurnMoment`) live in `BurnDebug`; `-TokeiShareCardOut <path>` writes the card PNG. `-TokeiProofFixture
 /// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`); the tour also
 /// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`).
 enum ProofRoute {
@@ -25,6 +27,7 @@ enum ProofRoute {
     static var wantsQuotaLens: Bool { route == "overview.quota" }
     static var isTour: Bool { UserDefaults.standard.string(forKey: "TokeiProofTour") != nil }
     static var wantsPopover: Bool { route == "popover" }
+    static var wantsShareSheet: Bool { route == "burn.share" }
     static var scrollsDrillIn: Bool { route?.hasSuffix(".scrolled") == true }
 
     @MainActor
@@ -127,12 +130,13 @@ enum ProofRoute {
                 injectFastTierModel(into: viewModel)
                 post(scrollNotification)
             }),
-            TourStep(name: "10-value", keep: { injectExtraUsage(into: viewModel) }, show: {
+            TourStep(name: "10-burn") { navigator.select(.burn, viewModel: viewModel) },
+            TourStep(name: "11-value", keep: { injectExtraUsage(into: viewModel) }, show: {
                 injectExtraUsage(into: viewModel)
                 navigator.select(.value, viewModel: viewModel)
             }),
-            TourStep(name: "11-settings") { viewModel.showingSettings = true },
-            TourStep(name: "12-menubar-popover", window: "Menu bar popover") {
+            TourStep(name: "12-settings") { viewModel.showingSettings = true },
+            TourStep(name: "13-menubar-popover", window: "Menu bar popover") {
                 viewModel.showingSettings = false
                 post(popoverNotification)
             }
@@ -154,6 +158,7 @@ enum ProofRoute {
     @MainActor
     private static func open(_ route: String, navigator: DashboardNavigator, viewModel: DashboardViewModel) {
         switch route {
+        case "burn", "burn.share": navigator.select(.burn, viewModel: viewModel)
         case "value": navigator.select(.value, viewModel: viewModel)
         case "agents": navigator.select(.agents, viewModel: viewModel)
         case "settings": viewModel.showingSettings = true
@@ -195,7 +200,10 @@ enum ProofRoute {
         check("Go › Back is disabled on a tab", menuItem("Go", "Back")?.isEnabled == false)
         press("2", keyCode: 19)
         await settle()
-        check("⌘2 shows Value", navigator.homeTab == .value && navigator.section == .value)
+        check("⌘2 shows Burn", navigator.homeTab == .burn && navigator.section == .burn)
+        press("3", keyCode: 20)
+        await settle()
+        check("⌘3 shows Value", navigator.homeTab == .value && navigator.section == .value)
 
         // Drill in, then press ⌘[ before anything opens or reads the Go menu: the shortcut
         // must work straight from the keyboard.
@@ -209,9 +217,9 @@ enum ProofRoute {
         check("Go › Back is enabled in a drill-in", menuItem("Go", "Back")?.isEnabled == true)
         navigator.back(viewModel: viewModel)
 
-        press("3", keyCode: 20)
+        press("4", keyCode: 21)
         await settle()
-        check("⌘3 shows Agents", navigator.section == .connections)
+        check("⌘4 shows Agents", navigator.section == .connections)
         navigator.open(.claudeCode, viewModel: viewModel)
         await settle()
         press("\u{1b}", keyCode: 53, modifiers: [])
@@ -235,8 +243,9 @@ enum ProofRoute {
 
     private static let commandMap: [MenuCommand] = [
         MenuCommand(menu: "View", title: "Overview", key: "1"),
-        MenuCommand(menu: "View", title: "Value", key: "2"),
-        MenuCommand(menu: "View", title: "Agents", key: "3"),
+        MenuCommand(menu: "View", title: "Burn", key: "2"),
+        MenuCommand(menu: "View", title: "Value", key: "3"),
+        MenuCommand(menu: "View", title: "Agents", key: "4"),
         MenuCommand(menu: "View", title: "Sync Now", key: "r"),
         MenuCommand(menu: "Go", title: "Back", key: "[")
     ]

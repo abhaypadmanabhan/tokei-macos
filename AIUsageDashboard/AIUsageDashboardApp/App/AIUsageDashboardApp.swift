@@ -15,12 +15,15 @@ struct AIUsageDashboardApp: App {
         // warnings (§4 contract 4). Registering keeps every reader on the same default.
         UserDefaults.standard.register(defaults: ProviderMetadata.networkDefaultsOn)
         UserDefaults.standard.register(defaults: [AlertSettings.predictiveWarningsKey: true])
+        // Burn nudges are on until turned off (Abhay 2026-11-14; contract `BurnNudgePolicy`).
+        UserDefaults.standard.register(defaults: [BurnNudgePolicy.enabledKey: true])
     }
 
     var body: some Scene {
         Window("Tokei", id: DashboardWindow.id) {
             DashboardView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         }
         .windowStyle(.titleBar)
@@ -46,6 +49,7 @@ struct AIUsageDashboardApp: App {
         Window("Menu bar popover", id: ProofRoute.popoverWindowID) {
             MenuBarView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
         }
         .windowResizability(.contentSize)
         #endif
@@ -53,6 +57,7 @@ struct AIUsageDashboardApp: App {
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(appDelegate.viewModel)
+                .environment(appDelegate.burnBoard)
                 .environment(\.dashboardVisible, windowVisibility.isVisible)
         } label: {
             MenuBarLabel()
@@ -72,6 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// when neither the dashboard window nor the menu-bar popover is ever shown (a hidden
     /// launch, e.g. `open -j` or a login item set to hide). Views only read it.
     let viewModel = DashboardViewModel()
+    /// The burn surfaces' model: follows `viewModel.burn` and holds the pending celebration.
+    private(set) lazy var burnBoard = BurnBoard(viewModel: viewModel)
 
     // Feed URL + EdDSA key live in Info.plist (SUFeedURL/SUPublicEDKey); checks
     // are background-only unless an update exists or checkForUpdates() is called.

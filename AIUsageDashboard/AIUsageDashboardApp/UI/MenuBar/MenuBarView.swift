@@ -9,6 +9,7 @@ import AIUsageDashboardCore
 /// (`MenuBarLabel`) and `MaxxerMath` are untouched (Round-2 contract).
 struct MenuBarView: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
+    @Environment(BurnBoard.self) private var burnBoard
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -119,6 +120,13 @@ struct MenuBarView: View {
                 }
                 footer
             } else {
+                BurnStrip(
+                    snapshot: burnBoard.snapshot,
+                    celebration: burnBoard.celebration,
+                    onOpen: openBurn,
+                    onCelebrationFinished: { burnBoard.finish($0) }
+                )
+                HairlineDivider()
                 hero
                 HairlineDivider()
                 summary
@@ -130,10 +138,8 @@ struct MenuBarView: View {
             }
         }
         .frame(width: 300)
-        .background(
-            RoundedRectangle(cornerRadius: PadzyRadius.window, style: .continuous)
-                .fill(PadzyTheme.menuPanel)
-        )
+        .background(PadzyTheme.menuPanel)
+        .clipShape(RoundedRectangle(cornerRadius: PadzyRadius.window, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: PadzyRadius.window, style: .continuous)
                 .stroke(PadzyTheme.border2, lineWidth: 1)
@@ -411,6 +417,14 @@ struct MenuBarView: View {
         return "\(minutes)m"
     }
 
+    /// The burn strip's click: the dashboard, on the Burn tab.
+    private func openBurn() {
+        dismissPopover()
+        openWindow(id: DashboardWindow.id)
+        DashboardNavigator.shared.select(.burn, viewModel: viewModel)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     // MARK: Footer
 
     private var footer: some View {
@@ -557,10 +571,17 @@ private func popoverVM() -> DashboardViewModel {
 
 #Preview("Popover · live") {
     MenuBarView().environmentObject(popoverVM())
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
+}
+
+#Preview("Popover · fresh install") {
+    MenuBarView().environmentObject(popoverVM())
+        .environment(BurnBoard(snapshot: .empty(now: Date())))
 }
 
 #Preview("Popover · empty") {
     for id in ProviderID.allCases { ProviderVisibility.setHidden(false, for: id) }
     let vm = DashboardViewModel()
     return MenuBarView().environmentObject(vm)
+        .environment(BurnBoard(snapshot: .empty(now: Date())))
 }

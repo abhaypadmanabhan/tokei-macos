@@ -393,29 +393,6 @@ struct ValueView: View {
 // MARK: - Tier
 
 extension MaxxerTier {
-    /// The tier as a word, sentence case. Kept in the UI layer on purpose — the frozen §4
-    /// contract carries no presentation strings.
-    var displayName: String {
-        switch self {
-        case .idle: return "Idle"
-        case .warming: return "Warming"
-        case .breakEven: return "Break-even"
-        case .maxxing: return "Maxxing"
-        case .goblinMode: return "Goblin mode"
-        }
-    }
-
-    /// One line explaining what the tier means in plan-value terms.
-    var blurb: String {
-        switch self {
-        case .idle: return "Barely touching what you pay for."
-        case .warming: return "Below break-even on your plans."
-        case .breakEven: return "Your plans have paid for themselves."
-        case .maxxing: return "Well past break-even."
-        case .goblinMode: return "5× your plan cost or better."
-        }
-    }
-
     /// Semantic status colour for the chip: amber below break-even (a nudge to
     /// review), green once the plan has paid for itself. Never the pink accent.
     var statusColor: Color {
