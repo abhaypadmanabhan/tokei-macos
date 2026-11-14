@@ -18,7 +18,7 @@ struct ExpiringSection: View {
             if expiring.isEmpty {
                 Text("Nothing is about to expire. A window shows up here when it resets soon with a quarter or more unused.")
                     .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
                     .fixedSize(horizontal: false, vertical: true)
             } else if visible {
                 // Countdowns tick once a minute, only while Tokei is on screen.
@@ -59,7 +59,7 @@ private struct ExpiringRow: View {
                 if let label = headroom.windowLabel, !label.isEmpty {
                     Text(label)
                         .font(.sans(size: 12.5))
-                        .foregroundColor(PadzyTheme.ink4)
+                        .foregroundColor(BurnTone.caption)
                         .lineLimit(1)
                 }
             }
@@ -91,7 +91,7 @@ private struct UsedBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(PadzyTheme.border2)
                 Capsule()
-                    .fill(PadzyTheme.ink4)
+                    .fill(BurnTone.mark)
                     .frame(width: proxy.size.width * CGFloat(max(0, min(100, usedPercent)) / 100))
             }
         }
@@ -112,7 +112,7 @@ struct LeaderboardSection: View {
             if entries.isEmpty {
                 Text("No agent usage this week yet.")
                     .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
             } else {
                 VStack(spacing: 0) {
                     ForEach(entries) { entry in
@@ -134,7 +134,7 @@ struct LeaderboardSection: View {
             Text("\(entry.rank)")
                 .font(.mono(size: 13.5, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(entry.rank == 1 ? PadzyTheme.ink : PadzyTheme.ink4)
+                .foregroundColor(entry.rank == 1 ? PadzyTheme.ink : BurnTone.caption)
                 .frame(width: 18, alignment: .leading)
             ProviderBrandMark.tinted(entry.providerID, size: 22)
             Text(BurnCopy.agentName(entry.providerID))
@@ -145,12 +145,12 @@ struct LeaderboardSection: View {
             Text(BurnCopy.leaderboardValue(entry))
                 .font(.mono(size: 14, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(entry.valueUSD == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                .foregroundColor(entry.valueUSD == nil ? BurnTone.caption : PadzyTheme.ink)
                 .help(entry.valueUSD == nil ? "No public rate for this agent's tokens" : "API-equivalent value this week")
             Text(TokenFormatter.format(entry.tokens))
                 .font(.mono(size: 13.5))
                 .monospacedDigit()
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.caption)
                 .frame(width: 64, alignment: .trailing)
         }
         .padding(.vertical, 9)
@@ -183,16 +183,16 @@ struct RecordsSection: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(BurnCopy.recordTitle(kind))
                 .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.caption)
             Text(BurnCopy.recordValue(record))
                 .font(.mono(size: 22, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(record == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                .foregroundColor(record == nil ? BurnTone.caption : PadzyTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
             Text(record.map { BurnCopy.shortDate($0.achievedAt) } ?? "not yet")
                 .font(.mono(size: 12))
-                .foregroundColor(PadzyTheme.ink5)
+                .foregroundColor(BurnTone.caption)
         }
         .frame(minWidth: 120, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -212,10 +212,10 @@ struct LeftOnTableSection: View {
                 Text(snapshot.leftOnTablePercent.map { "\(Int($0.rounded()))%" } ?? "—")
                     .font(.mono(size: 34, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundColor(snapshot.leftOnTablePercent == nil ? PadzyTheme.ink5 : PadzyTheme.ink)
+                    .foregroundColor(snapshot.leftOnTablePercent == nil ? BurnTone.caption : PadzyTheme.ink)
                 Text(BurnCopy.leftOnTableDetail(snapshot))
                     .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !snapshot.recentWindows.isEmpty {
@@ -233,7 +233,7 @@ struct LeftOnTableSection: View {
                                 .foregroundColor(outcome.unusedPercent >= 25 ? PadzyTheme.ink : PadzyTheme.ink3)
                             Text(BurnCopy.shortDate(outcome.resetAt))
                                 .font(.mono(size: 13.5))
-                                .foregroundColor(PadzyTheme.ink5)
+                                .foregroundColor(BurnTone.caption)
                                 .frame(width: 56, alignment: .trailing)
                         }
                         .padding(.vertical, 7)
@@ -260,12 +260,12 @@ struct TierLadderSection: View {
                 ladder(multiple: multiple, tier: tier)
                 Text("\(MaxxerMath.formatMultiple(multiple)) your plans' cost so far. \(tier.blurb)")
                     .font(.sans(size: 13))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
             } else {
                 HStack(spacing: 12) {
                     Text("Set plan costs to see where you sit between Idle and Goblin mode.")
                         .font(.sans(size: 13))
-                        .foregroundColor(PadzyTheme.ink4)
+                        .foregroundColor(BurnTone.caption)
                     Button(action: onOpenSettings) {
                         Text("Set plan costs")
                             .font(.sans(size: 13, weight: .medium))
@@ -313,7 +313,7 @@ struct TierLadderSection: View {
                 ForEach(BurnTierLadder.thresholds, id: \.self) { step in
                     Text(step.tier.displayName)
                         .font(.sans(size: 12.5, weight: step.tier == tier ? .semibold : .regular))
-                        .foregroundColor(step.tier == tier ? PadzyTheme.ink : PadzyTheme.ink4)
+                        .foregroundColor(step.tier == tier ? PadzyTheme.ink : BurnTone.caption)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -341,7 +341,7 @@ struct BadgeGrid: View {
                 SectionHeading("Badges")
                 Text("\(unlockedCount) of \(badges.count)")
                     .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
                     .fixedSize()
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 1)], alignment: .leading, spacing: 1) {
@@ -368,7 +368,7 @@ private struct BadgeCell: View {
             HStack(spacing: 8) {
                 Image(systemName: BurnCopy.badgeSymbol(progress.badge))
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(progress.isUnlocked ? PadzyTheme.ink : PadzyTheme.ink5)
+                    .foregroundColor(progress.isUnlocked ? PadzyTheme.ink : BurnTone.mark)
                     .frame(width: 22)
                 Text(progress.badge.title)
                     .font(.sans(size: 13.5, weight: .semibold))
@@ -378,13 +378,13 @@ private struct BadgeCell: View {
                 if !progress.isUnlocked {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 10))
-                        .foregroundColor(PadzyTheme.ink5)
+                        .foregroundColor(BurnTone.mark)
                         .accessibilityHidden(true)
                 }
             }
             Text(progress.badge.rule)
                 .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.caption)
                 .lineLimit(2, reservesSpace: true)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
@@ -400,7 +400,7 @@ private struct BadgeCell: View {
                 }
                 Text(BurnCopy.badgeStatus(progress))
                     .font(.mono(size: 12))
-                    .foregroundColor(progress.isUnlocked ? PadzyTheme.ink3 : PadzyTheme.ink5)
+                    .foregroundColor(progress.isUnlocked ? PadzyTheme.ink3 : BurnTone.caption)
                     .fixedSize()
             }
             .frame(height: 14)

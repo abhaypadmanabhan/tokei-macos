@@ -76,7 +76,7 @@ struct ShareCardView: View {
 
                 Text(ShareCardModel.footer)
                     .font(.sans(size: 22))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
             }
             .padding(64)
         }
@@ -133,7 +133,7 @@ struct ShareCardSheet: View {
                 .accessibilityLabel("Card: " + card.lines().joined(separator: ", "))
             Text("Only totals and agent names. No accounts, emails or project names.")
                 .font(.sans(size: 12.5))
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.caption)
             HStack(spacing: 10) {
                 Text(status ?? " ")
                     .font(.sans(size: 12.5))

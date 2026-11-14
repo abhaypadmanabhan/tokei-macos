@@ -72,7 +72,7 @@ struct BurnView: View {
 
                 Text(BurnCopy.eligibilityFinePrint)
                     .font(.sans(size: 12))
-                    .foregroundColor(PadzyTheme.ink5)
+                    .foregroundColor(BurnTone.caption)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 620, alignment: .leading)
                     .padding(.top, 20)
@@ -118,11 +118,11 @@ private struct BurnHero: View {
                         Text(BurnCopy.progressText(snapshot.today.progress))
                             .font(.mono(size: 30, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundColor(hasGoal ? PadzyTheme.ink : PadzyTheme.ink4)
+                            .foregroundColor(hasGoal ? PadzyTheme.ink : BurnTone.caption)
                             .rollingNumber(snapshot.today.progress, reduceMotion: reduceMotion)
                         Text(hasGoal ? "of today's goal" : "no goal yet")
                             .font(.sans(size: 12))
-                            .foregroundColor(PadzyTheme.ink4)
+                            .foregroundColor(BurnTone.caption)
                     }
                 }
                 .celebration(celebration, spread: 1.9, onFinish: onCelebrationFinished)
@@ -137,7 +137,7 @@ private struct BurnHero: View {
 
             Text(BurnCopy.goalSource(snapshot.today.goal))
                 .font(.sans(size: 13))
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.caption)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 560, alignment: .leading)
         }
@@ -190,17 +190,17 @@ private struct BurnHero: View {
         return HStack(spacing: 7) {
             Image(systemName: state == .alive ? "flame.fill" : "flame")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(state == .alive ? PadzyTheme.accent : PadzyTheme.ink4)
+                .foregroundColor(state == .alive ? PadzyTheme.accent : BurnTone.mark)
             Text(BurnCopy.streakTitle(snapshot.streak))
                 .font(.sans(size: 15, weight: .semibold))
                 .foregroundColor(state == .none ? PadzyTheme.ink3 : PadzyTheme.ink)
             Text(BurnCopy.streakDetail(snapshot.streak))
                 .font(.sans(size: 15))
-                .foregroundColor(state == .atRisk ? PadzyTheme.warn : PadzyTheme.ink4)
+                .foregroundColor(state == .atRisk ? PadzyTheme.warn : BurnTone.caption)
             if snapshot.streak.longest > snapshot.streak.current {
                 Text("· longest \(snapshot.streak.longest)")
                     .font(.mono(size: 13.5))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
             }
         }
         .accessibilityElement(children: .combine)

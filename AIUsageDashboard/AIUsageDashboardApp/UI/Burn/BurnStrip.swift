@@ -74,14 +74,14 @@ struct BurnStrip: View {
                     .foregroundColor(PadzyTheme.ink2)
                 + Text(" " + (BurnCopy.goalPhrase(snapshot.today.goal) ?? ""))
                     .font(.sans(size: 12.5))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
             } else {
                 Text(BurnCopy.noGoalTitle)
                     .font(.sans(size: 13.5, weight: .semibold))
                     .foregroundColor(PadzyTheme.ink)
                 Text("Set plan costs, or use an agent today.")
                     .font(.sans(size: 12.5))
-                    .foregroundColor(PadzyTheme.ink4)
+                    .foregroundColor(BurnTone.caption)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -97,15 +97,15 @@ struct BurnStrip: View {
             HStack(spacing: 4) {
                 Image(systemName: state == .alive ? "flame.fill" : "flame")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(state == .alive ? PadzyTheme.accent : PadzyTheme.ink4)
+                    .foregroundColor(state == .alive ? PadzyTheme.accent : BurnTone.mark)
                 Text("\(snapshot.streak.current)")
                     .font(.mono(size: 20, weight: .semibold))
                     .monospacedDigit()
-                    .foregroundColor(state == .none ? PadzyTheme.ink4 : PadzyTheme.ink)
+                    .foregroundColor(state == .none ? BurnTone.caption : PadzyTheme.ink)
             }
             Text(streakCaption(state))
                 .font(.sans(size: 12))
-                .foregroundColor(state == .atRisk ? PadzyTheme.warn : PadzyTheme.ink4)
+                .foregroundColor(state == .atRisk ? PadzyTheme.warn : BurnTone.caption)
         }
         .fixedSize()
     }
@@ -135,7 +135,7 @@ struct BurnStrip: View {
                 line(icon: "hourglass", text: BurnCopy.expiringLine(top, now: Date()), color: PadzyTheme.ink2)
             }
         } else {
-            line(icon: "hourglass", text: BurnCopy.nothingExpiring, color: PadzyTheme.ink4)
+            line(icon: "hourglass", text: BurnCopy.nothingExpiring, color: BurnTone.caption)
         }
     }
 
@@ -143,7 +143,7 @@ struct BurnStrip: View {
         HStack(spacing: 7) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(PadzyTheme.ink4)
+                .foregroundColor(BurnTone.mark)
                 .frame(width: 14)
             Text(text)
                 .font(.sans(size: 12.5))

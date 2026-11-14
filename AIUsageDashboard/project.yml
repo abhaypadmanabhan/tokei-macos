@@ -126,6 +126,8 @@ targets:
       - path: AIUsageDashboardApp/UI/Burn/ShareCardModel.swift
       # The burn surfaces' @Observable model (celebration queue); Foundation + Combine only.
       - path: AIUsageDashboardApp/UI/Burn/BurnBoard.swift
+      # Burn ink roles, measured for contrast by BurnContrastTests.
+      - path: AIUsageDashboardApp/UI/Burn/BurnTone.swift
       - path: AIUsageDashboardApp/UI/Components/TierCopy.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
