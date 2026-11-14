@@ -28,10 +28,12 @@ struct BurnStrip: View {
                     }
                     .celebration(celebration, spread: 2.6, onFinish: onCelebrationFinished)
                     today
-                    Spacer(minLength: 8)
-                    streak
+                    Spacer(minLength: 0)
                 }
-                expiringLine
+                VStack(alignment: .leading, spacing: 7) {
+                    streak
+                    expiringLine
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -68,6 +70,7 @@ struct BurnStrip: View {
                         .font(.sans(size: 12.5))
                         .foregroundColor(PadzyTheme.ink3)
                 }
+                .lineLimit(1)
                 Text(BurnCopy.todayAmount(snapshot.today))
                     .font(.mono(size: 12.5))
                     .monospacedDigit()
@@ -79,6 +82,7 @@ struct BurnStrip: View {
                 Text(BurnCopy.noGoalTitle)
                     .font(.sans(size: 13.5, weight: .semibold))
                     .foregroundColor(PadzyTheme.ink)
+                    .lineLimit(1)
                 Text("Set plan costs, or use an agent today.")
                     .font(.sans(size: 12.5))
                     .foregroundColor(BurnTone.caption)
@@ -86,35 +90,34 @@ struct BurnStrip: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .lineLimit(1)
     }
 
     // MARK: Streak
 
+    /// "11-day streak  goal hit today": the count and its state in words, flame filled only
+    /// while alive, so the state never rests on colour.
     private var streak: some View {
         let state = BurnCopy.streakState(snapshot.streak)
-        return VStack(alignment: .trailing, spacing: 3) {
-            HStack(spacing: 4) {
-                Image(systemName: state == .alive ? "flame.fill" : "flame")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(state == .alive ? PadzyTheme.accent : BurnTone.mark)
-                Text("\(snapshot.streak.current)")
-                    .font(.mono(size: 20, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundColor(state == .none ? BurnTone.caption : PadzyTheme.ink)
-            }
+        return HStack(spacing: 7) {
+            Image(systemName: state == .alive ? "flame.fill" : "flame")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(state == .alive ? PadzyTheme.accent : BurnTone.mark)
+                .frame(width: 14)
+            Text(BurnCopy.streakTitle(snapshot.streak))
+                .font(.sans(size: 12.5, weight: .semibold))
+                .foregroundColor(state == .none ? BurnTone.caption : PadzyTheme.ink)
             Text(streakCaption(state))
-                .font(.sans(size: 12))
+                .font(.sans(size: 12.5))
                 .foregroundColor(state == .atRisk ? PadzyTheme.warn : BurnTone.caption)
         }
-        .fixedSize()
+        .lineLimit(1)
     }
 
     private func streakCaption(_ state: BurnCopy.StreakState) -> String {
         switch state {
-        case .alive: return "day streak"
+        case .alive: return "goal hit today"
         case .atRisk: return "keep it alive"
-        case .none: return "no streak yet"
+        case .none: return "start one today"
         }
     }
 

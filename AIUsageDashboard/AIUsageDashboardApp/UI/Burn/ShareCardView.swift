@@ -13,18 +13,18 @@ struct ShareCardView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             PadzyTheme.ground
-            // One ring motif in the accent, bleeding off the right edge: the ring from the app.
+            // One ring motif in the accent, bleeding off the right edge: the ring from the app,
+            // track first so the arc keeps its full colour.
+            Circle()
+                .stroke(PadzyTheme.border2, lineWidth: 46)
+                .frame(width: 520, height: 520)
+                .offset(x: 860, y: 150)
             Circle()
                 .trim(from: 0, to: 0.82)
                 .rotation(.degrees(-90))
                 .stroke(PadzyTheme.accent, style: StrokeStyle(lineWidth: 46, lineCap: .round))
                 .frame(width: 520, height: 520)
                 .offset(x: 860, y: 150)
-            Circle()
-                .stroke(PadzyTheme.border2, lineWidth: 46)
-                .frame(width: 520, height: 520)
-                .offset(x: 860, y: 150)
-                .opacity(0.5)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 14) {

@@ -190,7 +190,8 @@ struct RecordsSection: View {
                 .foregroundColor(record == nil ? BurnTone.caption : PadzyTheme.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            Text(record.map { BurnCopy.shortDate($0.achievedAt) } ?? "not yet")
+            // Reserved even without a record, so the grid keeps its rhythm.
+            Text(record.map { BurnCopy.shortDate($0.achievedAt) } ?? " ")
                 .font(.mono(size: 12))
                 .foregroundColor(BurnTone.caption)
         }
@@ -344,7 +345,7 @@ struct BadgeGrid: View {
                     .foregroundColor(BurnTone.caption)
                     .fixedSize()
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 1)], alignment: .leading, spacing: 1) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 0)], alignment: .leading, spacing: 0) {
                 ForEach(badges) { progress in
                     BadgeCell(progress: progress)
                         .celebration(
@@ -353,9 +354,8 @@ struct BadgeGrid: View {
                         )
                 }
             }
-            // Hairline grid: 1 pt gaps over the hairline colour, no cards or shadows.
-            .background(PadzyTheme.hairline)
-            .overlay(Rectangle().stroke(PadzyTheme.hairline, lineWidth: 1))
+            // Hairline grid: each cell draws its own 1 pt edge, so a short last row leaves the
+            // ground showing rather than a grey block; no cards or shadows.
         }
     }
 }
@@ -408,6 +408,7 @@ private struct BadgeCell: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PadzyTheme.ground)
+        .overlay(Rectangle().strokeBorder(PadzyTheme.hairline, lineWidth: 0.5))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(progress.badge.title). \(BurnCopy.badgeStatus(progress)). \(progress.badge.rule)")
     }

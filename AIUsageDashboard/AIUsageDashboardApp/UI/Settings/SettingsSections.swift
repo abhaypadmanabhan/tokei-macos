@@ -130,7 +130,8 @@ struct BurnNudgesSection: View {
                     ? "Up to \(BurnNudgePolicy.maxPerDay) a day, when a window resets soon with plenty left."
                     : "Alerts are off above, so nudges are off too.")
                     .font(.sans(size: 11))
-                    .foregroundColor(PadzyTheme.ink5)
+                    // ink3, not the drawer's usual ink5: 4.5:1 for small text (WP-C AC 8).
+                    .foregroundColor(PadzyTheme.ink3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

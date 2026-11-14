@@ -120,9 +120,11 @@ private struct BurnHero: View {
                             .monospacedDigit()
                             .foregroundColor(hasGoal ? PadzyTheme.ink : BurnTone.caption)
                             .rollingNumber(snapshot.today.progress, reduceMotion: reduceMotion)
-                        Text(hasGoal ? "of today's goal" : "no goal yet")
-                            .font(.sans(size: 12))
-                            .foregroundColor(BurnTone.caption)
+                        if hasGoal {
+                            Text("of today's goal")
+                                .font(.sans(size: 12))
+                                .foregroundColor(BurnTone.caption)
+                        }
                     }
                 }
                 .celebration(celebration, spread: 1.9, onFinish: onCelebrationFinished)
@@ -224,6 +226,7 @@ private struct BurnHero: View {
         .animation(reduceMotion ? nil : PadzyMotion.quick, value: momentTitle)
     }
 
+    /// Disabled until this week has usage: an empty card is nothing to post.
     private var shareButton: some View {
         Button(action: onShare) {
             Label("Share my week", systemImage: "square.and.arrow.up")
@@ -238,7 +241,9 @@ private struct BurnHero: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Make an image of this week to post")
+        .disabled(snapshot.leaderboard.isEmpty)
+        .opacity(snapshot.leaderboard.isEmpty ? 0.45 : 1)
+        .help(snapshot.leaderboard.isEmpty ? "Nothing to share yet this week" : "Make an image of this week to post")
     }
 }
 
