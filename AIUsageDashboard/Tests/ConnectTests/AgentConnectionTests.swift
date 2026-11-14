@@ -41,7 +41,7 @@ final class AgentConnectionTests: XCTestCase {
                 print('No MCP server named tokei');sys.exit(1)
             obj=json.loads(state.read_text())
             if client=='codex': print(json.dumps({'transport':obj}))
-            else: print('Command: '+obj['command']+'\nArgs: mcp')
+            else: print('Scope: User config (available in all your projects)\nCommand: '+obj['command']+'\nArgs: mcp')
         elif args[:2]==['mcp','add']:
             separator=args.index('--')
             state.write_text(json.dumps({'command':args[separator+1],'args':args[separator+2:]}))
@@ -83,17 +83,14 @@ final class AgentConnectionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".cursor").path))
     }
 
-    func testFreshCodexHomeIsPreparedOnlyOnInstall() throws {
+    func testClientOwnsExplicitCodexDirectoryCreation() throws {
         let config = root.appendingPathComponent("fake-codex")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
         XCTAssertFalse(service.state(for: .codex).connected)
-        XCTAssertTrue(try service.change(.codex, install: false).contains("already disconnected"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
+        _ = try service.change(.codex, install: false)
         _ = try service.change(.codex, install: true, dryRun: true)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path))
         _ = try service.change(.codex, install: true)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: config.path))
-        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath: config.path)[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        XCTAssertTrue(service.state(for: .codex).connected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: config.path), "Tokei must not create or redirect client configuration directories")
     }
 
     func testDifferentClientRegistrationIsKept() throws {

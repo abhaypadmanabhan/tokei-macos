@@ -101,7 +101,7 @@ struct AgentConnectSection: View {
         let service = connection
         Task {
             message = await Task.detached(priority: .userInitiated) {
-                do { return try service.installCommand() }
+                do { return try service.installCommand(includePATHHint: false) }
                 catch { return error.localizedDescription }
             }.value
             working = false

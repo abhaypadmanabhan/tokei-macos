@@ -60,7 +60,7 @@ public struct AgentConnection: Sendable {
     public func state(for client: AgentClient) -> AgentConnectionState {
         do {
             if client == .cursor {
-                let config = try cursorConfig()
+                let config = try cursorConfig(at: cursorURL).values
                 let servers = config["mcpServers"] as? [String: Any] ?? [:]
                 let detected = FileManager.default.fileExists(atPath: home.appendingPathComponent(".cursor").path)
                     || FileManager.default.fileExists(atPath: "/Applications/Cursor.app")
@@ -70,13 +70,11 @@ public struct AgentConnection: Sendable {
             guard let binary = binary(for: client) else {
                 return AgentConnectionState(client: client, detected: false, connected: false, message: nil)
             }
-            if client == .codex, !FileManager.default.fileExists(atPath: codexHome.path) {
-                return AgentConnectionState(client: client, detected: true, connected: false, message: nil)
-            }
             let result = try run(binary, arguments: getArguments(client))
-            return AgentConnectionState(client: client, detected: true, connected: result.status == 0,
-                message: result.status != 0 && !isMissing(result.output)
-                    ? "Could not read the connection. Open \(client.name) once, then reopen Settings." : nil)
+            let scopeFix = client == .claude && result.status == 0 ? claudeScopeFix(result.output) : nil
+            return AgentConnectionState(client: client, detected: true, connected: result.status == 0 && scopeFix == nil,
+                message: scopeFix ?? (result.status != 0 && !isMissing(result.output)
+                    ? "Could not read the connection. Open \(client.name) once, then reopen Settings." : nil))
         } catch {
             return AgentConnectionState(client: client, detected: true, connected: false,
                                         message: error.localizedDescription)
@@ -93,6 +91,7 @@ public struct AgentConnection: Sendable {
     }
 
     private func performChange(_ client: AgentClient, install: Bool, dryRun: Bool) throws -> String {
+        if install { try requireInstalledLocation() }
         if client == .cursor {
             if dryRun {
                 return "Would \(install ? "register" : "remove") tokei in \(cursorURL.path)\(install ? ": \(quoted(helper.path)) mcp" : "")."
@@ -106,14 +105,10 @@ public struct AgentConnection: Sendable {
             ? ["mcp", "add"] + (client == .claude ? ["--scope", "user"] : []) + ["tokei", "--", helper.path, "mcp"]
             : ["mcp", "remove"] + (client == .claude ? ["--scope", "user"] : []) + ["tokei"]
         if dryRun { return "Would run: " + ([binary.path] + arguments).map(quoted).joined(separator: " ") }
-        // Codex rejects even read-only MCP queries when CODEX_HOME does not exist.
-        // Prepare an empty config directory only for an explicit install, never detection.
-        if client == .codex, !FileManager.default.fileExists(atPath: codexHome.path) {
-            if !install { return "Codex: tokei is already disconnected; no change." }
-            try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true,
-                                                    attributes: [.posixPermissions: 0o700])
-        }
         let existing = try run(binary, arguments: getArguments(client))
+        if !install, client == .claude, existing.status == 0, let fix = claudeScopeFix(existing.output) {
+            throw AgentConnectionError.failed(fix)
+        }
         if install, existing.status == 0 {
             if matches(existing.output, client: client) { return "\(client.name): tokei is already connected; no change." }
             throw AgentConnectionError.failed("\(client.name) already has a different tokei connection. Disconnect it first, then connect again.")
@@ -136,15 +131,16 @@ public struct AgentConnection: Sendable {
         return "\(client.name): \(install ? "connected" : "disconnected") tokei\(install ? " (\(helper.path) mcp)" : "")."
     }
 
-    public func installCommand(force: Bool = false) throws -> String {
-        do { return try performInstallCommand(force: force) }
+    public func installCommand(force: Bool = false, includePATHHint: Bool = true) throws -> String {
+        do { return try performInstallCommand(force: force, includePATHHint: includePATHHint) }
         catch let error as AgentConnectionError { throw error }
         catch {
             throw AgentConnectionError.failed("The tokei command could not be installed. Check that ~/.local/bin is writable, then retry.")
         }
     }
 
-    private func performInstallCommand(force: Bool) throws -> String {
+    private func performInstallCommand(force: Bool, includePATHHint: Bool) throws -> String {
+        try requireInstalledLocation()
         let directory = home.appendingPathComponent(".local/bin", isDirectory: true)
         let link = directory.appendingPathComponent("tokei")
         let fm = FileManager.default
@@ -154,7 +150,7 @@ public struct AgentConnection: Sendable {
         let attributes = try? fm.attributesOfItem(atPath: link.path)
         if attributes != nil {
             if (try? fm.destinationOfSymbolicLink(atPath: link.path)) == helper.path {
-                return "tokei command is already installed; no change." + pathHint(directory)
+                return "tokei command is already installed; no change." + (includePATHHint ? pathHint(directory) : "")
             }
             guard force, attributes?[.type] as? FileAttributeType != .typeDirectory else {
                 throw AgentConnectionError.failed("\(link.path) already points elsewhere. Run tokei install --force to replace the file or link.")
@@ -168,7 +164,7 @@ public struct AgentConnection: Sendable {
         guard Darwin.rename(pending.path, link.path) == 0 else {
             throw AgentConnectionError.failed("The tokei command could not be installed. Check that you can write to \(directory.path), then retry.")
         }
-        return "Installed \(link.path) → \(helper.path)." + pathHint(directory)
+        return "Installed \(link.path) → \(helper.path)." + (includePATHHint ? pathHint(directory) : "")
     }
 
     private func pathHint(_ directory: URL) -> String {
@@ -176,45 +172,72 @@ public struct AgentConnection: Sendable {
         return paths.contains(directory.path) ? "" : "\nAdd ~/.local/bin to PATH in your shell settings: export PATH=\"$HOME/.local/bin:$PATH\""
     }
 
-    private var codexHome: URL {
-        URL(fileURLWithPath: environment["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path, isDirectory: true)
+    private func requireInstalledLocation() throws {
+        guard !helper.path.hasPrefix("/Volumes/"), !helper.path.contains("/AppTranslocation/") else {
+            throw AgentConnectionError.failed("Move Tokei to Applications, then retry.")
+        }
     }
 
     private var cursorURL: URL { home.appendingPathComponent(".cursor/mcp.json") }
 
-    private func cursorConfig() throws -> [String: Any] {
-        guard FileManager.default.fileExists(atPath: cursorURL.path) else { return [:] }
-        guard let data = try? Data(contentsOf: cursorURL),
+    private func cursorConfig(at url: URL) throws -> (values: [String: Any], data: Data?) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return ([:], nil) }
+        guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["mcpServers"] == nil || object["mcpServers"] is [String: Any] else {
             throw AgentConnectionError.failed("Cursor's mcp.json is not a valid MCP object. Fix its JSON, then retry; Tokei kept the file.")
         }
-        return object
+        return (object, data)
     }
 
     private func changeCursor(install: Bool) throws -> String {
-        var config = try cursorConfig()
+        // Keep a dotfiles-manager symlink in place. Stage and rename beside its target.
+        let target = cursorURL.resolvingSymlinksInPath()
+        let document = try cursorConfig(at: target)
+        var config = document.values
         var servers = config["mcpServers"] as? [String: Any] ?? [:]
         let wanted: [String: Any] = ["command": helper.path, "args": ["mcp"]]
-        if install, let current = servers["tokei"] as? [String: Any],
-           NSDictionary(dictionary: current).isEqual(to: wanted) {
-            return "Cursor: tokei is already connected; no change."
+        if install, let current = servers["tokei"] {
+            if let current = current as? [String: Any], NSDictionary(dictionary: current).isEqual(to: wanted) {
+                return "Cursor: tokei is already connected; no change."
+            }
+            throw AgentConnectionError.failed("Cursor already has a different tokei connection. Disconnect it first, then connect again.")
         }
         if !install, servers["tokei"] == nil { return "Cursor: tokei is already disconnected; no change." }
         if install { servers["tokei"] = wanted } else { servers.removeValue(forKey: "tokei") }
         config["mcpServers"] = servers
         let fm = FileManager.default
-        let backup = URL(fileURLWithPath: cursorURL.path + ".bak")
-        if fm.fileExists(atPath: cursorURL.path), !fm.fileExists(atPath: backup.path) {
-            try fm.copyItem(at: cursorURL, to: backup)
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
-        }
-        try fm.createDirectory(at: cursorURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
                                attributes: [.posixPermissions: 0o700])
-        let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: cursorURL, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cursorURL.path)
+        let backup = URL(fileURLWithPath: cursorURL.path + ".bak")
+        if let original = document.data, (try? fm.attributesOfItem(atPath: backup.path)) == nil {
+            try writeNewFile(original, to: backup)
+        }
+        let data = try JSONSerialization.data(withJSONObject: config,
+                                               options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        let pending = target.deletingLastPathComponent().appendingPathComponent(".tokei-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: pending) }
+        try writeNewFile(data, to: pending)
+        guard Darwin.rename(pending.path, target.path) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
         return "Cursor: \(install ? "connected" : "disconnected") tokei in \(cursorURL.path)."
+    }
+
+    /// Create with owner-only permissions, refusing any existing file or link. No chmod
+    /// follows either the configuration link or a pre-existing backup link.
+    private func writeNewFile(_ data: Data, to url: URL) throws {
+        let descriptor = Darwin.open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.close()
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
     }
 
     private func getArguments(_ client: AgentClient) -> [String] {
@@ -228,13 +251,24 @@ public struct AgentConnection: Sendable {
             return transport["command"] as? String == helper.path && transport["args"] as? [String] == ["mcp"]
         }
         let lines = output.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
-        return lines.contains("Command: \(helper.path)") && lines.contains("Args: mcp")
+        return claudeScopeFix(output) == nil
+            && lines.contains("Command: \(helper.path)") && lines.contains("Args: mcp")
+    }
+
+    private func claudeScopeFix(_ output: String) -> String? {
+        let lines = output.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }
+        if lines.contains(where: { $0.hasPrefix("Scope: User config") }) { return nil }
+        for scope in ["local", "project"] where lines.contains(where: {
+            $0.hasPrefix("Scope: \(scope.capitalized) config")
+        }) {
+            return "tokei is registered in Claude's \(scope) config. Run claude mcp remove tokei -s \(scope), then retry."
+        }
+        return "Claude Code did not identify the connection's scope. Run claude mcp get tokei to check it, then retry."
     }
 
     private func isMissing(_ output: String) -> Bool {
         let lower = output.lowercased()
         return lower.contains("no mcp server found") || lower.contains("no mcp server named")
-            || lower.contains("no server named") || lower.contains("not found")
     }
 
     private func quoted(_ value: String) -> String {
@@ -258,9 +292,10 @@ public struct AgentConnection: Sendable {
         process.executableURL = binary
         process.arguments = arguments
         var env = environment
-        env["HOME"] = home.path
-        env["CLAUDE_CONFIG_DIR"] = env["CLAUDE_CONFIG_DIR"] ?? home.appendingPathComponent(".claude").path
-        env["CODEX_HOME"] = env["CODEX_HOME"] ?? home.appendingPathComponent(".codex").path
+        // Profile variables must stay exactly as the user supplied them: inserting one
+        // changes the client's configuration location. Only enrich PATH for GUI launches.
+        env["PATH"] = ([binary.deletingLastPathComponent().path] + fallbackDirectories
+            + [environment["PATH"] ?? ""]).filter { !$0.isEmpty }.joined(separator: ":")
         process.environment = env
         process.currentDirectoryURL = home
         process.standardInput = FileHandle.nullDevice
