@@ -26,7 +26,9 @@ struct BurnView: View {
     @State private var sharedCard: ShareCardModel?
 
     private var snapshot: BurnSnapshot { board.snapshot }
-    private var celebration: BurnCelebration? { board.celebration(forSurfaceExposed: isExposed) }
+    private var celebration: BurnCelebration? {
+        board.celebration(forSurfaceExposed: BurnExposure.burnTab(dashboardExposes: isExposed, shareSheetOpen: sharedCard != nil))
+    }
 
     var body: some View {
         ScrollViewReader { scroller in

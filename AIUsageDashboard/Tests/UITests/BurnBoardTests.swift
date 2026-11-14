@@ -60,6 +60,19 @@ final class BurnBoardTests: XCTestCase {
         XCTAssertEqual(board.celebration(forSurfaceExposed: true)?.id, pending?.id, "the exposed pane plays it")
     }
 
+    /// Review r2 S1: the Share my week sheet covers the Burn tab, so a moment that lands while it
+    /// is open waits; a drill-in or drawer (dashboard not exposing the tab) does too.
+    func testTheShareSheetCoversBurnLikeADrillIn() {
+        XCTAssertTrue(BurnExposure.burnTab(dashboardExposes: true, shareSheetOpen: false))
+        XCTAssertFalse(BurnExposure.burnTab(dashboardExposes: true, shareSheetOpen: true), "sheet open")
+        XCTAssertFalse(BurnExposure.burnTab(dashboardExposes: false, shareSheetOpen: false), "drill-in or drawer")
+        let board = BurnBoard(snapshot: .empty(now: now), now: { self.now })
+        board.apply(snapshot(moments: [.record(.bestDay)]))
+        let exposed = BurnExposure.burnTab(dashboardExposes: true, shareSheetOpen: true)
+        XCTAssertNil(board.celebration(forSurfaceExposed: exposed))
+        XCTAssertNotNil(board.celebration, "still pending for when the sheet closes")
+    }
+
     func testGoblinModeIsTheBigCelebrationAndStaleOnesExpire() {
         let board = BurnBoard(snapshot: .empty(now: now), now: { self.now })
         board.apply(snapshot(moments: [.badge(.goblinMode), .tierUp(.goblinMode)]))

@@ -71,6 +71,14 @@ final class BurnBoard {
 
 }
 
+/// When the Burn tab counts as seen. The dashboard passes whether a drill-in or drawer covers
+/// the pane; the tab's own Share my week sheet covers it too (review r2 S1).
+enum BurnExposure {
+    static func burnTab(dashboardExposes: Bool, shareSheetOpen: Bool) -> Bool {
+        dashboardExposes && !shareSheetOpen
+    }
+}
+
 /// One moment to celebrate, once.
 struct BurnCelebration: Equatable, Identifiable {
     let id = UUID()
