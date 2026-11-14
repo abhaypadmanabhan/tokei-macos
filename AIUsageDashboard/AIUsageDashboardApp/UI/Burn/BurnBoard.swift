@@ -51,6 +51,14 @@ final class BurnBoard {
         }
     }
 
+    /// The celebration a surface may play: the pending one while that surface is exposed, `nil`
+    /// while it is covered or closed, which leaves it pending for the next exposed surface.
+    /// Playing ends in `finish`, so handing it to a hidden surface would use it up unseen
+    /// (review r1 S1: Burn stays mounted under an opaque agent drill-in).
+    func celebration(forSurfaceExposed exposed: Bool) -> BurnCelebration? {
+        exposed ? celebration : nil
+    }
+
     /// Queues a celebration directly (debug trigger and previews).
     func celebrate(_ moment: BurnMoment) {
         celebration = BurnCelebration(moment: moment, createdAt: now())

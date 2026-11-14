@@ -125,7 +125,7 @@ struct MenuBarView: View {
             } else {
                 BurnStrip(
                     snapshot: burnBoard.snapshot,
-                    celebration: onScreen ? burnBoard.celebration : nil,
+                    celebration: burnBoard.celebration(forSurfaceExposed: onScreen),
                     onOpen: openBurn,
                     onCelebrationFinished: { burnBoard.finish($0) }
                 )

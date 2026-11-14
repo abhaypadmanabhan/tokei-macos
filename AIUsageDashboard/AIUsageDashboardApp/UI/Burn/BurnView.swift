@@ -16,10 +16,14 @@ struct BurnView: View {
     var onOpenSettings: () -> Void = {}
     /// Drills into an agent's detail.
     var onSelectProvider: (ProviderID) -> Void = { _ in }
+    /// False while something opaque or modal sits over this pane (an agent drill-in, a drawer):
+    /// the pane stays mounted underneath, so it must not play, and use up, a celebration.
+    var isExposed = true
 
     @State private var sharing = false
 
     private var snapshot: BurnSnapshot { board.snapshot }
+    private var celebration: BurnCelebration? { board.celebration(forSurfaceExposed: isExposed) }
 
     var body: some View {
         ScrollViewReader { scroller in
@@ -51,8 +55,8 @@ struct BurnView: View {
             VStack(alignment: .leading, spacing: 0) {
                 BurnHero(
                     snapshot: snapshot,
-                    momentTitle: board.celebration?.title,
-                    celebration: board.celebration.flatMap { $0.badge == nil ? $0 : nil },
+                    momentTitle: celebration?.title,
+                    celebration: celebration.flatMap { $0.badge == nil ? $0 : nil },
                     onShare: { sharing = true },
                     onOpenSettings: onOpenSettings,
                     onCelebrationFinished: { board.finish($0) }
@@ -92,7 +96,7 @@ struct BurnView: View {
                     .id("burn.bottom")
                 BadgeGrid(
                     badges: snapshot.badges,
-                    celebration: board.celebration.flatMap { $0.badge == nil ? nil : $0 },
+                    celebration: celebration.flatMap { $0.badge == nil ? nil : $0 },
                     onCelebrationFinished: { board.finish($0) }
                 )
                 .padding(.top, 24)

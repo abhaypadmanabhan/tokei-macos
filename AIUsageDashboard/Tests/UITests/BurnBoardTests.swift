@@ -48,6 +48,18 @@ final class BurnBoardTests: XCTestCase {
         XCTAssertNil(board.celebration, "the next evaluation has no moments, so nothing replays")
     }
 
+    /// Review r1 S1: Burn stays mounted under an opaque agent drill-in. A covered surface gets
+    /// no celebration, so nothing plays or calls `finish` there, and the moment waits.
+    func testACoveredSurfaceLeavesTheCelebrationPending() {
+        let board = BurnBoard(snapshot: .empty(now: now), now: { self.now })
+        board.apply(snapshot(moments: [.tierUp(.maxxing)]))
+        let pending = board.celebration
+        XCTAssertNotNil(pending)
+        XCTAssertNil(board.celebration(forSurfaceExposed: false), "a covered Burn pane must not get it")
+        XCTAssertEqual(board.celebration?.id, pending?.id, "still pending after the covered pass")
+        XCTAssertEqual(board.celebration(forSurfaceExposed: true)?.id, pending?.id, "the exposed pane plays it")
+    }
+
     func testGoblinModeIsTheBigCelebrationAndStaleOnesExpire() {
         let board = BurnBoard(snapshot: .empty(now: now), now: { self.now })
         board.apply(snapshot(moments: [.badge(.goblinMode), .tierUp(.goblinMode)]))

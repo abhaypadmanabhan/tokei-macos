@@ -206,7 +206,9 @@ struct DashboardView: View {
         case .burn:
             BurnView(
                 onOpenSettings: { openSettings() },
-                onSelectProvider: { openProvider($0) }
+                onSelectProvider: { openProvider($0) },
+                // Under an opaque drill-in or a drawer the pane is mounted but not seen.
+                isExposed: !section.isDrillIn && !viewModel.showingSettings && !showingAddAgent
             )
         case .value:
             ValueView(
