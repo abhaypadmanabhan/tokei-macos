@@ -22,6 +22,31 @@ struct BurnView: View {
     private var snapshot: BurnSnapshot { board.snapshot }
 
     var body: some View {
+        ScrollViewReader { scroller in
+            sections
+                #if DEBUG
+                .task {
+                    // `-TokeiProofRoute burn.middle|burn.bottom`: captures of the lower sections
+                    // without synthesizing input (input from a background tool is unreliable).
+                    if let anchor = ProofRoute.burnScrollAnchor {
+                        try? await Task.sleep(nanoseconds: 300_000_000)
+                        scroller.scrollTo(anchor, anchor: .top)
+                    }
+                }
+                #endif
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: $sharing) {
+            ShareCardSheet(card: ShareCardModel(snapshot: snapshot), onDone: { sharing = false })
+        }
+        #if DEBUG
+        .task {
+            if ProofRoute.wantsShareSheet { sharing = true }
+        }
+        #endif
+    }
+
+    private var sections: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 BurnHero(
@@ -55,6 +80,7 @@ struct BurnView: View {
                 .padding(.vertical, 24)
 
                 HairlineDivider()
+                    .id("burn.middle")
                 LeftOnTableSection(snapshot: snapshot)
                     .padding(.vertical, 24)
 
@@ -63,6 +89,7 @@ struct BurnView: View {
                     .padding(.vertical, 24)
 
                 HairlineDivider()
+                    .id("burn.bottom")
                 BadgeGrid(
                     badges: snapshot.badges,
                     celebration: board.celebration.flatMap { $0.badge == nil ? nil : $0 },
@@ -82,15 +109,6 @@ struct BurnView: View {
             .padding(.bottom, PadzySpace.xxxl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: $sharing) {
-            ShareCardSheet(card: ShareCardModel(snapshot: snapshot), onDone: { sharing = false })
-        }
-        #if DEBUG
-        .task {
-            if ProofRoute.wantsShareSheet { sharing = true }
-        }
-        #endif
     }
 }
 

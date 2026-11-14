@@ -11,6 +11,7 @@ import AIUsageDashboardCore
 ///     Tokei -TokeiSelfTest menus        # prints PASS/FAIL per check, exits 0 or 1
 ///
 /// Routes: `overview.usage`, `overview.quota`, `burn`, `burn.share` (the share sheet over Burn),
+/// `burn.middle` and `burn.bottom` (the Burn tab scrolled to its lower sections),
 /// `value`, `agents`, `settings`, `popover`, `provider.<ProviderID raw value>` and
 /// `provider.<raw>.scrolled`. Burn state flags (`-TokeiBurnSample`, `-TokeiBurnEmpty`,
 /// `-TokeiBurnMoment`) live in `BurnDebug`; `-TokeiShareCardOut <path>` writes the card PNG. `-TokeiProofFixture
@@ -28,6 +29,13 @@ enum ProofRoute {
     static var isTour: Bool { UserDefaults.standard.string(forKey: "TokeiProofTour") != nil }
     static var wantsPopover: Bool { route == "popover" }
     static var wantsShareSheet: Bool { route == "burn.share" }
+    /// Keeps the window's content live while covered, for own-window captures.
+    static var forceVisible: Bool { UserDefaults.standard.bool(forKey: "TokeiProofVisible") }
+    /// `burn.middle` (left on the table, tier) and `burn.bottom` (badges): where the Burn tab
+    /// scrolls to for a capture of its lower sections.
+    static var burnScrollAnchor: String? {
+        route == "burn.middle" || route == "burn.bottom" ? route : nil
+    }
     static var scrollsDrillIn: Bool { route?.hasSuffix(".scrolled") == true }
 
     @MainActor
@@ -158,7 +166,7 @@ enum ProofRoute {
     @MainActor
     private static func open(_ route: String, navigator: DashboardNavigator, viewModel: DashboardViewModel) {
         switch route {
-        case "burn", "burn.share": navigator.select(.burn, viewModel: viewModel)
+        case "burn", "burn.share", "burn.middle", "burn.bottom": navigator.select(.burn, viewModel: viewModel)
         case "value": navigator.select(.value, viewModel: viewModel)
         case "agents": navigator.select(.agents, viewModel: viewModel)
         case "settings": viewModel.showingSettings = true
