@@ -370,7 +370,7 @@ public final class DashboardViewModel: ObservableObject {
         )
     }
 
-    private var hiddenProviders: Set<ProviderID> {
+    var hiddenProviders: Set<ProviderID> {
         Set(ProviderID.allCases.filter { providerID in
             burnDefaults.bool(forKey: "provider_hidden_\(providerID.rawValue)")
         })

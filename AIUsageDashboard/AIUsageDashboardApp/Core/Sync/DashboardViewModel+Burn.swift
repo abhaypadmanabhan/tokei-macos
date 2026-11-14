@@ -10,6 +10,7 @@ extension DashboardViewModel {
         let generation = burnGeneration
         let previous = burnTask
         let snapshots = visibleSnapshots
+        let hiddenProviders = hiddenProviders
         let calendar = analyticsCalendar
         let now = now()
         let costs = MaxxerPlanCostStore(defaults: burnDefaults)
@@ -24,10 +25,13 @@ extension DashboardViewModel {
             let pricingSource = self.burnPricing
             let evaluation = await Task.detached(priority: .utility) {
                 BurnEngine.evaluate(snapshots: snapshots, monthlyPlanUSD: plans, quotaSamples: samples,
-                                    state: state, now: now, calendar: calendar, pricing: pricingSource(), emitMoments: !saved)
+                                    state: state, now: now, calendar: calendar, pricing: pricingSource(),
+                                    hiddenProviders: hiddenProviders, emitMoments: !saved)
             }.value
             guard !Task.isCancelled, self.burnGeneration == generation else { return }
-            self.burn = evaluation.snapshot
+            if !self.burn.hasSameContent(as: evaluation.snapshot) {
+                self.burn = evaluation.snapshot
+            }
             // A saved snapshot is a preview, not new evidence. In particular it must not
             // lower the stored tier and then celebrate the same tier on the live refresh.
             guard !saved else { return }
@@ -36,7 +40,8 @@ extension DashboardViewModel {
                     .error("Could not save burn achievements; will retry on the next refresh.")
             }
             guard !Task.isCancelled, self.burnGeneration == generation else { return }
-            await self.notifyBurn(evaluation.snapshot, calendar)
+            let notifyBurn = self.notifyBurn
+            Task { await notifyBurn(evaluation.snapshot, calendar) }
         }
         burnTask = task
         await task.value
