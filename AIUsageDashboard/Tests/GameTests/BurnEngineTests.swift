@@ -94,6 +94,7 @@ final class BurnEngineTests: XCTestCase {
         XCTAssertEqual(result.map(\.rank), [1, 2, 3])
         XCTAssertEqual(result.map(\.tokens), [3_000_000, 2_000_000, 10_000_000])
         XCTAssertEqual(result[1].valueUSD, 2)
+        XCTAssertNil(result[2].valueUSD)
     }
 
     func testWindowOutcomesLastReadingBeforeResetNeverMixAccountsOrPaidWindows() {
@@ -136,6 +137,29 @@ final class BurnEngineTests: XCTestCase {
         previous.tier = MaxxerTier.idle.rawValue
         XCTAssertFalse(april.evaluate([april.snapshot(days: [0: 155_000_000])], state: previous)
             .snapshot.moments.contains(.tierUp(.goblinMode)))
+    }
+
+    func testFractionalMultiProviderRecordsDoNotRefireOrRewriteOnIdenticalInputs() {
+        let f = BurnFixtures()
+        let snapshots = ProviderID.allCases.enumerated().map { index, id in
+            f.snapshot(id, days: [-4: 11 + index, -3: 99 + index, -2: 17 + index, -1: 1 + index, 0: 33 + index])
+        }
+        let plans = Dictionary(uniqueKeysWithValues: ProviderID.allCases.map { ($0, 31.0) })
+        let seed = f.evaluate(snapshots, plans: plans)
+        for _ in 0..<50 {
+            let result = f.evaluate(snapshots, plans: plans, state: seed.state)
+            XCTAssertTrue(result.snapshot.moments.isEmpty)
+            XCTAssertEqual(result.state, seed.state)
+            XCTAssertEqual(result.snapshot.leaderboard, seed.snapshot.leaderboard)
+            XCTAssertEqual(result.snapshot.today, seed.snapshot.today)
+        }
+    }
+
+    func testFirstUsageAfterAnEmptySeedCanSetARecord() {
+        let f = BurnFixtures()
+        let seed = f.evaluate([])
+        let result = f.evaluate([f.snapshot(days: [0: 2_000_000])], state: seed.state)
+        XCTAssertEqual(result.snapshot.moments.filter { $0 == .record(.bestDay) }, [.record(.bestDay)])
     }
 
     func testNinetyTwoDaysEightProvidersWithinFiftyMilliseconds() {

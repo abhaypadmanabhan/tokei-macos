@@ -13,7 +13,7 @@ extension BurnEngine {
             result.append(BurnRecord(kind: .bestDay, value: best.value, unit: unit, achievedAt: best.key))
         }
         var weeks: [Date: Double] = [:]
-        for (day, value) in values {
+        for (day, value) in values.sorted(by: { $0.key < $1.key }) {
             if let start = calendar.dateInterval(of: .weekOfYear, for: day)?.start { weeks[start, default: 0] += value }
         }
         if let best = weeks.sorted(by: { $0.key < $1.key }).max(by: { $0.value < $1.value }), best.value > 0 {
@@ -24,8 +24,8 @@ extension BurnEngine {
         if !plans.isEmpty {
             var monthValues: [Date: Double] = [:]
             var monthPlans: [Date: Double] = [:]
-            for (id, plan) in plans {
-                let grouped = Dictionary(grouping: Array((history.providerDollars[id] ?? [:]).filter { $0.key <= now })) {
+            for (id, plan) in plans.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                let grouped = Dictionary(grouping: (history.providerDollars[id] ?? [:]).filter { $0.key <= now }.sorted { $0.key < $1.key }) {
                     calendar.dateInterval(of: .month, for: $0.key)?.start ?? $0.key
                 }
                 for (start, days) in grouped {
@@ -49,11 +49,11 @@ extension BurnEngine {
     }
 
     static func badgeProgress(
-        history: BurnHistory, plans: [ProviderID: Double], multiple: Double?,
+        history: BurnHistory, planProviders: Set<ProviderID>, multiple: Double?,
         outcomes: [BurnWindowOutcome], longestStreak: Int, now: Date, calendar: Calendar
     ) -> [BurnBadge: Double] {
         let maxTokens = Double(history.tokens.values.max() ?? 0)
-        let plannedValue = plans.keys.flatMap { history.providerDollars[$0]?.values.map { $0 } ?? [] }.contains { $0 > 0 }
+        let plannedValue = planProviders.flatMap { history.providerDollars[$0]?.values.map { $0 } ?? [] }.contains { $0 > 0 }
         var maxAgents = 0
         for day in history.tokens.keys {
             maxAgents = max(maxAgents, history.providerTokens.values.filter { ($0[day] ?? 0) > 0 }.count)
@@ -71,7 +71,7 @@ extension BurnEngine {
             .firstBurn: plannedValue ? 1 : 0,
             .paidForItself: (multiple ?? 0), .maxxing: (multiple ?? 0) / 2, .goblinMode: (multiple ?? 0) / 5,
             .millionDay: maxTokens / 1_000_000, .tenMillionDay: maxTokens / 10_000_000,
-            .ranItDry: (outcomes.filter { $0.windowType == .fiveHour }.map(\.finalUsedPercent).max() ?? 0) / 90,
+            .ranItDry: (outcomes.filter { $0.windowType == .fiveHour || $0.windowType == .session }.map(\.finalUsedPercent).max() ?? 0) / 90,
             .fullWeek: (outcomes.filter { $0.windowType == .weekly }.map(\.finalUsedPercent).max() ?? 0) / 90,
             .streak3: Double(longestStreak) / 3, .streak7: Double(longestStreak) / 7,
             .streak30: Double(longestStreak) / 30, .fleet: Double(maxAgents) / 3, .nothingLeft: nothingLeft

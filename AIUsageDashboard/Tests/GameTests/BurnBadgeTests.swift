@@ -58,6 +58,16 @@ final class BurnBadgeTests: XCTestCase {
         XCTAssertTrue(again.snapshot.moments.isEmpty)
     }
 
+    func testSessionIsAFiveHourWindowAndFirstBurnNeedsAPlanNotItsPrice() {
+        let f = BurnFixtures()
+        let window = QuotaWindow(providerID: .codex, type: .session, used: 10, limit: 100,
+                                 resetAt: f.now.addingTimeInterval(600), confidence: .providerReported, source: "fixture")
+        let result = f.evaluate([f.snapshot(days: [0: 1], windows: [window])], plans: [:],
+                                samples: [f.sample(type: .session)]).snapshot
+        XCTAssertTrue(result.badges.first { $0.badge == .firstBurn }!.isUnlocked)
+        XCTAssertTrue(result.badges.first { $0.badge == .ranItDry }!.isUnlocked)
+    }
+
     func testNothingLeftNeedsACompletedNonemptyWeekAndAllAccounts() {
         let f = BurnFixtures()
         for samples in [[], [f.sample(used: 100, reset: f.day(0))],

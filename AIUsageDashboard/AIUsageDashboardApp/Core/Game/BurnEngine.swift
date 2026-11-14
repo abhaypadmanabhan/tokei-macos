@@ -7,12 +7,12 @@ public enum BurnEngine {
         state: BurnState, now: Date, calendar: Calendar, pricing: PricingEngine,
         hiddenProviders: Set<ProviderID> = [], emitMoments: Bool = true
     ) -> (snapshot: BurnSnapshot, state: BurnState) {
-        let visible = snapshots.filter { !hiddenProviders.contains($0.providerID) }
+        let visible = snapshots.filter { !hiddenProviders.contains($0.providerID) }.sorted { $0.providerID.rawValue < $1.providerID.rawValue }
         let history = BurnHistory(snapshots: visible, pricing: pricing, now: now, calendar: calendar)
         let plans = monthlyPlanUSD.filter { id, cost in
             cost.isFinite && cost > 0 && visible.contains { $0.providerID == id }
         }
-        let monthlyUSD = plans.values.reduce(0, +)
+        let monthlyUSD = plans.sorted { $0.key.rawValue < $1.key.rawValue }.map(\.value).reduce(0, +)
         let today = calendar.startOfDay(for: now)
         let goal = history.goal(on: today, monthlyUSD: monthlyUSD, calendar: calendar)
         let burned = goal?.unit == .usd ? history.todayUSD : history.tokens[today].map(Double.init)
@@ -41,14 +41,17 @@ public enum BurnEngine {
             // that record without claiming that dollars beat a number of tokens.
             if old == nil || old?.unit != record.unit?.rawValue || record.value > (old?.value ?? 0) {
                 next.records[record.kind.rawValue] = BurnState.Record(record)
-                if state.initialized && old?.unit == record.unit?.rawValue && old != nil {
+                if state.initialized && (old == nil || old?.unit == record.unit?.rawValue) {
                     moments.append(.record(record.kind))
                 }
             }
         }
         next.longestStreak = streak.longest
         let bestMultiple = max(multiple ?? 0, next.records[BurnRecordKind.bestMonthMultiple.rawValue]?.value ?? 0)
-        let badges = badgeProgress(history: history, plans: plans, multiple: bestMultiple,
+        let planProviders = Set(plans.keys).union(visible.filter { snapshot in
+            snapshot.quotaWindows.contains { ExpiringHeadroomFinder.Policy.standard.horizon(for: $0.type) != nil }
+        }.map(\.providerID))
+        let badges = badgeProgress(history: history, planProviders: planProviders, multiple: bestMultiple,
                                    outcomes: outcomes, longestStreak: streak.longest, now: now, calendar: calendar)
         for badge in BurnBadge.allCases where (badges[badge] ?? 0) >= 1 && next.badges[badge.rawValue] == nil {
             next.badges[badge.rawValue] = now
@@ -112,7 +115,8 @@ public enum BurnEngine {
                                     now: Date, calendar: Calendar) -> [BurnLeaderboardEntry] {
         let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
         let entries = visible.map { snapshot -> (ProviderID, Double?, Int) in
-            let usd = (history.providerDollars[snapshot.providerID] ?? [:]).filter { $0.key >= start && $0.key <= now }.values
+            let usd = (history.providerDollars[snapshot.providerID] ?? [:])
+                .filter { $0.key >= start && $0.key <= now }.sorted { $0.key < $1.key }.map(\.value)
             let tokens = (history.providerTokens[snapshot.providerID] ?? [:]).filter { $0.key >= start && $0.key <= now }.values
             return (snapshot.providerID, usd.isEmpty ? nil : usd.reduce(0, +), TokenArithmetic.sum(tokens))
         }.sorted {

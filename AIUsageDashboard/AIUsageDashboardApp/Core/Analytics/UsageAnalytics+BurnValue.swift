@@ -18,7 +18,7 @@ extension UsageAnalytics {
                     date >= month.start && date <= now ? models : nil
                 })
                 let active = models.filter { ($0.value.totalTokens ?? 0) > 0 }
-                let priced = active.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
+                let priced = active.sorted { $0.key < $1.key }.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
                 amount = active.isEmpty ? 0 : (priced.isEmpty ? nil : priced.reduce(0, +))
             } else {
                 amount = burnLegacyMonthValue(snapshot, pricing: pricing, month: month, now: now)

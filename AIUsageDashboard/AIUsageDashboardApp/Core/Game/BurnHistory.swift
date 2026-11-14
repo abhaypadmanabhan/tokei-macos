@@ -26,7 +26,9 @@ struct BurnHistory {
             byProvider[snapshot.providerID] = days
             totals.merge(days, uniquingKeysWith: TokenArithmetic.adding)
             let costs = UsageAnalytics.costDays(for: snapshot, pricing: pricing, calendar: calendar, today: today)
-            usdByProvider[snapshot.providerID] = costs.compactMapValues { $0.unknown ? nil : $0.usd }
+            usdByProvider[snapshot.providerID] = costs.compactMapValues {
+                !$0.unknown && ($0.pricedTokens > 0 || $0.unpricedTokens == 0) ? $0.usd : nil
+            }
         }
         let cost = UsageAnalytics.costSummary(snapshots: snapshots, range: .lifetime,
                                               pricing: pricing, calendar: calendar, now: now)
