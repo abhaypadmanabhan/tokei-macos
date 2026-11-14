@@ -103,6 +103,15 @@ final class AgentConnectionReviewTests: XCTestCase {
         XCTAssertEqual(try? FileManager.default.destinationOfSymbolicLink(atPath: link.path), "../dotfiles/mcp.json")
     }
 
+    func testS16DanglingCursorLinkIsRefusedAndKept() throws {
+        let link = root.appendingPathComponent(".cursor/mcp.json")
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../dotfiles/mcp.json")
+        XCTAssertThrowsError(try service.change(.cursor, install: true))
+        XCTAssertEqual(try? FileManager.default.destinationOfSymbolicLink(atPath: link.path), "../dotfiles/mcp.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("dotfiles/mcp.json").path))
+    }
+
     func testS3DifferentCursorRegistrationAndExistingBackupAreKept() throws {
         let text = #"{"mcpServers":{"tokei":{"command":"/other/tokei","args":["mcp"],"env":{"TOKEI_SNAPSHOT_PATH":"/custom/path"}}}}"#
         let url = try cursorFile(text)

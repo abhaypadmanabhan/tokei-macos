@@ -193,6 +193,10 @@ public struct AgentConnection: Sendable {
     private func changeCursor(install: Bool) throws -> String {
         // Keep a dotfiles-manager symlink in place. Stage and rename beside its target.
         let target = cursorURL.resolvingSymlinksInPath()
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: cursorURL.path)) != nil,
+           !FileManager.default.fileExists(atPath: target.path) {
+            throw AgentConnectionError.failed("Cursor's mcp.json points to a missing file. Restore it, then retry; Tokei changed nothing.")
+        }
         let document = try cursorConfig(at: target)
         var config = document.values
         var servers = config["mcpServers"] as? [String: Any] ?? [:]

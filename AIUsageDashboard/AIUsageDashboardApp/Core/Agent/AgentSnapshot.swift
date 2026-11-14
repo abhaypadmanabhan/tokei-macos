@@ -555,7 +555,7 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
     }
 
     public var windowName: String {
-        if let label, !label.isEmpty { return label }
+        if let label, Self.isPlainLabel(label) { return label }
         switch type {
         case "fiveHour": return "5-hour window"
         case "session": return "session window"
@@ -564,6 +564,14 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
         case "monthly": return "monthly window"
         default: return "plan window"
         }
+    }
+
+    /// Provider-supplied labels reach a terminal and an agent's context through `advice`,
+    /// so only short plain text is used; anything else (control codes, newlines, long
+    /// prose) falls back to the window type's name.
+    static func isPlainLabel(_ label: String) -> Bool {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_.,()/%+:'"))
+        return !label.isEmpty && label.count <= 48 && label.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     public func advice(asOf now: Date) -> String {
