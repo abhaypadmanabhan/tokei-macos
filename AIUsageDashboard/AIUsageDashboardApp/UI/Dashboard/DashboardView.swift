@@ -9,7 +9,7 @@ struct DashboardView: View {
     /// its `repeatForever` animation isn't left churning on the retained window.
     @Environment(\.dashboardVisible) private var dashboardVisible
 
-    /// The tab and drill-in on screen. Shared with the View and Go menus (⌘1/⌘2/⌘3, ⌘[).
+    /// The tab and drill-in on screen. Shared with the View and Go menus (⌘1 … ⌘4, ⌘[).
     @ObservedObject private var navigator = DashboardNavigator.shared
 
     private var section: AppSection { navigator.section }
@@ -70,8 +70,8 @@ struct DashboardView: View {
         .frame(minWidth: 640, minHeight: 480)
         .preferredColorScheme(.dark)
         // Slide/fade the drawers in and out; static under Reduce Motion.
-        .animation(reduceMotion ? nil : PadzyMotion.quick, value: viewModel.showingSettings)
-        .animation(reduceMotion ? nil : PadzyMotion.quick, value: showingAddAgent)
+        .animation(reduceMotion ? nil : PadzyMotion.navigate, value: viewModel.showingSettings)
+        .animation(reduceMotion ? nil : PadzyMotion.navigate, value: showingAddAgent)
     }
 
     /// The dashboard shell — tab bar, routed content, and the status strip.
@@ -166,7 +166,11 @@ struct DashboardView: View {
     /// selector rather than as navigation to somewhere else.
     private var content: some View {
         ZStack(alignment: .topLeading) {
+            // The new tab fades in on the navigation spring; the old one leaves at once, so a
+            // switch never renders two heavy panes together.
             tabPane
+                .id(homeTab)
+                .transition(reduceMotion ? .identity : .asymmetric(insertion: .opacity, removal: .identity))
             if section.isDrillIn {
                 VStack(spacing: 0) {
                     backBar
@@ -199,6 +203,13 @@ struct DashboardView: View {
                 onOpenSettings: { openSettings() },
                 onOpenValue: { navigator.select(.value, viewModel: viewModel) }
             )
+        case .burn:
+            BurnView(
+                onOpenSettings: { openSettings() },
+                onSelectProvider: { openProvider($0) },
+                // Under an opaque drill-in or a drawer the pane is mounted but not seen.
+                isExposed: !section.isDrillIn && !viewModel.showingSettings && !showingAddAgent
+            )
         case .value:
             ValueView(
                 onOpenPlanCosts: { openSettings() },
@@ -214,7 +225,7 @@ struct DashboardView: View {
         switch section {
         case .provider:
             DashboardProviderPane(onEnableOnline: { openSettings() })
-        case .overview, .value, .connections:
+        case .overview, .burn, .value, .connections:
             EmptyView()
         }
     }
@@ -293,16 +304,19 @@ private func previewViewModel() -> DashboardViewModel {
 
 #Preview("Window · small 640×480") {
     DashboardView().environmentObject(previewViewModel())
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
         .frame(width: 640, height: 480)
 }
 
 #Preview("Window · mid 900×640") {
     DashboardView().environmentObject(previewViewModel())
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
         .frame(width: 900, height: 640)
 }
 
 #Preview("Window · full 1440×900") {
     DashboardView().environmentObject(previewViewModel())
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
         .frame(width: 1440, height: 900)
 }
 
@@ -332,6 +346,7 @@ private func previewViewModel() -> DashboardViewModel {
     ))
     vm.selectedProvider = .antigravity
     return DashboardView().environmentObject(vm)
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
         .frame(width: 1000, height: 800)
 }
 
@@ -346,5 +361,6 @@ private func previewViewModel() -> DashboardViewModel {
     ))
     vm.selectedProvider = .antigravity
     return DashboardView().environmentObject(vm)
+        .environment(BurnBoard(snapshot: .sample(now: Date())))
         .frame(width: 900, height: 640)
 }

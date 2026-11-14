@@ -78,6 +78,9 @@ public enum PadzyMotion {
     public static let settle: Animation = .easeOut(duration: 0.25)
     public static let quick: Animation = .easeOut(duration: 0.2)
     public static let toggle: Animation = .easeOut(duration: 0.15)
+    /// Navigation (2026-11-14): tab switches, drill-ins and the Settings and Add-agent drawers
+    /// share this one spring. Critically damped (no bounce), settled in about 0.28 s.
+    public static let navigate: Animation = .smooth(duration: 0.28)
 }
 
 /// Shared gate for rolling figures. Reduce Motion returns nil so the value snaps.
