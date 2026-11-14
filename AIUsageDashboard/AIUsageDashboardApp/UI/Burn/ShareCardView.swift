@@ -152,11 +152,17 @@ struct ShareCardSheet: View {
         .padding(20)
         .background(PadzyTheme.panel)
         .preferredColorScheme(.dark)
-        .task {
+        // Keyed on the card: if the value ever changes, the PNG is rendered again, so the
+        // preview and what Copy and Save export cannot disagree (review r1 S2).
+        .task(id: card) {
             png = ShareCardView.png(for: card)
             #if DEBUG
-            if let path = UserDefaults.standard.string(forKey: "TokeiShareCardOut"), let png {
-                try? png.write(to: URL(fileURLWithPath: path))
+            // `-TokeiShareCardOut <path> [-TokeiShareCardOutDelay <s>]`: writes exactly what
+            // Copy and Save would export, after the delay (a live refresh can land meanwhile).
+            if let path = UserDefaults.standard.string(forKey: "TokeiShareCardOut") {
+                let delay = UserDefaults.standard.double(forKey: "TokeiShareCardOutDelay")
+                if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                try? exportPNG()?.write(to: URL(fileURLWithPath: path))
             }
             #endif
         }
@@ -168,8 +174,13 @@ struct ShareCardSheet: View {
         }
     }
 
+    /// What Copy and Save export: the PNG of the card this sheet shows.
+    private func exportPNG() -> Data? {
+        png ?? ShareCardView.png(for: card)
+    }
+
     private func copy() {
-        guard let png = png ?? ShareCardView.png(for: card) else {
+        guard let png = exportPNG() else {
             status = "Could not render the card."
             return
         }
@@ -180,7 +191,7 @@ struct ShareCardSheet: View {
     }
 
     private func save() {
-        guard let png = png ?? ShareCardView.png(for: card) else {
+        guard let png = exportPNG() else {
             status = "Could not render the card."
             return
         }

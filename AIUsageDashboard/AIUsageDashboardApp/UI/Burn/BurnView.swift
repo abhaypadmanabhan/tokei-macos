@@ -20,7 +20,10 @@ struct BurnView: View {
     /// the pane stays mounted underneath, so it must not play, and use up, a celebration.
     var isExposed = true
 
-    @State private var sharing = false
+    /// The card frozen when Share my week opens: the preview and the PNG that Copy and Save
+    /// export come from this one value, never from a snapshot that refreshed meanwhile
+    /// (review r1 S2). `nil` while the sheet is closed.
+    @State private var sharedCard: ShareCardModel?
 
     private var snapshot: BurnSnapshot { board.snapshot }
     private var celebration: BurnCelebration? { board.celebration(forSurfaceExposed: isExposed) }
@@ -40,14 +43,20 @@ struct BurnView: View {
                 #endif
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: $sharing) {
-            ShareCardSheet(card: ShareCardModel(snapshot: snapshot), onDone: { sharing = false })
+        .sheet(isPresented: Binding(get: { sharedCard != nil }, set: { if !$0 { sharedCard = nil } })) {
+            if let sharedCard {
+                ShareCardSheet(card: sharedCard, onDone: { self.sharedCard = nil })
+            }
         }
         #if DEBUG
         .task {
-            if ProofRoute.wantsShareSheet { sharing = true }
+            if ProofRoute.wantsShareSheet { openShare() }
         }
         #endif
+    }
+
+    private func openShare() {
+        sharedCard = ShareCardModel(snapshot: snapshot)
     }
 
     private var sections: some View {
@@ -57,7 +66,7 @@ struct BurnView: View {
                     snapshot: snapshot,
                     momentTitle: celebration?.title,
                     celebration: celebration.flatMap { $0.badge == nil ? $0 : nil },
-                    onShare: { sharing = true },
+                    onShare: { openShare() },
                     onOpenSettings: onOpenSettings,
                     onCelebrationFinished: { board.finish($0) }
                 )
