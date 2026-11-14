@@ -232,6 +232,13 @@ enum BurnCopy {
 
     // MARK: Leaderboard
 
+    /// This week's entries that burned something. The engine ranks every visible agent; one
+    /// with no tokens and no value is a row of zeros, not a place on the board, and nothing to
+    /// share (real data 2026-11-14 01:53: Cursor at 0).
+    static func burnedThisWeek(_ leaderboard: [BurnLeaderboardEntry]) -> [BurnLeaderboardEntry] {
+        leaderboard.filter { $0.tokens > 0 || ($0.valueUSD ?? 0) > 0 }
+    }
+
     /// "$71.20", or "—" when the agent's tokens have no public rate.
     static func leaderboardValue(_ entry: BurnLeaderboardEntry) -> String {
         MaxxerMath.formatUSD(entry.valueUSD)

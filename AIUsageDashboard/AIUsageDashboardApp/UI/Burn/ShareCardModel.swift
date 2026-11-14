@@ -17,13 +17,14 @@ struct ShareCardModel: Equatable {
     let weekOf: Date
 
     init(snapshot: BurnSnapshot, calendar: Calendar = .current) {
-        let priced = snapshot.leaderboard.compactMap(\.valueUSD)
+        let burned = BurnCopy.burnedThisWeek(snapshot.leaderboard)
+        let priced = burned.compactMap(\.valueUSD)
         weekValueUSD = priced.isEmpty ? nil : priced.reduce(0, +)
-        weekTokens = snapshot.leaderboard.map(\.tokens).reduce(0, +)
+        weekTokens = burned.map(\.tokens).reduce(0, +)
         monthMultiple = snapshot.monthValueMultiple
         tier = snapshot.tier
         streakDays = snapshot.streak.current
-        topAgent = snapshot.leaderboard.min { $0.rank < $1.rank }?.providerID
+        topAgent = burned.min { $0.rank < $1.rank }?.providerID
         weekOf = calendar.dateInterval(of: .weekOfYear, for: snapshot.generatedAt)?.start
             ?? calendar.startOfDay(for: snapshot.generatedAt)
     }

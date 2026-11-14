@@ -161,6 +161,16 @@ final class BurnCopyTests: XCTestCase {
         XCTAssertFalse(text.localizedCaseInsensitiveContains("overage"))
     }
 
+    func testAZeroRowIsNotAPlaceOnTheBoard() {
+        let board = [
+            BurnLeaderboardEntry(providerID: .claudeCode, rank: 1, valueUSD: 663.01, tokens: 1_990_000_000),
+            BurnLeaderboardEntry(providerID: .gemini, rank: 2, valueUSD: nil, tokens: 1_200_000),
+            BurnLeaderboardEntry(providerID: .cursor, rank: 3, valueUSD: nil, tokens: 0)
+        ]
+        XCTAssertEqual(BurnCopy.burnedThisWeek(board).map(\.providerID), [.claudeCode, .gemini])
+        XCTAssertEqual(BurnCopy.burnedThisWeek([board[2]]), [])
+    }
+
     func testBadgeStatus() {
         XCTAssertEqual(BurnCopy.badgeStatus(BurnBadgeProgress(badge: .fleet, unlockedAt: now, progress: 1), calendar: utc),
                        "Unlocked Nov 13")

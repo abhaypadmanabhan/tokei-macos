@@ -103,8 +103,14 @@ private struct UsedBar: View {
 // MARK: - Leaderboard
 
 struct LeaderboardSection: View {
-    let entries: [BurnLeaderboardEntry]
     let onSelectProvider: (ProviderID) -> Void
+    /// Agents that burned something this week (`BurnCopy.burnedThisWeek`).
+    let entries: [BurnLeaderboardEntry]
+
+    init(entries: [BurnLeaderboardEntry], onSelectProvider: @escaping (ProviderID) -> Void) {
+        self.entries = BurnCopy.burnedThisWeek(entries)
+        self.onSelectProvider = onSelectProvider
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

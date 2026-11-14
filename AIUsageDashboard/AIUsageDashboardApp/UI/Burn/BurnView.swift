@@ -241,9 +241,13 @@ private struct BurnHero: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(snapshot.leaderboard.isEmpty)
-        .opacity(snapshot.leaderboard.isEmpty ? 0.45 : 1)
-        .help(snapshot.leaderboard.isEmpty ? "Nothing to share yet this week" : "Make an image of this week to post")
+        .disabled(nothingToShare)
+        .opacity(nothingToShare ? 0.45 : 1)
+        .help(nothingToShare ? "Nothing to share yet this week" : "Make an image of this week to post")
+    }
+
+    private var nothingToShare: Bool {
+        BurnCopy.burnedThisWeek(snapshot.leaderboard).isEmpty
     }
 }
 
