@@ -124,6 +124,8 @@ targets:
       # the copy and the card's no-account-identifiers rule are tested here (WP-C 2026-11-14).
       - path: AIUsageDashboardApp/UI/Burn/BurnCopy.swift
       - path: AIUsageDashboardApp/UI/Burn/ShareCardModel.swift
+      # The burn surfaces' @Observable model (celebration queue); Foundation + Combine only.
+      - path: AIUsageDashboardApp/UI/Burn/BurnBoard.swift
       - path: AIUsageDashboardApp/UI/Components/TierCopy.swift
       # Same mechanism again, for the per-account chart palette: whether two accounts can
       # ever render as the same colour AND the same dash is a pure function of the account
