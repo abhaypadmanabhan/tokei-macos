@@ -163,6 +163,7 @@ targets:
     sources:
       - path: TokeiCLI
       - path: AIUsageDashboardApp/Core/Agent/AgentSnapshot.swift
+      - path: AIUsageDashboardApp/Core/Connect
     settings:
       base:
         PRODUCT_NAME: tokei

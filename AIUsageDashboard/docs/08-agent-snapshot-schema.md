@@ -331,19 +331,25 @@ Missing, unreadable, and malformed snapshots exit 3, 4, and 5 respectively for
 may point the helper at a fixture. `status --json` remains pretty-printed; the snapshot
 file and MCP text are compact.
 
-The newline-delimited JSON-RPC server exposes exactly two read-only tools:
+The newline-delimited JSON-RPC server exposes three read-only tools:
 
 | Tool | Result in `content[0].text` |
 |---|---|
-| `get_usage` | Snapshot with reader-side `stale` and `ageSeconds`; optional `provider` filters to one known provider ID. |
+| `get_usage` | Snapshot with reader-side `stale` and `ageSeconds`; optional `provider` filters to one known provider ID. Optional `detail: "summary"` returns metadata plus `providers: [{id, summary}]`, one plain line per provider. Omit `detail` for the full documented snapshot. |
 | `get_route_recommendation` | Flat recommendation plus `generatedAt`, `ageSeconds`, `validUntil`, and `stale`. |
+| `get_burn_opportunities` | `{generatedAt, stale, expiring}` with expiring-window fields and one `advice` line each, soonest first. No input arguments. Stale data returns an empty list. |
 
-Both tools publish a title and read-only, idempotent, closed-world annotations.
+All tools publish a title and read-only, idempotent, closed-world annotations.
 The handshake echoes a supported revision (`2025-06-18`, `2025-03-26`, `2024-11-05`),
 otherwise selects `2025-06-18`. Only that newest revision publishes `outputSchema`
 and successful `structuredContent`; the equivalent compact JSON text block remains
 for all clients. Invalid provider IDs/types and extra arguments return `-32602`.
-A filtered usage response omits the cross-provider aggregate and recommendation.
+A filtered usage response omits the cross-provider aggregate, recommendation and game totals; its burn windows belong only to the selected provider.
+Summary output is for quick reporting, not executable account routing. Use the full
+snapshot or the recommendation tool to check account eligibility and validity.
+Null optional fields are omitted. Required arrays (`providers`, `windows`, `avoid`,
+`expiring`) stay present even when empty. Structured output duplicates the JSON text
+on the newest protocol revision as required by the existing MCP contract.
 The server performs no network or credential access, and closed stdout exits cleanly.
 
 `tokei guard [--provider P] [--min-headroom N]` prints one line and exits 0 for
@@ -359,17 +365,66 @@ Missing/stale/unconfirmed readings return 69 with the failed check named in the 
 The same rule applies to an explicit provider and a provider-only `recommendation.routeTo`.
 The command never refreshes quota or contacts a provider.
 
+## Burn signals (additive v1)
+
+Feature-detect the optional `burn` block. Old v1 snapshots without it still decode.
+The writer computes `burn.expiring` from `ExpiringHeadroomFinder`: trusted flat-rate
+plan windows with at least 25% unused, resetting within 90 minutes (session/5-hour),
+3 hours (daily), 24 hours (weekly), or 3 days (monthly). Known reading age must be at
+most 30 minutes. Per-account providers contribute eligible accounts, without copying
+the headline a second time. Credits, per-model and lifetime windows never qualify.
+
+Each entry contains `provider`, `providerName`, optional opaque `accountID`, `type`,
+optional `label`, `usedPercent`, `unusedPercent`, `resetAt`, and optional `observedAt`.
+Entries are ordered by soonest reset. The helper removes passed resets and expired
+readings before offering work; a stale snapshot offers no burn opportunities.
+Unknown reading age remains unknown, as in the shared finder.
+
+When the writer receives a `BurnSnapshot`, the block also contains
+`streak: {current, todayHit}` and `today: {valueUSD?, goal?, progress?}`.
+`goal` is `{unit: "usd" | "tokens", target}`. `valueUSD` is API-equivalent value,
+not extra money spent. `progress` is a ratio (1 is the goal, 2 is double).
+Without the game input, `streak` and `today` are absent; `expiring` is still present.
+
 ## 7. Registration
 
+Open **Settings → Connect agents**. Each client row says whether it is detected
+or connected; Connect and Disconnect use the same implementation as the commands
+below. Install the client first if it is not detected. The command installer adds
+a symlink in `~/.local/bin` and prints a shell PATH hint when needed.
+
 ```sh
-claude mcp add tokei -- /Applications/Tokei.app/Contents/Helpers/tokei mcp
+/Applications/Tokei.app/Contents/Helpers/tokei install
+tokei mcp install --client all --dry-run
+tokei mcp install --client claude
+tokei mcp install --client codex
+tokei mcp install --client cursor
+tokei mcp uninstall --client all
+tokei burn
 ```
 
-```toml
-[mcp_servers.tokei]
-command = "/Applications/Tokei.app/Contents/Helpers/tokei"
-args = ["mcp"]
-```
+`--client` defaults to `all`, which skips undetected clients. A selected missing
+client reports how to install it. `--dry-run` only prints the proposed command or
+Cursor file change; it never runs a client or writes configuration.
+
+The server name is `tokei`, running `<absolute path of the current helper> mcp`.
+Claude Code uses `claude mcp add --scope user tokei -- <helper> mcp`; Codex uses
+`codex mcp add tokei -- <helper> mcp`. Commands are found on PATH, in `~/.local/bin`,
+`/opt/homebrew/bin`, or `/usr/local/bin`. A matching registration is left alone;
+a different Claude/Codex registration is kept with a request to disconnect first.
+The client confirms each write before Tokei reports success. Uninstall removes
+only the `tokei` server. Other servers stay in place.
+
+Cursor merges `~/.cursor/mcp.json`, preserving all other servers and top-level
+keys. Invalid JSON is refused. The original file is backed up once as `mcp.json.bak`,
+and replacements are atomic with owner-only permissions. Repeated installs are
+unchanged. This is the only client file Tokei edits directly.
+
+`tokei install --force` can replace an existing command file or symlink; it refuses
+to replace a directory. Without `--force`, a different target is kept.
+`tokei burn` prints up to eight expiring windows plus a count of any further windows,
+and today's goal and streak when available. Old helpers/apps may lack burn signals;
+that means unavailable information, never unused capacity.
 
 ## Out of scope
 

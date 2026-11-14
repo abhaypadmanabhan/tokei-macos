@@ -110,6 +110,7 @@ struct SettingsDrawer: View {
 
     var body: some View {
         DrawerScaffold(title: "Settings", onClose: onClose) {
+            AgentConnectSection()
             planCostSection
             LiveQuotaSettingsSection(
                 providers: quotaProviders,
