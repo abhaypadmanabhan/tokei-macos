@@ -48,27 +48,37 @@ struct ValueView: View {
         Set(ProviderID.allCases.filter { ProviderVisibility.isHidden($0) })
     }
 
-    private var scorecard: MaxxerScorecard {
-        MaxxerValueEngine.scorecard(
-            snapshots: visibleSnapshots,
-            planCosts: planCosts,
-            now: Date()
+    /// Everything the pane derives from the snapshots, computed once per render. The value
+    /// engine prices every model of every day this month; reading it through computed
+    /// properties ran it about fifteen times per render (WP-C AC 6, 2026-11-14).
+    private struct Derived {
+        let card: MaxxerScorecard
+        let rows: [Row]
+        let lifetime: MaxxerMath.LifetimeTotal?
+
+        /// True only when the user has never entered a plan cost for ANY visible
+        /// provider — the one state where the whole surface is uncomputable and the
+        /// right answer is a CTA rather than a table of dashes.
+        var hasAnyPlanCost: Bool { card.providers.contains { $0.planMonthlyUSD != nil } }
+
+        /// Agents with priced usage but no user-entered plan cost — excluded from the
+        /// totals (paired-only), so the headline understates their spend.
+        var unpricedRows: [Row] { rows.filter { $0.value.apiEquivalentUSD != nil && $0.value.planMonthlyUSD == nil } }
+
+        var pricedCount: Int { card.providers.filter { $0.planMonthlyUSD != nil }.count }
+    }
+
+    private func derive() -> Derived {
+        let card = MaxxerValueEngine.scorecard(snapshots: visibleSnapshots, planCosts: planCosts, now: Date())
+        return Derived(
+            card: card,
+            rows: rows(card),
+            lifetime: MaxxerMath.lifetimeTotal(in: viewModel.snapshots, hiddenProviders: hiddenProviders)
         )
     }
 
-    private var lifetime: MaxxerMath.LifetimeTotal? {
-        MaxxerMath.lifetimeTotal(in: viewModel.snapshots, hiddenProviders: hiddenProviders)
-    }
-
-    /// True only when the user has never entered a plan cost for ANY visible
-    /// provider — the one state where the whole surface is uncomputable and the
-    /// right answer is a CTA rather than a table of dashes.
-    private var hasAnyPlanCost: Bool {
-        scorecard.providers.contains { $0.planMonthlyUSD != nil }
-    }
-
     var body: some View {
-        content
+        content(derive())
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                 storeRevision &+= 1
@@ -80,7 +90,7 @@ struct ValueView: View {
     /// Error → loading → no-plan-cost → loaded, matching the precedence the
     /// provider-detail pane already established.
     @ViewBuilder
-    private var content: some View {
+    private func content(_ derived: Derived) -> some View {
         if let errorMessage = viewModel.errorMessage {
             SurfaceStateView(
                 kind: .error(headline: "Sync failed", detail: errorMessage),
@@ -95,10 +105,10 @@ struct ValueView: View {
                     hint: "Link a coding agent first — value is measured against the tokens your agents actually spend."
                 )
             )
-        } else if !hasAnyPlanCost {
-            noPlanCostState
+        } else if !derived.hasAnyPlanCost {
+            noPlanCostState(derived.lifetime)
         } else {
-            loadedState
+            loadedState(derived)
         }
     }
 
@@ -107,7 +117,7 @@ struct ValueView: View {
     /// The surface's real empty state: agents are connected, but Tokei has no idea
     /// what the user pays, so every multiple would be `—`. Leads with the action
     /// that fixes it, then still shows the lifetime total so the pane isn't bare.
-    private var noPlanCostState: some View {
+    private func noPlanCostState(_ lifetime: MaxxerMath.LifetimeTotal?) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             SurfaceStateView(
                 kind: .empty(
@@ -117,7 +127,7 @@ struct ValueView: View {
                 compact: true
             )
             planCostCTA
-            lifetimeCard
+            lifetimeCard(lifetime)
             Spacer(minLength: 0)
         }
         .padding(28)
@@ -144,18 +154,18 @@ struct ValueView: View {
 
     // MARK: Loaded
 
-    private var loadedState: some View {
+    private func loadedState(_ derived: Derived) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 SectionHeading("Plan value this month")
 
-                hero
+                hero(derived.card)
                     .padding(.top, 16)
 
-                summarySentence
+                summarySentence(derived)
                     .padding(.top, 18)
 
-                valueRows
+                valueRows(derived.rows)
                     .padding(.top, 28)
 
                 if let extra = extraUsage {
@@ -163,7 +173,7 @@ struct ValueView: View {
                         .padding(.top, 22)
                 }
 
-                excludedFootnote
+                excludedFootnote(derived)
                     .padding(.top, 18)
             }
             .padding(.horizontal, PadzySpace.xxl)
@@ -175,7 +185,7 @@ struct ValueView: View {
     /// The 84pt headline multiple with the tier chip sitting inline to its right —
     /// the mockup's hero. The multiple is the surface's one big number; the chip is
     /// the only colour on the pane (semantic good/warn, never the accent).
-    private var hero: some View {
+    private func hero(_ scorecard: MaxxerScorecard) -> some View {
         HStack(alignment: .center, spacing: 18) {
             Text(MaxxerMath.formatMultiple(scorecard.totalValueMultiple))
                 .font(.mono(size: 84, weight: .semibold))
@@ -200,10 +210,11 @@ struct ValueView: View {
     /// The mockup's "▲ 0.3× vs last month" delta is intentionally dropped — Core
     /// keeps no month-over-month history, and a fabricated delta would break the
     /// "never a confident number we don't have" rule.
-    private var summarySentence: some View {
+    private func summarySentence(_ derived: Derived) -> some View {
+        let scorecard = derived.card
         let api = MaxxerMath.formatUSD(scorecard.totalAPIEquivalentUSD)
         let plan = MaxxerMath.formatUSD(scorecard.totalPlanUSD)
-        let n = pricedCount
+        let n = derived.pricedCount
         return (
             Text("You're getting ").foregroundColor(PadzyTheme.muted)
             + Text(api).font(.mono(size: 15)).foregroundColor(PadzyTheme.ink)
@@ -219,7 +230,7 @@ struct ValueView: View {
 
     // MARK: Rows
 
-    private var valueRows: some View {
+    private func valueRows(_ rows: [Row]) -> some View {
         VStack(spacing: 0) {
             HairlineDivider()
             ForEach(rows) { row in
@@ -259,8 +270,9 @@ struct ValueView: View {
     /// folded onto the tail (mockup). Preserves the #41 lifetime binding without a
     /// separate card. `nil` categories simply drop out of the sentence.
     @ViewBuilder
-    private var excludedFootnote: some View {
-        let text = footnoteText
+    private func excludedFootnote(_ derived: Derived) -> some View {
+        let text = footnoteText(derived)
+        let lifetime = derived.lifetime
         if !text.isEmpty {
             Text(text)
                 .font(.sans(size: 13))
@@ -271,12 +283,13 @@ struct ValueView: View {
         }
     }
 
-    private var footnoteText: String {
+    private func footnoteText(_ derived: Derived) -> String {
         var clauses: [String] = []
-        if !unpricedRows.isEmpty {
-            clauses.append("\(unpricedNames) (usage, no plan cost)")
+        let unpriced = derived.unpricedRows
+        if !unpriced.isEmpty {
+            clauses.append("\(joinNames(unpriced.map(\.displayName))) (usage, no plan cost)")
         }
-        let noData = rows.filter { $0.value.planMonthlyUSD != nil && $0.value.apiEquivalentUSD == nil }
+        let noData = derived.rows.filter { $0.value.planMonthlyUSD != nil && $0.value.apiEquivalentUSD == nil }
         if !noData.isEmpty {
             let names = joinNames(noData.map(\.displayName))
             clauses.append("\(names) (plan set, no token data)")
@@ -286,7 +299,7 @@ struct ValueView: View {
         if !clauses.isEmpty {
             sentence = "Excluded from the total: \(clauses.joined(separator: " · "))."
         }
-        if let lifetime {
+        if let lifetime = derived.lifetime {
             let prefix = lifetime.usedDailyFallback ? "≈" : ""
             let tail = "\(prefix)\(TokenFormatter.format(lifetime.tokens)) tokens tracked lifetime."
             sentence = sentence.isEmpty ? tail : "\(sentence) \(tail)"
@@ -304,7 +317,7 @@ struct ValueView: View {
     }
 
     /// Highest value multiple first; unmeasurable agents sink to the bottom.
-    private var rows: [Row] {
+    private func rows(_ scorecard: MaxxerScorecard) -> [Row] {
         scorecard.providers
             .map { value in
                 let id = ProviderID(rawValue: value.providerID)
@@ -313,18 +326,6 @@ struct ValueView: View {
                 return Row(value: value, providerID: id, displayName: name)
             }
             .sorted { ($0.value.valueMultiple ?? -1) > ($1.value.valueMultiple ?? -1) }
-    }
-
-    /// Agents with priced usage but no user-entered plan cost — excluded from the
-    /// totals (paired-only), so the headline understates their spend.
-    private var unpricedRows: [Row] {
-        rows.filter { $0.value.apiEquivalentUSD != nil && $0.value.planMonthlyUSD == nil }
-    }
-
-    private var unpricedNames: String { joinNames(unpricedRows.map(\.displayName)) }
-
-    private var pricedCount: Int {
-        scorecard.providers.filter { $0.planMonthlyUSD != nil }.count
     }
 
     private func joinNames(_ names: [String]) -> String {
@@ -338,7 +339,7 @@ struct ValueView: View {
 
     // MARK: Lifetime (#41 · no-plan-cost state only)
 
-    private var lifetimeCard: some View {
+    private func lifetimeCard(_ lifetime: MaxxerMath.LifetimeTotal?) -> some View {
         SectionCard("Lifetime", trailing: {
             if let lifetime {
                 ConfidenceBadge(confidence: lifetime.confidence, compact: true)
