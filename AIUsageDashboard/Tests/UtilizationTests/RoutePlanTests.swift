@@ -188,6 +188,29 @@ final class RoutePlanTests: XCTestCase {
         XCTAssertNoThrow(try JSONDecoder().decode(Utilization.self, from: JSONSerialization.data(withJSONObject: object)))
     }
 
+    func testCodexCapResetSoonCannotChangePlanPolicyChipOrExportedOrdering() {
+        for type in [QuotaWindowType.credits, .monthly] {
+            let cap = QuotaWindow(providerID: .codex, type: type, used: 10, limit: 100,
+                                  resetAt: now.addingTimeInterval(2 * 86_400), confidence: .providerReported,
+                                  source: "fixture", bucketKey: "spend_control_individual_limit", observedAt: now)
+            let codex = ProviderSnapshot(providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+                                          quotaWindows: snapshot(.codex, used: 50, reset: 5 * 86_400).quotaWindows + [cap],
+                                          todayUsage: .unavailable, weekUsage: .unavailable)
+            let input = [codex, snapshot(.claudeCode, used: 30, reset: 5 * 86_400)]
+            let plan = RoutePlan.make(snapshots: input, now: now)
+            let utilizations = UtilizationEngine.utilizations(from: input)
+            let exported = AgentSnapshotWriter.buildSnapshot(from: input, generatedAt: now)
+            XCTAssertEqual(plan.recommendation?.providerID, .claudeCode)
+            XCTAssertTrue(plan.rows.allSatisfy { $0.expiringAt == nil })
+            XCTAssertEqual(RouteTargetPolicy.agent.routeTarget(in: utilizations, now: now)?.providerID, .claudeCode)
+            let chipInput = utilizations.filter { $0.window != .credits }
+            XCTAssertEqual(MaxxerMath.routeTarget(in: chipInput, now: now)?.providerID, .claudeCode)
+            XCTAssertEqual(exported.recommendation?.routeTo, "claude_code")
+            XCTAssertEqual(exported.recommendation?.avoid, [])
+            XCTAssertEqual(exported.route?.rows.first?.provider, "claude_code")
+        }
+    }
+
     func testRowsCarryDecidingWindowPaceResetAndOneSentence() throws {
         let plan = RoutePlan.make(snapshots: [snapshot(.codex, used: 40, reset: 600, type: .fiveHour)], now: now)
         let row = try XCTUnwrap(plan.recommendation)

@@ -144,7 +144,8 @@ public enum ExpiringHeadroomFinder {
         now: Date,
         policy: Policy
     ) -> ExpiringHeadroom? {
-        guard let horizon = policy.horizon(for: window.type),
+        guard !window.isCodexIndividualLimit,
+              let horizon = policy.horizon(for: window.type),
               window.confidence == .providerReported || window.confidence == .exact,
               let used = window.used, used.isFinite,
               let limit = window.limit, limit.isFinite, limit > 0,
