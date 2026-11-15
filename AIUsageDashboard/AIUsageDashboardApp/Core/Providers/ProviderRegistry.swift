@@ -25,6 +25,7 @@ public actor ProviderRegistry {
         await withTaskGroup(of: ProviderSnapshot.self) { group in
             for provider in providers {
                 group.addTask {
+                    PerformanceProbe.emit("provider_refresh", fields: ["provider": provider.id.rawValue])
                     do {
                         return try await provider.fetchSnapshot()
                     } catch {

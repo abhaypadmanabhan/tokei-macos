@@ -94,7 +94,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        if PerformanceProbe.isEnabled {
+            // The benchmark uses a disposable bundle identity as well as a synthetic
+            // Foundation home. Refuse to run a probe against the installed app's state.
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            guard Bundle.main.bundleIdentifier?.hasPrefix("ai.padzy.tokei.perf.") == true,
+                  FileManager.default.fileExists(atPath: home.appendingPathComponent(".tokei-perf-home").path)
+            else { fatalError("perf-bench requires a disposable bundle and synthetic home") }
+            PerformanceProbe.emit("isolated", fields: ["home": home.path])
+            Task { @MainActor in
+                // Observe the first actual window, then close it: the CPU sample must
+                // measure the ordinary menu-bar-only app, including its retained views.
+                while let app = NSApp {
+                    if let window = app.windows.first(where: { $0.isVisible && $0.frame.width > 300 }) {
+                        PerformanceProbe.emit("first_window")
+                        window.close()
+                        PerformanceProbe.emit("window_closed")
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+            }
+        } else {
+            _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        }
         // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
         // and the first sync writes that store.
         AddAgentModel.seedOnFirstLaunchIfNeeded()
@@ -107,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #endif
             viewModel.beginAutoSync()
             await viewModel.refresh()
+            PerformanceProbe.emit("initial_refresh_complete")
         }
     }
 
