@@ -95,7 +95,9 @@ public actor ClineMessagesParser {
     }
 
     private func sessionFile(at url: URL) throws -> ClineSessionFile? {
-        let fingerprint = try LocalUsageFileFingerprint.read(url)
+        // Cline has always followed log-file aliases. Stamp the resolved file,
+        // keeping that behaviour while noticing retargeted links and replacements.
+        let fingerprint = try LocalUsageFileFingerprint.read(url.resolvingSymlinksInPath())
         if let cached = fileCache[url.path], cached.fingerprint == fingerprint {
             return try cached.decoded.get()
         }
@@ -107,7 +109,7 @@ public actor ClineMessagesParser {
             guard data.count <= maxFileSizeBytes else { return nil }
             return try JSONDecoder().decode(ClineSessionFile.self, from: data)
         }
-        if try LocalUsageFileFingerprint.read(url) == fingerprint {
+        if try LocalUsageFileFingerprint.read(url.resolvingSymlinksInPath()) == fingerprint {
             fileCache[url.path] = CachedFile(fingerprint: fingerprint, decoded: decoded)
         }
         return try decoded.get()

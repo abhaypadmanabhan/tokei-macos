@@ -3,6 +3,19 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class RefreshCacheTests: XCTestCase {
+    func testClineSymlinkKeepsItsPreviouslySupportedNumbers() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("target.messages.json")
+        let link = root.appendingPathComponent("link.messages.json")
+        try Data(ClineFixtures.cacheSession.utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let parser = ClineMessagesParser()
+        let parsed = await parser.parse(logSources: [.init(providerID: .cline, url: link)])
+        XCTAssertEqual(parsed.lifetime.inputTokens, 7)
+    }
+
     func testClineReadsUnchangedFileOnceAndInvalidatesOnRewriteAndRemoval() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

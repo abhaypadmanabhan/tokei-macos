@@ -127,6 +127,50 @@ final class TargetedRefreshTests: XCTestCase {
         XCTAssertNil(dropped)
         await watcher.stop()
     }
+
+    func testRealParserNumbersMatchBetweenTargetedAndFullRefresh() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let claudeFile = root.appendingPathComponent(".claude/projects/fixture/session.jsonl")
+        let clineFile = root.appendingPathComponent(".cline/data/sessions/fixture/fixture.messages.json")
+        for file in [claudeFile, clineFile] {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        try Data((ClaudeFixtures.usageLine(id: "initial", output: 10) + "\n").utf8).write(to: claudeFile)
+        try Data(ClineFixtures.cacheSession.utf8).write(to: clineFile)
+        let suite = "tokei.targeted.fixture." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "claudeNetworkUsageEnabled")
+        let output = root.appendingPathComponent("output")
+        let engine = SyncEngine(
+            registry: ProviderRegistry(providers: [
+                ClaudeCodeProvider(claudeDirectoryURL: root.appendingPathComponent(".claude"), userDefaults: defaults),
+                ClineProvider(clineDirectory: root.appendingPathComponent(".cline"))
+            ]), store: UsageStore(directory: output), quotaSeriesStore: QuotaSeriesStore(directory: output),
+            agentSnapshotWriter: AgentSnapshotWriter(directory: output), watcher: FileWatcher(paths: []),
+            evaluateThresholds: { _ in }
+        )
+        _ = await engine.refreshAll()
+        let handle = try FileHandle(forWritingTo: claudeFile)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data((ClaudeFixtures.usageLine(id: "appended", output: 42) + "\n").utf8))
+        try handle.close()
+        let targeted = await engine.refresh(providers: [.claudeCode])
+        let full = await engine.refreshAll()
+        XCTAssertEqual(targeted.map(\.providerID), full.map(\.providerID))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        for (partial, complete) in zip(targeted, full) {
+            let partialUsage: [TokenUsage?] = [partial.todayUsage, partial.weekUsage, partial.monthUsage, partial.lifetimeUsage]
+            let completeUsage: [TokenUsage?] = [complete.todayUsage, complete.weekUsage, complete.monthUsage, complete.lifetimeUsage]
+            XCTAssertEqual(try encoder.encode(partialUsage), try encoder.encode(completeUsage))
+            XCTAssertEqual(partial.dailyTotals, complete.dailyTotals)
+            XCTAssertEqual(partial.hourlyTotals, complete.hourlyTotals)
+        }
+        let claude = try XCTUnwrap(targeted.first { $0.providerID == .claudeCode })
+        XCTAssertEqual(claude.lifetimeUsage?.outputTokens, 52, "the appended record must actually be present")
+    }
 }
 
 private actor CountingRefreshProvider: UsageProvider {

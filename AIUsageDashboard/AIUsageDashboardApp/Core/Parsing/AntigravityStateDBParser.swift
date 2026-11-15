@@ -36,7 +36,7 @@ public actor AntigravityStateDBParser {
 
     private let fileManager: FileManager
     private let protobufReader: MiniProtobufReader
-    private let copyDatabase: @Sendable (URL, URL) throws -> Void
+    private let copyDatabase: (@Sendable (URL, URL) throws -> Void)?
     private var cached: (url: URL, fingerprint: SQLiteSidecarCopy.Fingerprint, state: ParsedState)?
 
     public init(
@@ -46,9 +46,7 @@ public actor AntigravityStateDBParser {
     ) {
         self.fileManager = fileManager
         self.protobufReader = protobufReader
-        self.copyDatabase = copyDatabase ?? { source, destination in
-            try SQLiteSidecarCopy.copyDatabase(from: source, to: destination, using: fileManager)
-        }
+        self.copyDatabase = copyDatabase
     }
 
     public func parse(stateDatabaseURL: URL) async -> ParsedState {
@@ -60,7 +58,8 @@ public actor AntigravityStateDBParser {
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try copyDatabase(stateDatabaseURL, databaseCopyURL)
+            if let copyDatabase { try copyDatabase(stateDatabaseURL, databaseCopyURL) }
+            else { try SQLiteSidecarCopy.copyDatabase(from: stateDatabaseURL, to: databaseCopyURL, using: fileManager) }
             let state = try parseCopiedDatabase(at: databaseCopyURL)
             if try SQLiteSidecarCopy.fingerprint(stateDatabaseURL) == fingerprint {
                 cached = (stateDatabaseURL, fingerprint, state)
