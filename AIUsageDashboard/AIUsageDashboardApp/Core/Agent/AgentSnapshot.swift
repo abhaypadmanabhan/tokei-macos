@@ -349,9 +349,9 @@ public struct AgentRecommendation: Codable, Sendable, Equatable {
     public let validUntil: Date?
 
     public var plainReason: String {
-        // Generated recommendations separate their plain-text clauses with semicolons.
-        let checked = reason.replacingOccurrences(of: ";", with: ",")
-        return AgentBurnWindow.isPlainText(checked, maximumLength: 160) ? reason
+        // At most one clause per provider plus the target; each clause is bounded.
+        let clauses = reason.components(separatedBy: "; ")
+        return clauses.count <= 9 && clauses.allSatisfy { AgentBurnWindow.isPlainText($0, maximumLength: 160) } ? reason
             : "Routing details are unavailable. Refresh Tokei before choosing work."
     }
 
