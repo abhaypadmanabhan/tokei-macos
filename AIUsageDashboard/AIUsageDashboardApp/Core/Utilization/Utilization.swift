@@ -33,6 +33,12 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
     /// When the underlying reading was taken, propagated from the source `QuotaWindow`.
     /// `nil` when the provider doesn't report one. See `QuotaWindow.observedAt`.
     public let observedAt: Date?
+    /// Provider-reported window length, preserved for the shared routing pace rule.
+    /// Optional so existing initializers and persisted cache entries remain valid.
+    public let windowDuration: TimeInterval?
+    /// Preserve a named constraint when routing reconstructs windows or reads the cache.
+    /// Optional so older cache entries still decode without inventing a constraint.
+    public let bucketKey: String?
 
     /// Stable identity: one utilization per provider × window.
     public var id: String { "\(providerID.rawValue)_\(window.rawValue)" }
@@ -45,7 +51,9 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         plan: String? = nil,
         confidence: MetricConfidence,
         coverage: UtilizationCoverage = .complete,
-        observedAt: Date? = nil
+        observedAt: Date? = nil,
+        windowDuration: TimeInterval? = nil,
+        bucketKey: String? = nil
     ) {
         self.providerID = providerID
         self.window = window
@@ -55,6 +63,17 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         self.confidence = confidence
         self.coverage = coverage
         self.observedAt = observedAt
+        self.windowDuration = windowDuration
+        self.bucketKey = bucketKey
+    }
+
+    /// Every window-to-routing projection keeps the same type and constraint identity.
+    public init?(window: QuotaWindow, providerID: ProviderID, plan: String? = nil) {
+        guard !window.isInformationalCredits,
+              let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
+        self.init(providerID: providerID, window: window.routingWindowType, usedPercent: percent,
+                  resetAt: window.resetAt, plan: plan, confidence: window.confidence,
+                  observedAt: window.observedAt, windowDuration: window.windowDuration, bucketKey: window.bucketKey)
     }
 }
 

@@ -13,8 +13,8 @@ packages:
     majorVersion: 2.6.0
 settings:
   base:
-    MARKETING_VERSION: "0.12.0"
-    CURRENT_PROJECT_VERSION: "12"
+    MARKETING_VERSION: "0.13.0"
+    CURRENT_PROJECT_VERSION: "13"
     DEVELOPMENT_TEAM: ""
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     SWIFT_VERSION: "5.9"
@@ -126,6 +126,10 @@ targets:
       - path: AIUsageDashboardApp/UI/Burn/ShareCardModel.swift
       # The burn surfaces' @Observable model (celebration queue); Foundation + Combine only.
       - path: AIUsageDashboardApp/UI/Burn/BurnBoard.swift
+      # Debug-only demo data for publishable captures; tested for no home path and no `@`.
+      - path: AIUsageDashboardApp/App/DemoFixture.swift
+      # "Send work here next" words and states, read off RoutePlan (WP-C 2026-11-15).
+      - path: AIUsageDashboardApp/UI/Components/RouteCopy.swift
       # Burn ink roles, measured for contrast by BurnContrastTests.
       - path: AIUsageDashboardApp/UI/Burn/BurnTone.swift
       # The status-item label's narrow model and the two pure helpers it reads.
@@ -154,6 +158,7 @@ targets:
       - path: TokeiCLI/MCPServer+Instructions.swift
       - path: TokeiCLI/SnapshotReader.swift
       - path: TokeiCLI/StatusFormatting.swift
+      - path: TokeiCLI/RouteFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
       - target: tokei
@@ -176,11 +181,15 @@ targets:
     sources:
       - path: TokeiCLI
       - path: AIUsageDashboardApp/Core/Agent/AgentSnapshot.swift
+      - path: AIUsageDashboardApp/Core/Agent/AgentRoute.swift
       - path: AIUsageDashboardApp/Core/Connect
     settings:
       base:
         PRODUCT_NAME: tokei
         PRODUCT_BUNDLE_IDENTIFIER: ai.padzy.tokei.cli
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)
+        INFOPLIST_KEY_CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CODE_SIGN_IDENTITY: "-"
       configs:
         Release:

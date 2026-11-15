@@ -1,32 +1,25 @@
 #!/usr/bin/env bash
-# cli-version-sync — TokeiCLI.version must equal project.yml MARKETING_VERSION.
-# Read-only. FAILS on drift.
-#
-# Why this gate exists: the tokei helper hardcodes its version string (it is a
-# standalone `tool` target with no Info.plist to read). A 0.7.1 build shipped
-# reporting `tokei 0.7.0`, which is the first thing you check when working out
-# which binary is actually live — so the drift actively misleads debugging.
+# The helper embeds MARKETING_VERSION, rather than maintaining a second string.
+# Set TOKEI_CLI_BINARY to additionally verify the real built artifact.
 GATE_NAME="cli-version-sync"; source "$(dirname "$0")/_lib.sh"
 require_repo
 
 project_yml="$APP_DIR/project.yml"
 main_swift="$APP_DIR/TokeiCLI/main.swift"
-
-[ -f "$project_yml" ] || fail "missing $project_yml"
-[ -f "$main_swift" ]  || fail "missing $main_swift"
-
-# MARKETING_VERSION lives under settings.base; take the first match.
-marketing="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  "$project_yml" | head -1)"
-cli="$(sed -n 's/^[[:space:]]*static let version = "\([^"]*\)".*/\1/p' \
-  "$main_swift" | head -1)"
-
-[ -n "$marketing" ] || fail "could not parse MARKETING_VERSION from project.yml"
-[ -n "$cli" ]       || fail "could not parse TokeiCLI.version from TokeiCLI/main.swift"
-
-if [ "$marketing" != "$cli" ]; then
-  fail "version drift: project.yml MARKETING_VERSION=$marketing but TokeiCLI.version=$cli
-      Fix: set 'static let version = \"$marketing\"' in AIUsageDashboard/TokeiCLI/main.swift"
+[ -f "$project_yml" ] || fail "missing project.yml"
+[ -f "$main_swift" ] || fail "missing TokeiCLI/main.swift"
+marketing="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\([^" ]*\)".*/\1/p' "$project_yml" | head -1)"
+[ -n "$marketing" ] || fail "could not parse MARKETING_VERSION"
+tool_settings="$(sed -n '/^  tokei:/,$p' "$project_yml")"
+printf '%s\n' "$tool_settings" | grep -Eq 'CREATE_INFOPLIST_SECTION_IN_BINARY:[[:space:]]*YES' || fail "helper must embed its Info.plist"
+printf '%s\n' "$tool_settings" | grep -Fq 'INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)' || fail "helper version must use MARKETING_VERSION"
+grep -Fq 'Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")' "$main_swift" || fail "helper must read its embedded build version"
+if grep -Eq 'static let version[[:space:]]*=[[:space:]]*"' "$main_swift"; then
+    fail "helper version must not be hardcoded"
 fi
-
-pass "TokeiCLI.version matches MARKETING_VERSION ($marketing)"
+if [ -n "${TOKEI_CLI_BINARY:-}" ]; then
+    [ -x "$TOKEI_CLI_BINARY" ] || fail "TOKEI_CLI_BINARY is not executable"
+    actual="$("$TOKEI_CLI_BINARY" version)"
+    [ "$actual" = "tokei $marketing" ] || fail "built helper reports $actual; expected tokei $marketing"
+fi
+pass "helper version derives from MARKETING_VERSION ($marketing)"

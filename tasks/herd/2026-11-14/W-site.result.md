@@ -166,3 +166,23 @@ Checks on HEAD `9d778e6`:
 - secscan (`SECSCAN_BASE=master`, `pnpm` shim on PATH): `VERDICT: FLAG`, `AUDIT pnpm: critical 0, high 6, moderate 2, low 0`, `VULN high/critical while this branch changed pnpm-lock.yaml: browserslist,nanoid,postcss,source-map-js; confirm none came from this change`. Same 8 (advisory, version, path) combinations already shown to be on `master` in round 2b; this round's audit diff is empty.
 - Not verified: the share card itself is not pictured on the page (only its button and one sentence); badges were never captured from the app (all real captures stop above them), so cells follow the source, not a screenshot; Safari and a real phone still unchecked.
 - A proof-folder cleanup (`rm -f $F/*`) was blocked by the safety check for an unguarded variable; nothing was deleted, the final run went to a fresh folder, and older round folders are left as they were.
+
+## Round 2d · gates find the home page in Vercel's build (deploy blocker)
+- Commit `ab5b0f3 build(site): the gates find the home page in Vercel's adapter build too` (one commit, on top of the orchestrator's `734d7f0` 0.12.0 link). No deploy.
+- Cause, from the failed preview's own log (`vercel inspect https://tokei-website-2a71cbexf-… --logs`): "Applying modifyConfig from Vercel" and "Running onBuildComplete from Vercel". Vercel's cloud build runs Next through its adapter; the bundled `@vercel/next` 29.0.0 sets `NEXT_ADAPTER_PATH` only when `NEXT_ENABLE_ADAPTER === "1"`. In that mode Next writes the prerendered home page to `.next/output/functions/index.prerender-fallback.html` (byte-identical to `.next/server/route-cache/APP_PAGE/<hash>/$/index.html`) and no `.next/server/app/index.html`. A plain local `vercel build` does not enable the adapter, which is why it passed.
+- Reproduced locally: `vercel pull --yes --environment=preview` (writes `.vercel/.env.preview.local`, gitignored, not read), then `NEXT_ENABLE_ADAPTER=1 vercel build` → `Error: ENOENT … .next/server/app/index.html at check-copy.mjs:82`, `"status": "error"`. (Locally `pnpm` is only reachable through corepack, so `vercel build` ran with a corepack `pnpm` shim on PATH from my scratchpad.)
+- Fix: `scripts/lib/home-html.mjs` `findHomeHtml(root)` tries `.next/server/app/index.html`, then `.next/output/functions/index.prerender-fallback.html`; `check-copy.mjs` (new `--root`) and `check-budget.mjs` both use it. When neither exists both print FAIL naming both paths and exit 1:
+  ```
+  check-copy: FAIL, no prerendered home page found under <root>; looked for .next/server/app/index.html and .next/output/functions/index.prerender-fallback.html
+  check-budget: FAIL, no prerendered home page found under <root>; looked for .next/server/app/index.html and .next/output/functions/index.prerender-fallback.html
+  ```
+- Tests (written first, both failed before the fix): "gates find the home page in the Vercel adapter layout" (only the adapter file exists → budget clean, check-copy exit 0) and "gates fail loudly when no prerendered home page exists" (measure throws; both CLIs exit 1 with that message). `corepack pnpm test:gates` → `check-no-eyebrows self-test: 17 fixtures ok`, `# pass 25 # fail 0`.
+- Builds, all from a clean `.next`, every gate passing with identical numbers in both layouts:
+  | Build | Result |
+  |---|---|
+  | `corepack pnpm build` (local layout) | `check-no-eyebrows: 20 files`, `check-copy: PASS (302 text nodes, 1056 words of copy)`, `check-budget: initial JS 137.3 KB of 150.0 KB; first load 749.4 KB of 1000.0 KB; film 2586.7 KB of 3000.0 KB; poster 33.6 KB of 150.0 KB`, `check-budget: PASS` |
+  | `NEXT_ENABLE_ADAPTER=1 vercel build` (cloud mode: "Running onBuildComplete from Vercel") | same four lines, then `"status": "ok"`, `"message": "Build completed successfully."` |
+  | `vercel build` (adapter off) | same four lines, `"status": "ok"` |
+- secscan (`SECSCAN_BASE=master`, pnpm shim): unchanged from round 2c, `VERDICT: FLAG`, `AUDIT pnpm: critical 0, high 6, moderate 2, low 0`, same inherited build-tool advisories; no dependency change this round. No servers started (`lsof` → none of mine).
+- Not verified: the real Vercel cloud build itself (no deploy, as instructed); cloud uses Node 24.22 and pnpm 10.28, local runs used Node 22.23 and pnpm 12.18. The orchestrator's next `vercel deploy` (preview) is the check that closes this.
+- Left in the worktree, gitignored: `.vercel/.env.preview.local` (from the requested `vercel pull`) and `.vercel/output` (from `vercel build`).

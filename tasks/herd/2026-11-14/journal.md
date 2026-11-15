@@ -31,3 +31,7 @@
 - 03:19 Full suite once: 1044 tests, 3 unexpected failures, all baseline on 3fd3e98 (date-dependent provider clock); fixed in tests, 33/33 pass.
 - 03:21 RELEASE BLOCKED: notarytool HTTP 403 "A required agreement is missing or has expired" (submit + history). Needs Abhay to accept the Apple Developer agreement. App built + Developer ID signed (verify-app static PASS). Proceeding: live proof on dist app, PR dev->main, site preview deploy.
 - 03:25 Live proof on dist/Tokei.app 0.12.0 (12), Developer ID signed: launch 343-368 ms warm, dropdown 145 ms warm, Burn tab real data, Settings Connect agents rendered (Debug route), tokei burn/dry-run/MCP 3 tools OK, snapshot has streak+today, idle CPU closed 0.28% (180 s). Installed 0.11 relaunched.
+- 03:27 PR #67 opened (dev->main). Vercel preview build failed (gate path on Vercel layout); round 2d sent to W.
+- 03:28 PR #67 squash-merged to main 9504efa; main merged back into dev; pushed. No tag yet (after notarized release).
+- 03:34 Site preview (prebuilt, gates passed locally): https://tokei-website-25sfv4u5q-abhay-padmanabhans-projects.vercel.app (Vercel login). Cloud build path differs (fonts); deploy uses prebuilt output.
+- 12:08 Apple agreement accepted by Abhay; notary open. 12:20 release.sh: app + DMG notarized (appcast step failed: no tokei key here). 12:23 tag v0.12.0 + GitHub release (DMG sha matches). 12:30 site prod deployed (prebuilt). Key brought over by Grok/T3; 12:54 feed signed + verified; PR #68 merged; 12:56 live feed 0.12.0, signature verified on the downloadable DMG. SHIPPED.

@@ -18,6 +18,10 @@ struct AIUsageDashboardApp: App {
         UserDefaults.standard.register(defaults: [AlertSettings.predictiveWarningsKey: true])
         // Burn nudges are on until turned off (Abhay 2026-11-14; contract `BurnNudgePolicy`).
         UserDefaults.standard.register(defaults: [BurnNudgePolicy.enabledKey: true])
+        #if DEBUG
+        // Before any view reads a preference: the demo's fixed settings win for this run.
+        if DemoFixture.isActive { DemoFixture.installDefaults() }
+        #endif
     }
 
     var body: some Scene {
@@ -25,7 +29,8 @@ struct AIUsageDashboardApp: App {
             DashboardView()
                 .environmentObject(appDelegate.viewModel)
                 .environment(appDelegate.burnBoard)
-                .environment(\.dashboardVisible, windowVisibility.isVisible)
+                // Its own window, not the app: an open popover does not wake the dashboard.
+                .environment(\.dashboardVisible, windowVisibility.dashboardOnScreen)
         }
         .windowStyle(.titleBar)
         // Free-resize down to the DashboardView's 640×480 minimum (and up to
@@ -76,7 +81,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Owned here, not by a view: syncing starts when the app finishes launching, even
     /// when neither the dashboard window nor the menu-bar popover is ever shown (a hidden
     /// launch, e.g. `open -j` or a login item set to hide). Views only read it.
-    let viewModel = DashboardViewModel()
+    let viewModel: DashboardViewModel = {
+        #if DEBUG
+        if DemoFixture.isActive { return DemoFixture.viewModel() }
+        #endif
+        return DashboardViewModel()
+    }()
     /// The burn surfaces' model: follows `viewModel.burn` and holds the pending celebration.
     private(set) lazy var burnBoard = BurnBoard(viewModel: viewModel)
     /// The status item's label values, narrowed from `viewModel` (see `MenuBarLabelModel`).
@@ -94,7 +104,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // Only an isolated benchmark launch may close the window. An inherited probe
+        // flag on an ordinary Release launch must leave normal startup intact.
+        if PerformanceProbe.isEnabled,
+           Bundle.main.bundleIdentifier?.hasPrefix("ai.padzy.tokei.perf.") == true,
+           FileManager.default.fileExists(atPath: home.appendingPathComponent(".tokei-perf-home").path) {
+            PerformanceProbe.emit("isolated", fields: ["home": home.path])
+            Task { @MainActor in
+                // Observe the first actual window, then close it: the CPU sample must
+                // measure the ordinary menu-bar-only app, including its retained views.
+                while let app = NSApp {
+                    if let window = app.windows.first(where: { $0.isVisible && $0.frame.width > 300 }) {
+                        PerformanceProbe.emit("first_window")
+                        window.close()
+                        PerformanceProbe.emit("window_closed")
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+            }
+        } else {
+            _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        }
+        #if DEBUG
+        // The demo data set replaces every real source (`DemoFixture.viewModel()`): no
+        // first-run seed, no saved store; the one sync reads only the demo providers.
+        if DemoFixture.isActive {
+            Task {
+                await viewModel.refresh()
+                ProofRoute.apply(navigator: .shared, viewModel: viewModel)
+            }
+            return
+        }
+        #endif
         // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
         // and the first sync writes that store.
         AddAgentModel.seedOnFirstLaunchIfNeeded()
@@ -107,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #endif
             viewModel.beginAutoSync()
             await viewModel.refresh()
+            PerformanceProbe.emit("initial_refresh_complete")
         }
     }
 

@@ -115,6 +115,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
     public let recommendation: AgentRecommendation?
     /// Optional additive v1 burn signals. Feature-detect when reading older snapshots.
     public let burn: AgentBurn?
+    /// Additive v1 ranked flat-rate plans. Absent in snapshots from older apps.
+    public let route: AgentRoute?
 
     /// Reader-computed, **omitted on disk** (the writer never sets them). The `tokei`
     /// helper populates these when emitting a response so agents never treat old data
@@ -136,7 +138,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         recommendation: AgentRecommendation?,
         stale: Bool? = nil,
         ageSeconds: Int? = nil,
-        burn: AgentBurn? = nil
+        burn: AgentBurn? = nil,
+        route: AgentRoute? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -146,6 +149,7 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         self.stale = stale
         self.ageSeconds = ageSeconds
         self.burn = burn
+        self.route = route
     }
 }
 
@@ -232,6 +236,10 @@ public struct AgentAccountQuota: Codable, Sendable, Equatable {
     public let validUntil: Date?
     /// Kept optional for the original additive-v1 fixture; no arbitrary diagnostics enter it.
     public let reasonCode: String?
+
+    public var plainReasonCode: String? {
+        reasonCode.map { ["no_quota_reading", "untrusted_reading"].contains($0) ? $0 : "untrusted_reading" }
+    }
 
     public init(
         status: String,
@@ -339,6 +347,13 @@ public struct AgentRecommendation: Codable, Sendable, Equatable {
     public let target: AgentRecommendationTarget?
     public let avoidAccounts: [AgentAccountReference]?
     public let validUntil: Date?
+
+    public var plainReason: String {
+        // At most one clause per provider plus the target; each clause is bounded.
+        let clauses = reason.components(separatedBy: "; ")
+        return clauses.count <= 9 && clauses.allSatisfy { AgentBurnWindow.isPlainText($0, maximumLength: 160) } ? reason
+            : "Routing details are unavailable. Refresh Tokei before choosing work."
+    }
 
     public init(
         routeTo: String?,
@@ -481,7 +496,8 @@ public extension AgentSnapshot {
             recommendation: replacement,
             stale: stale,
             ageSeconds: ageSeconds,
-            burn: burn
+            burn: burn,
+            route: route
         )
     }
 }
@@ -569,9 +585,15 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
     /// Provider-supplied labels reach a terminal and an agent's context through `advice`,
     /// so only short plain text is used; anything else (control codes, newlines, long
     /// prose) falls back to the window type's name.
-    static func isPlainLabel(_ label: String) -> Bool {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_.,()/%+:'"))
-        return !label.isEmpty && label.count <= 48 && label.unicodeScalars.allSatisfy { allowed.contains($0) }
+    public static func isPlainLabel(_ label: String) -> Bool {
+        isPlainText(label, maximumLength: 48)
+    }
+
+    public static func isPlainText(_ label: String, maximumLength: Int) -> Bool {
+        let allowed = CharacterSet.alphanumerics.union(.nonBaseCharacters)
+            .union(CharacterSet(charactersIn: " -_.,()/%+:'"))
+        return !label.isEmpty && label.unicodeScalars.count <= maximumLength
+            && label.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     public func advice(asOf now: Date) -> String {

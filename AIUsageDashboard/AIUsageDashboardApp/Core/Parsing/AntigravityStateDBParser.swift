@@ -36,28 +36,37 @@ public actor AntigravityStateDBParser {
 
     private let fileManager: FileManager
     private let protobufReader: MiniProtobufReader
+    private let copyDatabase: (@Sendable (URL, URL) throws -> Void)?
+    private var cached: (url: URL, fingerprint: AntigravityConversationFiles.Fingerprint, state: ParsedState)?
 
     public init(
         fileManager: FileManager = .default,
-        protobufReader: MiniProtobufReader = .init()
+        protobufReader: MiniProtobufReader = .init(),
+        copyDatabase: (@Sendable (URL, URL) throws -> Void)? = nil
     ) {
         self.fileManager = fileManager
         self.protobufReader = protobufReader
+        self.copyDatabase = copyDatabase
     }
 
     public func parse(stateDatabaseURL: URL) async -> ParsedState {
         do {
+            let fingerprint = try SQLiteSidecarCopy.fingerprint(stateDatabaseURL)
+            if let cached, cached.url == stateDatabaseURL, cached.fingerprint == fingerprint { return cached.state }
+            cached = nil
             let tempDirectory = try temporaryCopyDirectory()
             defer { try? fileManager.removeItem(at: tempDirectory) }
 
             let databaseCopyURL = tempDirectory.appendingPathComponent(stateDatabaseURL.lastPathComponent)
-            try SQLiteSidecarCopy.copyDatabase(
-                from: stateDatabaseURL,
-                to: databaseCopyURL,
-                using: fileManager
-            )
-            return try parseCopiedDatabase(at: databaseCopyURL)
+            if let copyDatabase { try copyDatabase(stateDatabaseURL, databaseCopyURL) }
+            else { try SQLiteSidecarCopy.copyDatabase(from: stateDatabaseURL, to: databaseCopyURL, using: fileManager) }
+            let state = try parseCopiedDatabase(at: databaseCopyURL)
+            if try SQLiteSidecarCopy.fingerprint(stateDatabaseURL) == fingerprint {
+                cached = (stateDatabaseURL, fingerprint, state)
+            }
+            return state
         } catch {
+            cached = nil
             return ParsedState(warnings: [
                 ProviderWarning(
                     message: "Antigravity local state database could not be read: \(error.localizedDescription)",

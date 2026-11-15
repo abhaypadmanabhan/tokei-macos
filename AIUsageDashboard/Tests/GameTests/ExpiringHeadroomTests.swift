@@ -40,6 +40,58 @@ final class ExpiringHeadroomTests: XCTestCase {
         XCTAssertTrue(found.isEmpty, "credits are paid spend; estimates and old readings are not headroom")
     }
 
+    func testIndividualCapNeverExpiresRegardlessOfRebuiltWindowType() {
+        for type in QuotaWindowType.allCases {
+            let cap = window(.codex, type, used: 10, resetIn: 600, bucket: "spend_control_individual_limit")
+            for accounts in [nil, [account("fixture", windows: [cap], status: .eligible)]] as [[ProviderAccountUsage]?] {
+                let found = ExpiringHeadroomFinder.find(in: [snapshot(.codex, windows: [cap], accounts: accounts)], now: now)
+                XCTAssertTrue(found.isEmpty, "a spending cap is never expiring capacity: \(type)")
+            }
+        }
+    }
+
+    @MainActor
+    func testIndividualCapNeverReachesBurnNudgesBoardCLIOrMCP() throws {
+        let instant = Date()
+        let cap = QuotaWindow(providerID: .codex, type: .monthly, used: 10, limit: 100,
+                              resetAt: instant.addingTimeInterval(600), confidence: .providerReported,
+                              source: "fixture", bucketKey: "spend_control_individual_limit", observedAt: instant)
+        let plan = QuotaWindow(providerID: .claudeCode, type: .fiveHour, used: 40, limit: 100,
+                               resetAt: instant.addingTimeInterval(1_800), confidence: .providerReported,
+                               source: "fixture", observedAt: instant)
+        let input = [snapshot(.codex, windows: [cap]), snapshot(.claudeCode, windows: [plan])]
+        let burn = BurnEngine.evaluate(snapshots: input, monthlyPlanUSD: [.codex: 20, .claudeCode: 20],
+                                       quotaSamples: [], state: BurnState(), now: instant,
+                                       calendar: BurnFixtures().calendar, pricing: BurnFixtures().pricing,
+                                       emitMoments: false).snapshot
+        XCTAssertEqual(burn.expiring.map(\.providerID), [.claudeCode])
+        let board = BurnBoard(snapshot: burn, now: { instant })
+        XCTAssertEqual(board.snapshot.expiring.map(\.providerID), [.claudeCode], "the Burn tab renders this exact list")
+        let nudges = BurnNudge.candidates(snapshot: burn, delivered: [:], windowKeys: [], now: instant)
+        XCTAssertEqual(nudges.compactMap { $0.windowKey?.providerID }, [.claudeCode])
+
+        let exported = AgentSnapshotWriter.buildSnapshot(from: input, generatedAt: instant, burn: burn)
+        XCTAssertEqual(exported.burn?.expiring.map(\.provider), ["claude_code"])
+        let cli = try ReviewCLIProbe.run(["burn"], snapshot: exported)
+        XCTAssertEqual(cli.status, 0)
+        XCTAssertTrue(cli.text.contains("claude_code"))
+        XCTAssertFalse(cli.text.lowercased().contains("codex"))
+
+        let directory = try CLITestSupport.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = try CLITestSupport.writeSnapshot(exported, in: directory)
+        let helper = try MCPProcessHarness(snapshotURL: url)
+        defer { helper.stop() }
+        try helper.write(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_burn_opportunities"}}"# + "\n")
+        let response = try helper.response(id: 1, timeout: 2)
+        let result = try XCTUnwrap(response["result"] as? [String: Any])
+        let text = try toolCallText(result)
+        XCTAssertFalse(text.isError)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.text.utf8)) as? [String: Any])
+        let rows = try XCTUnwrap(payload["expiring"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["provider"] as? String }, ["claude_code"])
+    }
+
     func testWindowAlreadyResetIsNotExpiring() {
         let found = ExpiringHeadroomFinder.find(in: [
             snapshot(.codex, windows: [window(.codex, .fiveHour, used: 0, resetIn: -60)])

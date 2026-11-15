@@ -103,10 +103,10 @@ struct AgentGridCell: View {
                         .truncationMode(.tail)
                     Spacer(minLength: 4)
                     if model.hasHeadroom {
-                        Text("Most room")
+                        Text("Send here next")
                             .font(.sans(size: 12))
                             .foregroundColor(PadzyTheme.ink3)
-                            .accessibilityLabel("Most headroom, route new work here")
+                            .accessibilityLabel("Send work here next")
                     }
                 }
                 stat

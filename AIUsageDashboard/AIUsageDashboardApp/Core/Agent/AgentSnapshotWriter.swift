@@ -72,17 +72,7 @@ public actor AgentSnapshotWriter {
         let utilizations = snapshots.flatMap { snapshot -> [Utilization] in
             let windows = headlineDecisions[snapshot.providerID]?.account.quotaWindows
                 ?? snapshot.quotaWindows
-            return windows.filter { !$0.isInformationalCredits }.compactMap { window in
-                guard let usedPercent = UtilizationEngine.usedPercent(from: window) else { return nil }
-                return Utilization(
-                    providerID: snapshot.providerID,
-                    window: window.type,
-                    usedPercent: usedPercent,
-                    resetAt: window.resetAt,
-                    confidence: window.confidence,
-                    observedAt: window.observedAt
-                )
-            }
+            return windows.compactMap { Utilization(window: $0, providerID: snapshot.providerID) }
         }
         let displayNames = Dictionary(
             snapshots.map { ($0.providerID, $0.displayName) },
@@ -112,7 +102,8 @@ public actor AgentSnapshotWriter {
                                    goal: $0.today.goal.map { AgentBurnGoal(unit: $0.unit.rawValue, target: $0.target) },
                                    progress: $0.today.progress)
                 }
-            )
+            ),
+            route: RoutePlan.make(snapshots: snapshots, now: generatedAt).agentRoute
         )
     }
 

@@ -16,7 +16,9 @@ import AIUsageDashboardCore
 /// `provider.<raw>.scrolled`. Burn state flags (`-TokeiBurnSample`, `-TokeiBurnEmpty`,
 /// `-TokeiBurnMoment`) live in `BurnDebug`; `-TokeiShareCardOut <path>` writes the card PNG. `-TokeiProofFixture
 /// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`); the tour also
-/// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`).
+/// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`). `-TokeiProofFixture demo`
+/// replaces every real source with `DemoFixture` (publishable captures);
+/// `-TokeiProofWindowSize <w>x<h>` fixes the dashboard's size.
 enum ProofRoute {
     static let popoverWindowID = "proof-popover"
     static let metricNotification = Notification.Name("TokeiProof.metric")
@@ -57,6 +59,71 @@ enum ProofRoute {
             return
         }
         if let route { open(route, navigator: navigator, viewModel: viewModel) }
+        if let size = UserDefaults.standard.string(forKey: "TokeiProofWindowSize") { sizeDashboard(size) }
+        if let path = UserDefaults.standard.string(forKey: "TokeiProofTickReport") {
+            Task { await reportTicks(to: path) }
+        }
+    }
+
+    /// `-TokeiProofTickReport <file>` (with `-TokeiProofRoute popover`, without
+    /// `-TokeiProofVisible`): counts the status strip's clock fires while the dashboard is
+    /// on screen, while it is ordered out with only the popover open, and after it comes
+    /// back; writes one line per phase to <file>, then quits (WP-C AC 4).
+    @MainActor
+    private static func reportTicks(to path: String) async {
+        func pause(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
+        func dashboard() -> NSWindow? { NSApp.windows.first { $0.identifier?.rawValue == DashboardWindow.id } }
+        var lines: [String] = []
+        func phase(_ name: String, seconds: Double) async {
+            let start = SecondTicker.processFires
+            await pause(seconds)
+            let popover = NSApp.windows.contains { $0.identifier?.rawValue == popoverWindowID && $0.isVisible }
+            lines.append("\(name) seconds=\(Int(seconds)) fires=\(SecondTicker.processFires - start)"
+                + " dashboardVisible=\(dashboard()?.isVisible ?? false) popoverOpen=\(popover)"
+                + " appVisible=\(NSApp.occlusionState.contains(.visible))")
+        }
+        await pause(3)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-open", seconds: 5)
+        dashboard()?.orderOut(nil)
+        await phase("dashboard-hidden-popover-open", seconds: 10)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-back", seconds: 5)
+        dashboard()?.performClose(nil)
+        await phase("dashboard-closed", seconds: 5)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-reopened", seconds: 5)
+        try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        exit(0)
+    }
+
+    /// `-TokeiProofWindowSize 1100x760`: the dashboard's content size for captures, so every
+    /// picture of one screen has the same frame whatever size the window last had.
+    @MainActor
+    private static func sizeDashboard(_ value: String) {
+        let parts = value.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2 else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == DashboardWindow.id }) else { return }
+            window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+            window.center()
+            // A pointer resting over the window would put a hover readout in the capture:
+            // slide the window to whichever side of the screen the pointer is not on.
+            // Tries the four corners of the screen for one the pointer is not over.
+            if let screen = window.screen?.visibleFrame, window.frame.contains(NSEvent.mouseLocation) {
+                let size = window.frame.size
+                let corners = [NSPoint(x: screen.minX, y: screen.maxY - size.height),
+                               NSPoint(x: screen.maxX - size.width, y: screen.maxY - size.height),
+                               NSPoint(x: screen.minX, y: screen.minY), NSPoint(x: screen.maxX - size.width, y: screen.minY)]
+                if let clear = corners.first(where: { !NSRect(origin: $0, size: size).contains(NSEvent.mouseLocation) }) {
+                    window.setFrameOrigin(clear)
+                }
+            }
+            // Key and active, so the capture shows live traffic lights and full-strength text.
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     // MARK: Tour

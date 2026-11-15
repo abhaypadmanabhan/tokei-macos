@@ -9,7 +9,10 @@ final class MaxxerValueEngineTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        suiteName = "ai.padzy.tokei.tests.maxxer.\(UUID().uuidString)"
+        // An absolute suite keeps the plist in test temp, never ~/Library/Preferences
+        // (a named suite left one empty plist per run there: 42 on 2026-11-14).
+        suiteName = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ai.padzy.tokei.tests.maxxer.\(UUID().uuidString)").path
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
         planCosts = MaxxerPlanCostStore(defaults: defaults)
@@ -17,6 +20,10 @@ final class MaxxerValueEngineTests: XCTestCase {
 
     override func tearDown() {
         defaults.removePersistentDomain(forName: suiteName)
+        defaults.synchronize()
+        let plist = URL(fileURLWithPath: suiteName + ".plist")
+        try? FileManager.default.removeItem(at: plist)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plist.path))
         planCosts = nil
         defaults = nil
         suiteName = nil

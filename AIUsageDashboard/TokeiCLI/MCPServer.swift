@@ -36,6 +36,7 @@ final class MCPServer {
         case burnOpportunities = "get_burn_opportunities"
         case usage = "get_usage"
         case routeRecommendation = "get_route_recommendation"
+        case route = "get_route"
     }
 
     let reader: SnapshotReader
@@ -219,7 +220,10 @@ final class MCPServer {
                              providers: snapshot.providers.filter { $0.id == provider },
                              aggregateUtilizationPercent: nil, recommendation: nil,
                              stale: snapshot.stale, ageSeconds: snapshot.ageSeconds,
-                             burn: snapshot.burn.map { AgentBurn(expiring: $0.expiring.filter { $0.provider == provider }) })
+                             burn: snapshot.burn.map { AgentBurn(expiring: $0.expiring.filter { $0.provider == provider }) },
+                             route: snapshot.route.map { AgentRoute(generatedAt: $0.generatedAt,
+                                                                   rows: $0.rows.filter { $0.provider == provider },
+                                                                   unknown: $0.unknown.filter { $0.provider == provider }) })
     }
 
     // MARK: - tools/call
@@ -246,13 +250,20 @@ final class MCPServer {
         } else {
             arguments = [:]
         }
-        guard Set(arguments.keys).isSubset(of: tool == .usage ? ["provider", "detail"] : []) else {
+        let allowed: Set<String> = tool == .usage ? ["provider", "detail"] : tool == .route ? ["for"] : []
+        guard Set(arguments.keys).isSubset(of: allowed) else {
             return .invalid("Unknown tool argument.")
         }
         var provider: String?
         if let value = arguments["provider"] {
             guard let name = value as? String, SnapshotReader.providerIDs.contains(name) else {
                 return .invalid("Unknown provider.")
+            }
+            provider = name
+        }
+        if let value = arguments["for"] {
+            guard let name = value as? String, SnapshotReader.providerIDs.contains(name) else {
+                return .invalid("Unknown agent; use a provider ID.")
             }
             provider = name
         }
@@ -274,8 +285,13 @@ final class MCPServer {
                 return textContent(try burnText(snapshot), warning: staleWarning(snapshot))
             case .routeRecommendation:
                 return textContent(try recommendationText(snapshot), warning: staleWarning(snapshot))
+            case .route:
+                return textContent(try encode(RouteFormatting.output(snapshot, now: reader.now(), provider: provider)))
             }
         } catch let error as SnapshotReadError {
+            if name == .route {
+                return textContent("No usage snapshot is available. Launch Tokei and retry.", isError: true)
+            }
             return textContent(error.message, isError: true)
         } catch {
             return textContent("tokei: \(error.localizedDescription)", isError: true)
@@ -368,7 +384,7 @@ private extension MCPServer {
             stale: snapshot.stale == true || decisionExpired,
             routeTo: recommendation?.routeTo,
             avoid: recommendation?.avoid ?? [],
-            reason: recommendation?.reason
+            reason: recommendation?.plainReason
                 ?? "No routing recommendation available (not enough providers reported live quota).",
             target: recommendation?.target,
             avoidAccounts: recommendation?.avoidAccounts,

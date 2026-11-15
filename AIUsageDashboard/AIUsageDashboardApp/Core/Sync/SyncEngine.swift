@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 public actor SyncEngine {
     public static let shared = SyncEngine()
@@ -13,7 +14,19 @@ public actor SyncEngine {
     private let isLowPowerModeEnabled: @Sendable () -> Bool
     private var periodicSyncTask: Task<Void, Never>?
     private var refreshTask: Task<[ProviderSnapshot], Never>?
-    private var refreshDirty = false
+    private var pendingFullRefresh = false
+    private var pendingUserRefresh = false
+    private var pendingRefreshProviders: Set<ProviderID> = []
+    private let now: @Sendable () -> Date
+    private let isVisible: @Sendable () async -> Bool
+    private var visible = true
+    private var visibilityTask: Task<Void, Never>?
+    private var fileRefreshTask: Task<Void, Never>?
+    private var pendingFileProviders: Set<ProviderID> = []
+    private var pendingFileRescan = false
+    private var lastFileRefresh: [ProviderID: Date] = [:]
+    private var lastFullFileRefresh: Date?
+    private var lastRefreshAt: [ProviderID: Date] = [:]
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
     /// The last refresh's snapshots and the view model's latest burn state, so the agent
@@ -36,7 +49,11 @@ public actor SyncEngine {
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         },
-        isLowPowerModeEnabled: @escaping @Sendable () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
+        isLowPowerModeEnabled: @escaping @Sendable () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled },
+        now: @escaping @Sendable () -> Date = { Date() },
+        isVisible: @escaping @Sendable () async -> Bool = {
+            await MainActor.run { NSApplication.shared.occlusionState.contains(.visible) }
+        }
     ) {
         self.registry = registry
         self.store = store
@@ -46,6 +63,8 @@ public actor SyncEngine {
         self.sleep = sleep
         self.isLowPowerModeEnabled = isLowPowerModeEnabled
         self.evaluateThresholds = evaluateThresholds
+        self.now = now
+        self.isVisible = isVisible
         var continuation: AsyncStream<[ProviderSnapshot]>.Continuation!
         self.updates = AsyncStream { cont in
             continuation = cont
@@ -64,16 +83,30 @@ public actor SyncEngine {
     }
 
     public func refreshAll() async -> [ProviderSnapshot] {
+        await refresh(providers: nil)
+    }
+
+    public func refreshFromUser() async -> [ProviderSnapshot] {
+        await refresh(providers: nil, userInitiated: true)
+    }
+
+    func refresh(providers: Set<ProviderID>?, userInitiated: Bool = false) async -> [ProviderSnapshot] {
+        pendingUserRefresh = pendingUserRefresh || userInitiated
+        if let providers { pendingRefreshProviders.formUnion(providers) }
+        else { pendingFullRefresh = true }
         if let refreshTask {
-            refreshDirty = true
             return await refreshTask.value
         }
         let task = Task {
             var snapshots: [ProviderSnapshot]
             repeat {
-                self.refreshDirty = false
-                snapshots = await self.performRefresh()
-            } while self.refreshDirty
+                let providers = self.pendingFullRefresh ? nil : self.pendingRefreshProviders
+                let userInitiated = self.pendingUserRefresh
+                self.pendingFullRefresh = false
+                self.pendingUserRefresh = false
+                self.pendingRefreshProviders.removeAll()
+                snapshots = await self.performRefresh(providers: providers, userInitiated: userInitiated)
+            } while self.pendingFullRefresh || !self.pendingRefreshProviders.isEmpty
             // Clear before publishing completion so a later caller starts a new run.
             self.refreshTask = nil
             return snapshots
@@ -82,9 +115,20 @@ public actor SyncEngine {
         return await task.value
     }
 
-    private func performRefresh() async -> [ProviderSnapshot] {
+    private func performRefresh(providers: Set<ProviderID>?, userInitiated: Bool) async -> [ProviderSnapshot] {
         await watcher.refreshWatchPaths()
-        let snapshots = await registry.snapshotAll()
+        let refreshed = await registry.snapshots(for: providers, userInitiated: userInitiated)
+        let refreshedAt = now()
+        for snapshot in refreshed { lastRefreshAt[snapshot.providerID] = refreshedAt }
+        var snapshots = refreshed
+        if providers != nil {
+            let previous: [ProviderSnapshot]
+            if let lastSnapshots { previous = lastSnapshots }
+            else { previous = await store.allSnapshots() }
+            let changed = Set(refreshed.map(\.providerID))
+            snapshots += previous.filter { !changed.contains($0.providerID) }
+        }
+        snapshots.sort { $0.providerID.rawValue < $1.providerID.rawValue }
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
         await evaluateThresholds(snapshots)
@@ -110,10 +154,18 @@ public actor SyncEngine {
             let stream = await watcher.events
             guard !Task.isCancelled else { return }
             await watcher.start()
-            for await _ in stream {
+            if let self { await self.visibilityChanged(await self.isVisible()) }
+            for await event in stream {
                 guard !Task.isCancelled else { break }
                 guard let self else { break }
-                _ = await self.refreshAll()
+                await self.handleFileEvent(event)
+            }
+        }
+        visibilityTask = Task { [weak self, isVisible] in
+            for await _ in NotificationCenter.default.notifications(named: NSApplication.didChangeOcclusionStateNotification) {
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
+                await self.visibilityChanged(await isVisible())
             }
         }
         periodicSyncTask = Task { [weak self, sleep, isLowPowerModeEnabled] in
@@ -126,11 +178,84 @@ public actor SyncEngine {
         }
     }
 
+    func handleFileEvent(_ event: FileWatcher.Event) async {
+        if let providers = await watcher.affectedProviders(for: event) {
+            pendingFileProviders.formUnion(providers)
+        } else { pendingFileRescan = true }
+        await drainFileEvents()
+    }
+
+    func visibilityChanged(_ isVisible: Bool) async {
+        let becameVisible = isVisible && !visible
+        visible = isVisible
+        if visible {
+            // A continuous writer may still be inside the watcher's ten-second batch.
+            await watcher.flushPendingEvents()
+            await drainFileEvents()
+            if becameVisible {
+                let date = now()
+                let stale = Set(registry.providers.map(\.id).filter {
+                    date.timeIntervalSince(lastRefreshAt[$0] ?? .distantPast) > 15
+                })
+                if !stale.isEmpty { _ = await refresh(providers: stale) }
+            }
+        }
+    }
+
+    private func drainFileEvents() async {
+        fileRefreshTask?.cancel()
+        fileRefreshTask = nil
+        let date = now()
+        if pendingFileRescan {
+            let last = max(lastFullFileRefresh ?? .distantPast, lastFileRefresh.values.max() ?? .distantPast)
+            let delay = visible ? 0 : max(0, 15 - date.timeIntervalSince(last))
+            if delay > 0 { scheduleFileRefresh(after: delay); return }
+            pendingFileRescan = false
+            pendingFileProviders.removeAll()
+            lastFullFileRefresh = date
+            for provider in registry.providers { lastFileRefresh[provider.id] = date }
+            _ = await refreshAll()
+        } else {
+            let ready = pendingFileProviders.filter {
+                visible || date.timeIntervalSince(lastFileRefresh[$0] ?? .distantPast) >= 15
+            }
+            pendingFileProviders.subtract(ready)
+            for provider in ready { lastFileRefresh[provider] = date }
+            if !ready.isEmpty { _ = await refresh(providers: ready) }
+        }
+        if !pendingFileProviders.isEmpty {
+            let next = pendingFileProviders.map {
+                max(0, 15 - now().timeIntervalSince(lastFileRefresh[$0] ?? .distantPast))
+            }.min() ?? 15
+            scheduleFileRefresh(after: next)
+        }
+    }
+
+    private func scheduleFileRefresh(after interval: TimeInterval) {
+        fileRefreshTask?.cancel()
+        fileRefreshTask = Task { [weak self, sleep] in
+            do { try await sleep(interval) } catch { return }
+            guard !Task.isCancelled else { return }
+            await self?.scheduledFileRefresh()
+        }
+    }
+
+    private func scheduledFileRefresh() async {
+        fileRefreshTask = nil
+        await drainFileEvents()
+    }
+
     public func stopAutoSync() {
         autoSyncTask?.cancel()
         autoSyncTask = nil
         periodicSyncTask?.cancel()
         periodicSyncTask = nil
+        visibilityTask?.cancel()
+        visibilityTask = nil
+        fileRefreshTask?.cancel()
+        fileRefreshTask = nil
+        pendingFileProviders.removeAll()
+        pendingFileRescan = false
         Task {
             await watcher.stop()
         }

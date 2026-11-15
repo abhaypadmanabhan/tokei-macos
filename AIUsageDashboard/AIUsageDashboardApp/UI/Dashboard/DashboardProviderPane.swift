@@ -94,21 +94,12 @@ struct DashboardProviderPane: View {
         return false
     }
 
-    /// The visible provider worth routing new work to. Delegates to the ONE canonical
-    /// rule (`RouteTargetPolicy.human` via `MaxxerMath.routeTarget`) — the same rule
-    /// `OverviewView.headroomProviderID` and the agent snapshot use, so no two
-    /// surfaces can point at different providers. `nil` until at least two providers
-    /// have a *trusted* live reading, so this can no longer nominate a stale
-    /// `local_estimate`. Drives the drill-in's green route chip.
+    /// The drill-in's route chip (`RouteSuggestion.chipTarget`): the row's plan, shown only
+    /// when the shipped human rule would show a chip.
     private var routeTargetProviderID: ProviderID? {
-        MaxxerMath.routeTarget(in: visibleUtilizations, now: Date())?.providerID
+        viewModel.routeChipTarget
     }
 
-    /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
-    /// opinion on visibility, so the filtering happens here.
-    private var visibleUtilizations: [Utilization] {
-        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
-    }
 
     // MARK: Empty state
 

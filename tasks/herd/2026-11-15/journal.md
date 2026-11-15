@@ -1,0 +1,36 @@
+- 01:53 bible + briefs committed on dev; worktrees lane1 (A speed), lane2 (B route), lane3 (W site).
+- 01:53 started t1g (A, sol), t1j (B, sol), t1k (W, opus).
+- 01:56 A and B confirmed briefs (A: harness first, isolated home; B: RoutePlan first, live snapshot predates route block). W told to budget Paper calls (L808).
+- 02:15 B asked to add optional Utilization.windowDuration (monthly-duration ranking bug, red test); approved as additive. W result READY.
+- 02:16 W READY r1 (light clean page, 4 sample captures, demo, claims file all off; film deletion commit blocked by guard-bash large-delete, left for Abhay). Orchestrator looked at 1440 + 390 shots: accepted direction. W review r1 (sol) started.
+- 02:20 B READY (RoutePlan, route block, get_route, tokei route, CLI version from MARKETING_VERSION). B review r1 (opus) started. A interim: CPU 1.583 -> 0.410 %, footprint 80.4 -> 64.6 MB on harness.
+- 02:25 W review r1 CHANGES (S1 unnamed demo buttons at 390). Round 2a sent. Reviewer t2q closed.
+- 02:26 A READY (CPU 1.583 -> 0.439 %, footprint flat). A review r1 (opus) started.
+- 02:27 B review r1 CHANGES (S1 blocker mixed units; S2-S4 should; S5,S6,S9 accepted nits; S7,S8 declined). Fix round sent.
+- 02:28 W round 2a done.
+- 02:32 A review r1 CHANGES (S1 should: perf plist leak into real Preferences; S2-S9 nits, all accepted). Fix round sent.
+- 02:41 A S6: no new symlink following unless dev did it (security boundary, orchestrator's call).
+- 02:42 B fix r1 done; review r2 started (t30).
+- 02:45 B review r2 APPROVE (S10 nit noted); orchestrator reran 8 classes, 0 failures; merged to dev 5c18498. lane2 reused: C (route-ui, opus) started.
+- 02:58 A fix r1 done (b7d841d; median CPU 0.478 %, footprint 66.9 MB, budget 1 %). Review r2 started (t34).
+- 03:00 A review r2 APPROVE (S10, S11 nits noted); merged to dev 5c18498; lane1 freed. C captures ready (7 screens, demo fixture); C told to merge dev.
+- 03:00 A merged to dev dbdc98e (FEATURES.md conflict: kept both entries); lane1 freed.
+- 03:00 orchestrator checked popover + overview-quota captures (demo data, safe). W round 2b sent (captures, route CLI output, footprint data, demo rule check).
+- 03:09 W round 2b done (e11dfdf). W review r2 (sol) started. WP-D route output polish (sol, lane1) started: raw enum and hour formatting in tokei route.
+- 03:13 D: CLI renderer only, MCP JSON unchanged (agreed). C hit a guard prompt on rm with a variable path; left to auto-decline.
+- 03:17 W review r2 APPROVE. Reviewer closed. Site waits for pass-2 captures and release flip.
+- 03:18 C READY (route row, demo fixture, hidden timers, 11 captures); orchestrator viewed popover-route + overview-tall: good. C review r1 (sol) started. W round 2c sent (pass-2 captures behind the claims flip).
+- 03:19 D READY (c1c2bb4); orchestrator read the diff (Claude reviewing Codex), reran RouteCommand + RouteMCP tests, merged to dev f5b926d; lane1 freed.
+- 03:23 W round 2c done; orchestrator viewed claims-on shots: good; to fix at release round: terminal still shows pre-polish route output, one duplicated sentence in the agents chapter.
+- 03:28 C review r1 CHANGES (S1 should: chips lost the quieting rule). Fix round sent.
+- 03:36 C fix r1 done; review r2 started (t4c).
+- 03:40 C review r2 APPROVE; merged to dev 3a8d463; lane2 freed. Integration starts.
+- 03:50 Integration: gates PASS except test (1 failing: CodexLiveQuotaTests.testLiveWeeklyKeepsTighterLogIndividualLimit) and no-uncommitted (docs in progress + 5 pre-existing deleted PNGs). Security review PASS, 4 lows. WP-E (sol, lane1) started for the failing test and the 4 lows.
+- 04:06 E READY (64c1f94 quota regression: binding filter dropped Codex individual cap; 0d4d2e8, e59179c agent hardening; 4687721 probe + python -I). E review r1 (opus) started.
+- 04:13 E review r1 CHANGES (S1 blocker: exported recommendation ignores Codex cap; S2 cap-only provider recommended; S3 raw reason in get_recommendation/status; S4 combining marks). Fix round sent; S6 declined.
+- 04:22 E fix r1 done; review r2 started.
+- 04:25 E review r2 CHANGES (S7 blocker: cap treated as expiring capacity in policy path; S8 160-scalar limit drops genuine long reasons). Fix round 2 sent.
+- 04:33 E fix r2 done (782a67b, d002dc2); review r3 (final) started.
+- 04:34 E review r3 APPROVE; merged; version 0.13.0 build 13 (8e54239). Full gates rerun.
+- 04:41 Full gates on 8e54239: all PASS except no-uncommitted (5 deleted PNGs that predate this session). secscan VERDICT PASS (base 713cf93, 41 commits). Release build signed, verify-app PASS.
+- 04:41 Live proof on dist/Tokei.app 0.13.0 (13): perf-bench CPU 0.481 % (budget 1 %), footprint 65.1 MB, cold window 650 ms, only claude_code refreshed (8 in 120 s); real data: tokei route -> Codex (86% left) over Claude Code (61%), exit 0, --json valid; MCP 2025-06-18 lists 4 tools, get_route ready with the same advice; Overview shows "Send work here next: Codex, Weekly"; idle CPU 0.5 %. Installed 0.12.0 relaunched.
