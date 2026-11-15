@@ -118,7 +118,7 @@ enum BurnDebug {
     static func fixedSnapshot(now: Date) -> BurnSnapshot? {
         let defaults = UserDefaults.standard
         if defaults.bool(forKey: "TokeiBurnEmpty") { return .empty(now: now) }
-        if defaults.bool(forKey: "TokeiBurnSample") { return .sample(now: now) }
+        if defaults.bool(forKey: "TokeiBurnSample") || DemoFixture.isActive { return .sample(now: now) }
         return nil
     }
 

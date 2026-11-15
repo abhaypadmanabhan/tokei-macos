@@ -39,6 +39,7 @@ struct ProviderDetailView: View {
     var onEnableOnline: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.dashboardVisible) var dashboardVisible
     /// Warning messages stay collapsed; the count above is the only always-visible line.
     @State private var warningsExpanded = false
 
@@ -181,7 +182,7 @@ struct ProviderDetailView: View {
 
     private var routeChip: some View {
         HStack(spacing: 6) {
-            Text("\u{25C6} Route work here")
+            Text("\u{25C6} Send work here next")
                 .font(.sans(size: 11, weight: .semibold))
         }
         .foregroundColor(PadzyTheme.good)

@@ -79,6 +79,8 @@ struct OverviewView: View {
                 }
                 .animation(reduceMotion ? nil : PadzyMotion.settle, value: metric)
 
+                routeSection
+
                 switch metric {
                 case .usage: agentsSection(agentModels)
                 case .cost: agentsSection(costAgentModels(viewModel.overviewCost), linksToValue: true)
@@ -176,6 +178,17 @@ struct OverviewView: View {
                 }
             }
             .transition(.opacity)
+        }
+    }
+
+    // MARK: Route
+
+    /// "Send work here next": the same answer `get_route` gives an agent, on every lens.
+    private var routeSection: some View {
+        VStack(alignment: .leading, spacing: PadzySpace.m) {
+            HairlineDivider()
+            SectionHeading(RouteSuggestion.heading)
+            RouteNextView(suggestion: viewModel.routeSuggestion)
         }
     }
 
