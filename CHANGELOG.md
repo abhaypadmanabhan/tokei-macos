@@ -41,6 +41,16 @@ model family than its author; every CHANGES verdict led to a fix round with fail
 - `tokei version` and the MCP server version come from `MARKETING_VERSION` at build time; the staged Release
   bundle's helper is checked before launch (#61).
 
+- A Codex individual spending cap now limits how much room Codex is given in the ranking, is never treated as
+  capacity about to reset, and a reading with only that cap is never recommended (caught by the full suite at
+  integration; one rule now feeds the row, the chips, `get_recommendation`, `tokei status` and `tokei guard`).
+
+### Security
+- Text that reaches an agent or terminal from the snapshot file is rebuilt from fixed sentences or checked clause
+  by clause; labels are bounded by length in Unicode scalars (non-Latin scripts still pass).
+- A stray `TOKEI_PERF_PROBE` in the environment no longer stops a normal launch; the benchmark script runs Python
+  in isolated mode.
+
 ### Internal
 - Debug-only demo data for publishable screenshots (`-TokeiProofFixture demo`); compiled out of Release.
 

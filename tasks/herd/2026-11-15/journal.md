@@ -25,3 +25,9 @@
 - 03:28 C review r1 CHANGES (S1 should: chips lost the quieting rule). Fix round sent.
 - 03:36 C fix r1 done; review r2 started (t4c).
 - 03:40 C review r2 APPROVE; merged to dev 3a8d463; lane2 freed. Integration starts.
+- 03:50 Integration: gates PASS except test (1 failing: CodexLiveQuotaTests.testLiveWeeklyKeepsTighterLogIndividualLimit) and no-uncommitted (docs in progress + 5 pre-existing deleted PNGs). Security review PASS, 4 lows. WP-E (sol, lane1) started for the failing test and the 4 lows.
+- 04:06 E READY (64c1f94 quota regression: binding filter dropped Codex individual cap; 0d4d2e8, e59179c agent hardening; 4687721 probe + python -I). E review r1 (opus) started.
+- 04:13 E review r1 CHANGES (S1 blocker: exported recommendation ignores Codex cap; S2 cap-only provider recommended; S3 raw reason in get_recommendation/status; S4 combining marks). Fix round sent; S6 declined.
+- 04:22 E fix r1 done; review r2 started.
+- 04:25 E review r2 CHANGES (S7 blocker: cap treated as expiring capacity in policy path; S8 160-scalar limit drops genuine long reasons). Fix round 2 sent.
+- 04:33 E fix r2 done (782a67b, d002dc2); review r3 (final) started.
