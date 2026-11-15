@@ -60,7 +60,7 @@ public enum UtilizationEngine {
         guard !window.isInformationalCredits, let percent = usedPercent(from: window) else { return nil }
         return Utilization(
             providerID: window.providerID,
-            window: window.type,
+            window: window.routingWindowType,
             usedPercent: percent,
             resetAt: window.resetAt,
             plan: plan,
@@ -113,6 +113,12 @@ public enum UtilizationEngine {
 }
 
 extension QuotaWindow {
+    /// Codex's individual spend ceiling limits its plan; purchasable credits do not.
+    /// Preserve the provider's stored credit shape while routing on the monthly cap.
+    var routingWindowType: QuotaWindowType {
+        providerID == .codex && bucketKey == "spend_control_individual_limit" ? .monthly : type
+    }
+
     /// Claude overage is a monetary balance, not a binding rate limit.
     var isInformationalCredits: Bool { bucketKey == "claude_extra_usage" }
 }

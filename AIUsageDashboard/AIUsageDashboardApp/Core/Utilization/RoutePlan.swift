@@ -94,7 +94,7 @@ public struct RoutePlan: Sendable, Equatable {
     }
 
     static func isPlanWindow(_ window: QuotaWindow) -> Bool {
-        [.session, .fiveHour, .daily, .weekly, .monthly].contains(window.type) && !window.isInformationalCredits
+        [.session, .fiveHour, .daily, .weekly, .monthly].contains(window.routingWindowType) && !window.isInformationalCredits
     }
 
     /// Model ceilings constrain an existing flat-rate pool; credit balances do not.
@@ -164,7 +164,7 @@ public struct RoutePlan: Sendable, Equatable {
             reason = "This plan has \(Int(order.remainingPercent.rounded()))% left in its tightest window."
         }
         ranked.append((Row(id: id, providerID: snapshot.providerID, providerName: providerName(snapshot.providerID),
-                           accountLabel: label, windowType: peak.type,
+                           accountLabel: label, windowType: peak.routingWindowType,
                            windowLabel: peak.label.flatMap { AgentBurnWindow.isPlainLabel($0) ? $0 : nil },
                            remainingPercent: order.remainingPercent, resetAt: peak.resetAt,
                            secondsToReset: peak.resetAt.map { max(0, $0.timeIntervalSince(now)) }, paceState: pace?.state,
