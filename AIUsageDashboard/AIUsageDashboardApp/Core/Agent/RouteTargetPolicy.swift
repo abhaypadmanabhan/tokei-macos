@@ -155,7 +155,7 @@ public struct RouteTargetPolicy: Sendable, Equatable {
             RoutePlan.bindingWindows(in: readings.map {
                 QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
                             resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
-                            observedAt: $0.observedAt, windowDuration: $0.windowDuration)
+                            bucketKey: $0.bucketKey, observedAt: $0.observedAt, windowDuration: $0.windowDuration)
             }, providerID: readings[0].providerID)
         }.filter { $0.value.contains(where: RoutePlan.isPlanWindow) }
         let considered = utilizations.filter { reading in
