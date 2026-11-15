@@ -51,6 +51,11 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
     private let discoverer: AntigravityQuotaEndpointDiscovering
     private let now: @Sendable () -> Date
     private let cacheFileURL: URL
+    /// Match periodic quota sync; file-event sync must never repeatedly spawn ps/lsof.
+    static let refreshInterval: TimeInterval = 300
+    private var nextAttemptAt: Date?
+    private var lastLiveWindows: [QuotaWindow]?
+    private var lastFailure: Error?
 
     public init(
         urlSession: URLSession? = nil,
@@ -84,6 +89,15 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
     }
 
     public func fetchQuotaWindows() async throws -> [QuotaWindow] {
+        let reference = now()
+        if let nextAttemptAt, reference < nextAttemptAt {
+            if let windows = lastLiveWindows,
+               Self.liveWindowsAreCurrent(windows, at: reference) { return windows }
+            if let cached = loadStaleCache() { return cached }
+            throw lastFailure ?? AntigravityQuotaError.discoveryUnavailable
+        }
+        nextAttemptAt = reference.addingTimeInterval(Self.refreshInterval)
+        lastLiveWindows = nil
         do {
             guard let endpoint = await discoverer.discoverEndpoint(), !endpoint.listenPorts.isEmpty else {
                 throw AntigravityQuotaError.discoveryUnavailable
@@ -92,7 +106,10 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             var lastError: Error?
             for port in endpoint.listenPorts {
                 do {
-                    return try await fetchQuotaWindows(port: port, csrfToken: endpoint.csrfToken)
+                    let windows = try await fetchQuotaWindows(port: port, csrfToken: endpoint.csrfToken)
+                    lastLiveWindows = windows
+                    lastFailure = nil
+                    return windows
                 } catch {
                     lastError = error
                 }
@@ -102,11 +119,16 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             // so the loop runs at least once and every iteration either returns or records an error.
             throw lastError ?? AntigravityQuotaError.discoveryUnavailable
         } catch {
+            lastFailure = error
             if let cachedWindows = loadStaleCache() {
                 return cachedWindows
             }
             throw error
         }
+    }
+
+    static func liveWindowsAreCurrent(_ windows: [QuotaWindow], at reference: Date) -> Bool {
+        windows.allSatisfy { $0.resetAt.map { $0 > reference } ?? true }
     }
 
     private func fetchQuotaWindows(port: Int, csrfToken: String) async throws -> [QuotaWindow] {

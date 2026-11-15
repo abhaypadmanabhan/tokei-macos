@@ -9,6 +9,15 @@ import SQLite3
 /// consistent snapshot. Busy/locked sources are retried briefly; a raw main-file copy
 /// is never used because rollback-journal pages may contain uncommitted writes.
 enum SQLiteSidecarCopy {
+    static func fingerprint(_ url: URL,
+                            readFile: (URL) throws -> LocalUsageFileFingerprint = { try .read($0) }) throws -> AntigravityConversationFiles.Fingerprint {
+        func sidecar(_ suffix: String) throws -> LocalUsageFileFingerprint? {
+            do { return try readFile(URL(fileURLWithPath: url.path + suffix)) }
+            catch let error as POSIXError where error.code == .ENOENT { return nil }
+        }
+        return AntigravityConversationFiles.Fingerprint(database: try readFile(url), wal: try sidecar("-wal"), journal: try sidecar("-journal"))
+    }
+
     static func createPrivateSnapshotDirectory(
         at directoryURL: URL,
         using fileManager: FileManager

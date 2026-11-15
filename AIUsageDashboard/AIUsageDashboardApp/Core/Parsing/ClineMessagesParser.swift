@@ -15,15 +15,27 @@ public actor ClineMessagesParser {
     private let calendar: Calendar
     private let now: () -> Date
     private let maxFileSizeBytes: UInt64
+    private let readFile: @Sendable (URL, Int) throws -> Data
+    private struct CachedFile {
+        let fingerprint: LocalUsageFileFingerprint
+        let decoded: Result<ClineSessionFile?, Error>
+    }
+    private var fileCache: [String: CachedFile] = [:]
 
     public init(
         calendar: Calendar = .current,
         now: @escaping () -> Date = Date.init,
-        maxFileSizeBytes: UInt64 = 16 * 1024 * 1024
+        maxFileSizeBytes: UInt64 = 16 * 1024 * 1024,
+        readFile: @escaping @Sendable (URL, Int) throws -> Data = { url, limit in
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            return try handle.read(upToCount: limit) ?? Data()
+        }
     ) {
         self.calendar = calendar
         self.now = now
         self.maxFileSizeBytes = maxFileSizeBytes
+        self.readFile = readFile
     }
 
     public func parse(logSources: [LogSource]) async -> AggregateUsage {
@@ -32,19 +44,12 @@ public actor ClineMessagesParser {
         var windows = UsageWindows(calendar: calendar, referenceDate: referenceDate)
         var seenMessageIDs = Set<String>()
         var totalCost = 0.0
+        let currentPaths = Set(logSources.map { $0.url.path })
+        fileCache = fileCache.filter { currentPaths.contains($0.key) }
 
         for source in logSources {
             do {
-                // Bound the read itself rather than stat-then-read: a separate
-                // attributesOfItem() check races a file that grows between the check
-                // and Data(contentsOf:). Reading at most maxFileSizeBytes+1 bytes means
-                // the cap is enforced on the actual bytes we consume, and — since a
-                // within-cap file returns fewer bytes than requested — this read also
-                // *is* the full file content, no second pass needed.
-                let handle = try FileHandle(forReadingFrom: source.url)
-                let data = try handle.read(upToCount: Int(maxFileSizeBytes) + 1) ?? Data()
-                try handle.close()
-                guard data.count <= maxFileSizeBytes else {
+                guard let sessionFile = try sessionFile(at: source.url) else {
                     let name = source.url.lastPathComponent
                     warnings.append(ProviderWarning(
                         message: "\(name): file exceeds maximum \(maxFileSizeBytes) bytes; skipped",
@@ -53,7 +58,6 @@ public actor ClineMessagesParser {
                     continue
                 }
 
-                let sessionFile = try JSONDecoder().decode(ClineSessionFile.self, from: data)
                 let sessionMillis = sessionMillisHint(from: source.sessionID ?? source.url.deletingLastPathComponent().lastPathComponent)
 
                 for message in sessionFile.messages ?? [] {
@@ -88,6 +92,27 @@ public actor ClineMessagesParser {
             totalCost: totalCost,
             warnings: warnings
         )
+    }
+
+    private func sessionFile(at url: URL) throws -> ClineSessionFile? {
+        // Cline has always followed log-file aliases. Stamp the resolved file,
+        // keeping that behaviour while noticing retargeted links and replacements.
+        let fingerprint = try LocalUsageFileFingerprint.read(url.resolvingSymlinksInPath())
+        if let cached = fileCache[url.path], cached.fingerprint == fingerprint {
+            return try cached.decoded.get()
+        }
+        fileCache.removeValue(forKey: url.path)
+        // The read stays bounded even if the file grows after stat. Malformed/oversized
+        // content is cached too; I/O failures retry, and a write during the read is never cached.
+        let data = try readFile(url, Int(maxFileSizeBytes) + 1)
+        let decoded: Result<ClineSessionFile?, Error> = Result {
+            guard data.count <= maxFileSizeBytes else { return nil }
+            return try JSONDecoder().decode(ClineSessionFile.self, from: data)
+        }
+        if try LocalUsageFileFingerprint.read(url.resolvingSymlinksInPath()) == fingerprint {
+            fileCache[url.path] = CachedFile(fingerprint: fingerprint, decoded: decoded)
+        }
+        return try decoded.get()
     }
 
     private func sessionMillisHint(from sessionID: String) -> Int64? {

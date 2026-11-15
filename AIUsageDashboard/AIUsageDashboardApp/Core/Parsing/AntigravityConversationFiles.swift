@@ -13,8 +13,10 @@ struct LocalUsageFileFingerprint: Equatable, Sendable {
 
     static func read(_ url: URL) throws -> Self {
         var info = stat()
-        guard lstat(url.path, &info) == 0,
-              info.st_mode & S_IFMT == S_IFREG else { throw CocoaError(.fileReadUnknown) }
+        guard lstat(url.path, &info) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw CocoaError(.fileReadUnknown) }
         return Self(size: info.st_size, modifiedSeconds: info.st_mtimespec.tv_sec,
                     modifiedNanos: info.st_mtimespec.tv_nsec, changedSeconds: info.st_ctimespec.tv_sec,
                     changedNanos: info.st_ctimespec.tv_nsec, inode: info.st_ino)
@@ -25,12 +27,11 @@ enum AntigravityConversationFiles {
     struct Fingerprint: Equatable, Sendable {
         let database: LocalUsageFileFingerprint
         let wal: LocalUsageFileFingerprint?
+        let journal: LocalUsageFileFingerprint?
     }
 
     static func fingerprint(_ url: URL) throws -> Fingerprint {
-        let wal = URL(fileURLWithPath: url.path + "-wal")
-        return Fingerprint(database: try .read(url), wal: FileManager.default.fileExists(atPath: wal.path)
-                           ? try .read(wal) : nil)
+        try SQLiteSidecarCopy.fingerprint(url)
     }
 
     static func defaultRoots(home: URL = FileManager.default.homeDirectoryForCurrentUser,

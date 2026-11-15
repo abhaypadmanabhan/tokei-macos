@@ -15,3 +15,9 @@ public protocol UsageProvider: Sendable {
 public protocol CalendarAwareProvider: Sendable {
     func updateCalendar(_ calendar: Calendar) async
 }
+
+/// An explicit user retry may clear a failed automatic probe's cadence. Kept
+/// separate so providers and the frozen UsageProvider contract need not change.
+public protocol UserRefreshAwareProvider: Sendable {
+    func prepareForUserRefresh() async
+}
