@@ -242,12 +242,11 @@ extension OverviewView {
         return result
     }
 
-    /// The tile that says "Send here next": the plan the "Send work here next" row
-    /// recommends (`RoutePlan`, the same answer `get_route` gives agents), so the tile, the
-    /// row and the drill-in chip can never name different plans. `nil` unless the row
-    /// recommends one (two or more plans with fresh readings, at least one not to avoid).
+    /// The tile that says "Send here next" (`RouteSuggestion.chipTarget`): only the plan the
+    /// "Send work here next" row recommends, and only when the shipped human rule would show
+    /// a chip (a clear spread, real headroom), so equal plans get no badge.
     var headroomProviderID: ProviderID? {
-        viewModel.routeSuggestion.target
+        viewModel.routeChipTarget
     }
 
 }

@@ -59,6 +59,10 @@ final class DemoFixtureTests: XCTestCase {
         XCTAssertNotNil(plan.recommendation?.expiringAt)
         XCTAssertEqual(plan.rows.last?.disposition, .avoid)
         XCTAssertTrue(plan.unknown.isEmpty)
+        // The captures' tile and drill-in chips stay on Codex under the human quieting rule.
+        let snapshots = DemoFixture.snapshots(now: now, calendar: calendar)
+        let route = RouteSuggestion.make(plan, snapshots: snapshots, now: now)
+        XCTAssertEqual(RouteSuggestion.chipTarget(route, utilizations: UtilizationEngine.utilizations(from: snapshots), now: now), .codex)
     }
 
     /// Sync now, a retry or any other refresh during a demo run shows the demo again: the

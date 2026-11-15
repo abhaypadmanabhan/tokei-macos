@@ -94,10 +94,10 @@ struct DashboardProviderPane: View {
         return false
     }
 
-    /// The plan "Send work here next" recommends (`RoutePlan`, the answer `get_route`
-    /// gives agents). Drives the drill-in's route chip, so it always agrees with the row.
+    /// The drill-in's route chip (`RouteSuggestion.chipTarget`): the row's plan, shown only
+    /// when the shipped human rule would show a chip.
     private var routeTargetProviderID: ProviderID? {
-        viewModel.routeSuggestion.target
+        viewModel.routeChipTarget
     }
 
 

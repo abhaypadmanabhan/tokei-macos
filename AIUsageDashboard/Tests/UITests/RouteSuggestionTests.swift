@@ -70,8 +70,8 @@ final class RouteSuggestionTests: XCTestCase {
         XCTAssertEqual(route.others.map(\.shortStatus), ["42% left · 2h 9m", "Avoid · 8% left"])
     }
 
-    /// The tile and drill-in chips read `target`; it is always the plan's recommendation, and
-    /// only when the row recommends.
+    /// The row's `target` is always the plan's recommendation, and only when the row recommends;
+    /// a chip, when shown, is that same plan.
     func testTheChipTargetIsAlwaysThePlansRecommendation() {
         let cases: [[ProviderSnapshot]] = [
             [snapshot(.claudeCode, used: 40), snapshot(.codex, used: 10)],
@@ -87,7 +87,39 @@ final class RouteSuggestionTests: XCTestCase {
             } else {
                 XCTAssertNil(route.target)
             }
+            let chip = RouteSuggestion.chipTarget(route, utilizations: UtilizationEngine.utilizations(from: snapshots), now: now)
+            XCTAssertTrue(chip == nil || chip == route.target, "a chip never names another plan")
         }
+    }
+
+    // MARK: Chips (review r1 S1): the row always recommends; a chip keeps the human quieting rule.
+
+    private func chip(_ snapshots: [ProviderSnapshot]) -> (row: RouteSuggestion, chip: ProviderID?) {
+        let (route, _) = suggestion(snapshots)
+        return (route, RouteSuggestion.chipTarget(route, utilizations: UtilizationEngine.utilizations(from: snapshots), now: now))
+    }
+
+    func testTwoEqualPlansGetARecommendationButNoChip() {
+        let (row, chip) = chip([snapshot(.claudeCode, used: 30), snapshot(.codex, used: 30)])
+        XCTAssertEqual(row.state, .recommend)
+        XCTAssertNotNil(row.target)
+        XCTAssertNil(chip)
+    }
+
+    func testNearlySpentPlansOnePointApartGetNoChip() {
+        let (row, chip) = chip([snapshot(.claudeCode, used: 83), snapshot(.codex, used: 84)])
+        XCTAssertEqual(row.state, .recommend)
+        XCTAssertNil(chip)
+    }
+
+    func testAClearSpreadPutsTheChipOnTheRowsPlan() {
+        let (row, chip) = chip([snapshot(.claudeCode, used: 72), snapshot(.codex, used: 20)])
+        XCTAssertEqual(row.target, .codex)
+        XCTAssertEqual(chip, .codex)
+    }
+
+    func testOnePlanGetsNoChip() {
+        XCTAssertNil(chip([snapshot(.claudeCode, used: 30)]).chip)
     }
 
     func testAnAvoidedPlanSaysAvoidInItsLine() {

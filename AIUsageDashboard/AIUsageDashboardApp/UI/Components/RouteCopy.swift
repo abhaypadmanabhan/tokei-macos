@@ -3,8 +3,8 @@ import AIUsageDashboardCore
 
 /// What "Send work here next" says, read off one `RoutePlan` (the same plan `get_route` and
 /// `tokei route` give agents), so a person and an agent asking at the same moment get the
-/// same answer. Pure: the popover and Overview draw it, and the tile and drill-in chips
-/// name `target`, so no surface can point somewhere the row does not.
+/// same answer. Pure: the popover and Overview draw it; the tile and drill-in chips use
+/// `chipTarget`, which only ever names the row's plan.
 struct RouteSuggestion: Equatable {
     enum State: Equatable {
         /// A plan to send work to, with at least one other plan to compare it against.
@@ -55,6 +55,17 @@ struct RouteSuggestion: Equatable {
     }
 
     static let heading = "Send work here next"
+
+    /// The plan the Overview tile and drill-in chips mark, or nil for no chip. The row always
+    /// shows its recommendation; a chip keeps the shipped quieting rule
+    /// (`RouteTargetPolicy.human`: a 15-point spread and a target at or under 70%), so equal
+    /// or nearly spent plans get no badge urging a switch. When a chip shows, it marks the
+    /// row's plan; if the two rules ever named different plans, no chip shows.
+    static func chipTarget(_ suggestion: RouteSuggestion, utilizations: [Utilization], now: Date) -> ProviderID? {
+        guard let target = suggestion.target,
+              RouteTargetPolicy.human.routeTarget(in: utilizations, now: now)?.providerID == target else { return nil }
+        return target
+    }
 
     /// - Parameter snapshots: the snapshots the plan was made from. Only read to name the
     ///   window whose reset makes a plan urgent: a row carries its tightest window, while its

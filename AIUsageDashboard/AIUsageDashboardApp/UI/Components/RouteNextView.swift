@@ -130,4 +130,11 @@ extension DashboardViewModel {
         let visible = ProviderVisibility.visible(snapshots)
         return RouteSuggestion.make(RoutePlan.make(snapshots: visible, now: now), snapshots: visible, now: now)
     }
+
+    /// The tile and drill-in chips' plan (`RouteSuggestion.chipTarget`), over the same live
+    /// readings the shipped chip used, minus hidden agents.
+    var routeChipTarget: ProviderID? {
+        let readings = gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
+        return RouteSuggestion.chipTarget(routeSuggestion, utilizations: readings, now: Date())
+    }
 }
