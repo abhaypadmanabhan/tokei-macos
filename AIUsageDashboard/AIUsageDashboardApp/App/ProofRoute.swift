@@ -60,6 +60,41 @@ enum ProofRoute {
         }
         if let route { open(route, navigator: navigator, viewModel: viewModel) }
         if let size = UserDefaults.standard.string(forKey: "TokeiProofWindowSize") { sizeDashboard(size) }
+        if let path = UserDefaults.standard.string(forKey: "TokeiProofTickReport") {
+            Task { await reportTicks(to: path) }
+        }
+    }
+
+    /// `-TokeiProofTickReport <file>` (with `-TokeiProofRoute popover`, without
+    /// `-TokeiProofVisible`): counts the status strip's clock fires while the dashboard is
+    /// on screen, while it is ordered out with only the popover open, and after it comes
+    /// back; writes one line per phase to <file>, then quits (WP-C AC 4).
+    @MainActor
+    private static func reportTicks(to path: String) async {
+        func pause(_ seconds: Double) async { try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9)) }
+        func dashboard() -> NSWindow? { NSApp.windows.first { $0.identifier?.rawValue == DashboardWindow.id } }
+        var lines: [String] = []
+        func phase(_ name: String, seconds: Double) async {
+            let start = SecondTicker.processFires
+            await pause(seconds)
+            let popover = NSApp.windows.contains { $0.identifier?.rawValue == popoverWindowID && $0.isVisible }
+            lines.append("\(name) seconds=\(Int(seconds)) fires=\(SecondTicker.processFires - start)"
+                + " dashboardVisible=\(dashboard()?.isVisible ?? false) popoverOpen=\(popover)"
+                + " appVisible=\(NSApp.occlusionState.contains(.visible))")
+        }
+        await pause(3)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-open", seconds: 5)
+        dashboard()?.orderOut(nil)
+        await phase("dashboard-hidden-popover-open", seconds: 10)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-back", seconds: 5)
+        dashboard()?.performClose(nil)
+        await phase("dashboard-closed", seconds: 5)
+        dashboard()?.makeKeyAndOrderFront(nil)
+        await phase("dashboard-reopened", seconds: 5)
+        try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        exit(0)
     }
 
     /// `-TokeiProofWindowSize 1100x760`: the dashboard's content size for captures, so every

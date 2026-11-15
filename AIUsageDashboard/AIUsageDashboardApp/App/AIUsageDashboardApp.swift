@@ -29,7 +29,8 @@ struct AIUsageDashboardApp: App {
             DashboardView()
                 .environmentObject(appDelegate.viewModel)
                 .environment(appDelegate.burnBoard)
-                .environment(\.dashboardVisible, windowVisibility.isVisible)
+                // Its own window, not the app: an open popover does not wake the dashboard.
+                .environment(\.dashboardVisible, windowVisibility.dashboardOnScreen)
         }
         .windowStyle(.titleBar)
         // Free-resize down to the DashboardView's 640×480 minimum (and up to

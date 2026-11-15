@@ -4,14 +4,13 @@ import AIUsageDashboardCore
 
 /// Bottom status bar: a relative "Synced …" line and "Sync now". Path, confidence,
 /// and the raw warning essay used to ride along (t04 D15) and are gone. The 1 Hz
-/// clock is gated on window visibility (t02 F6) so a hidden dashboard does not
-/// mutate status state.
+/// clock (`SecondTicker`) exists only while the dashboard window is on screen (t02 F6,
+/// WP-C AC 4), so a hidden dashboard neither changes state nor wakes the app.
 struct DashboardStatusStrip: View {
     @EnvironmentObject private var viewModel: DashboardViewModel
     @Environment(\.dashboardVisible) private var dashboardVisible
 
-    @State private var countdownTick = Date()
-    private let countdownTimer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+    @StateObject private var ticker = SecondTicker()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,15 +20,9 @@ struct DashboardStatusStrip: View {
                 .padding(.vertical, 8)
                 .background(PadzyTheme.statusBar)
         }
-        .onAppear { applyTick(Date()) }
-        .onReceive(countdownTimer) { date in
-            applyTick(date)
-        }
-    }
-
-    private func applyTick(_ date: Date) {
-        guard let applied = StatusStripTickGate.appliedDate(date, dashboardVisible: dashboardVisible) else { return }
-        countdownTick = applied
+        .onAppear { ticker.setVisible(dashboardVisible) }
+        .onChange(of: dashboardVisible) { _, visible in ticker.setVisible(visible) }
+        .onDisappear { ticker.setVisible(false) }
     }
 
     private var statusRow: some View {
@@ -67,7 +60,7 @@ struct DashboardStatusStrip: View {
     private var syncStatusText: String {
         // Saved numbers from the last run are on screen: say how old they are.
         if viewModel.showingSavedSnapshots {
-            _ = countdownTick
+            _ = ticker.now
             return SavedAgeCopy.statusLine(
                 savedAt: viewModel.savedSnapshotsDate, updating: viewModel.isLoading, now: Date()
             )
@@ -78,7 +71,7 @@ struct DashboardStatusStrip: View {
     }
 
     private var syncedRelative: String? {
-        _ = countdownTick
+        _ = ticker.now
         guard let last = viewModel.lastSyncedAt else { return nil }
         let seconds = max(0, Int(Date().timeIntervalSince(last)))
         if seconds < 5 { return "just now" }

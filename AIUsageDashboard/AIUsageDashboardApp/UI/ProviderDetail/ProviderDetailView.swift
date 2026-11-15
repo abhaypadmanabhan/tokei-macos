@@ -39,6 +39,7 @@ struct ProviderDetailView: View {
     var onEnableOnline: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
+    @Environment(\.dashboardVisible) var dashboardVisible
     /// Warning messages stay collapsed; the count above is the only always-visible line.
     @State private var warningsExpanded = false
 

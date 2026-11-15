@@ -105,7 +105,9 @@ extension ProviderDetailView {
     @ViewBuilder
     private func resetCountdown(_ resetAt: Date?) -> some View {
         if let resetAt {
-            if reduceMotion {
+            // Static under Reduce Motion, and while the dashboard is off screen (WP-C AC 4):
+            // the retained drill-in must not keep a 1 Hz schedule alive.
+            if reduceMotion || !dashboardVisible {
                 countdownLabel(resetCountdownText(until: resetAt, now: Date()))
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in

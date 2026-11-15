@@ -18,8 +18,14 @@ final class WindowVisibilityMonitor: ObservableObject {
     /// `true` when at least one app window is on screen (dashboard open, or the
     /// menu-bar popover showing). `false` when the app is idling in the menu bar.
     @Published private(set) var isVisible: Bool = true
+    /// `true` only while the dashboard window itself is on screen. App-wide visibility is
+    /// not enough for the dashboard: with only the menu-bar popover open the app counts as
+    /// visible, and the closed dashboard's retained graph kept its 1 Hz clocks running
+    /// (WP-C AC 4, 2026-11-15).
+    @Published private(set) var dashboardOnScreen: Bool = true
 
     private var observer: NSObjectProtocol?
+    private var windowObservers: [NSObjectProtocol] = []
 
     init() {
         refresh()
@@ -32,12 +38,25 @@ final class WindowVisibilityMonitor: ObservableObject {
             // actor to satisfy isolation before touching @Published state.
             MainActor.assumeIsolated { self?.refresh() }
         }
+        // Any window's occlusion change, and the dashboard closing; each re-reads the
+        // dashboard window's own state.
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification,
+                     NSWindow.didBecomeKeyNotification] {
+            windowObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] note in
+                let closing = note.name == NSWindow.willCloseNotification
+                    && (note.object as? NSWindow)?.identifier?.rawValue == DashboardWindow.id
+                MainActor.assumeIsolated { self?.refreshDashboard(closing: closing) }
+            })
+        }
     }
 
     deinit {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
         }
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     private func refresh() {
@@ -50,6 +69,15 @@ final class WindowVisibilityMonitor: ObservableObject {
         if ProofRoute.isTour || ProofRoute.forceVisible { isVisible = true; return }
         #endif
         isVisible = NSApp?.occlusionState.contains(.visible) ?? true
+    }
+
+    private func refreshDashboard(closing: Bool) {
+        #if DEBUG
+        if ProofRoute.isTour || ProofRoute.forceVisible { dashboardOnScreen = true; return }
+        #endif
+        let window = NSApp?.windows.first { $0.identifier?.rawValue == DashboardWindow.id }
+        let onScreen = !closing && (window.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false)
+        if onScreen != dashboardOnScreen { dashboardOnScreen = onScreen }
     }
 }
 
