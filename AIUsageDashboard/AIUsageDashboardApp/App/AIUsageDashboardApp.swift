@@ -104,13 +104,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if PerformanceProbe.isEnabled {
-            // The benchmark uses a disposable bundle identity as well as a synthetic
-            // Foundation home. Refuse to run a probe against the installed app's state.
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            guard Bundle.main.bundleIdentifier?.hasPrefix("ai.padzy.tokei.perf.") == true,
-                  FileManager.default.fileExists(atPath: home.appendingPathComponent(".tokei-perf-home").path)
-            else { fatalError("perf-bench requires a disposable bundle and synthetic home") }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // Only an isolated benchmark launch may close the window. An inherited probe
+        // flag on an ordinary Release launch must leave normal startup intact.
+        if PerformanceProbe.isEnabled,
+           Bundle.main.bundleIdentifier?.hasPrefix("ai.padzy.tokei.perf.") == true,
+           FileManager.default.fileExists(atPath: home.appendingPathComponent(".tokei-perf-home").path) {
             PerformanceProbe.emit("isolated", fields: ["home": home.path])
             Task { @MainActor in
                 // Observe the first actual window, then close it: the CPU sample must
