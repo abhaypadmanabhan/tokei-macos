@@ -218,7 +218,7 @@ public struct RouteTargetPolicy: Sendable, Equatable {
             let windows = utilizations.filter { $0.providerID == peak.providerID }.map {
                 QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
                             resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
-                            observedAt: $0.observedAt ?? now)
+                            observedAt: $0.observedAt ?? now, windowDuration: $0.windowDuration)
             }
             return (peak, RoutePlan.priority(providerID: peak.providerID, windows: windows,
                                              tie: RoutePlan.tieKey(peak.providerID, ""), now: now))

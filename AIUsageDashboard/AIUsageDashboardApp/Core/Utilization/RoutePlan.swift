@@ -56,9 +56,8 @@ public struct RoutePlan: Sendable, Equatable {
         return RoutePlan(generatedAt: now, rows: ranked.map(\.0), unknown: unknown.sorted { $0.id < $1.id })
     }
 
-    // Kept shared with RouteTargetPolicy and account headline selection. The old
-    // utilization contract has no reported duration, so ranking uses the duration
-    // implied by the window type. Rows still report the provider's actual pace.
+    // Shared with RouteTargetPolicy and account headline selection so reported
+    // window durations and tie breaking have the same meaning on every surface.
     struct Priority {
         let avoid: Bool
         let expiringAt: Date?
@@ -72,7 +71,7 @@ public struct RoutePlan: Sendable, Equatable {
         let peak = limits.max { (UtilizationEngine.usedPercent(from: $0) ?? 100) < (UtilizationEngine.usedPercent(from: $1) ?? 100) }
         let used = peak.flatMap(UtilizationEngine.usedPercent(from:)) ?? 100
         let projectedPace = peak.flatMap {
-            QuotaPace(usedPercent: used, windowType: $0.type, windowDuration: nil, resetAt: $0.resetAt, now: now)
+            QuotaPace(usedPercent: used, windowType: $0.type, windowDuration: $0.windowDuration, resetAt: $0.resetAt, now: now)
         }
         let snapshot = ProviderSnapshot(providerID: providerID, displayName: providerID.rawValue,
                                         authStatus: .authenticated, quotaWindows: limits,

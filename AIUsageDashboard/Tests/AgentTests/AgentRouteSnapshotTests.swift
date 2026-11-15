@@ -22,6 +22,14 @@ final class AgentRouteSnapshotTests: XCTestCase {
         let decoded = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: data)
         XCTAssertEqual(decoded, snapshot)
         XCTAssertEqual(decoded.withRecommendationValidity(asOf: now.addingTimeInterval(601)).route, route)
+        let expiringRecommendation = AgentSnapshot(generatedAt: now, providers: snapshot.providers,
+                                                   aggregateUtilizationPercent: nil,
+                                                   recommendation: AgentRecommendation(routeTo: "codex", avoid: [], reason: "fixture",
+                                                                                        validUntil: now.addingTimeInterval(10)),
+                                                   route: route)
+        let expired = expiringRecommendation.withRecommendationValidity(asOf: now.addingTimeInterval(11))
+        XCTAssertNil(expired.recommendation?.routeTo)
+        XCTAssertEqual(expired.route, route)
         var old = object
         old.removeValue(forKey: "route")
         let legacy = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: JSONSerialization.data(withJSONObject: old))

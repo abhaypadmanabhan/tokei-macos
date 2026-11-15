@@ -2,6 +2,18 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class RouteMCPTests: XCTestCase {
+    func testMissingSnapshotExplainsAbsenceWithoutExposingItsPath() throws {
+        let capture = FrameCapture()
+        let server = MCPServer(reader: SnapshotReader(fileURL: CLITestSupport.missingSnapshotURL()),
+                               version: mcpTestVersion, output: capture.write)
+        server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_route"}}"#)
+        let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
+        let content = try toolCallText(result)
+        XCTAssertTrue(content.isError)
+        XCTAssertEqual(content.text, "No usage snapshot is available. Launch Tokei and retry.")
+        XCTAssertFalse(content.text.contains("/"))
+    }
+
     func testProtocolRevisionsExposeTheSameRouteAndOptionalAgentFilter() throws {
         let now = AgentSnapshotFixtures.generatedAt
         let windows = [QuotaWindow(providerID: .codex, type: .fiveHour, used: 40, limit: 100,

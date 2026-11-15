@@ -88,4 +88,35 @@ final class RoutePlanTests: XCTestCase {
         XCTAssertEqual(plan.rows.first?.providerName, "Codex")
         XCTAssertEqual(AccountQuotaDecision.headline(among: accounts, providerID: .codex, now: now)?.account.accountID, "codex:a")
     }
+
+    func testReportedMonthlyDurationRanksByActualPaceOnBothPaths() {
+        let snapshots: [ProviderSnapshot] = [(.codex, 50.0, 10.0), (.claudeCode, 10.0, 29.0)].map { id, used, days in
+            ProviderSnapshot(providerID: id, displayName: id.rawValue, authStatus: .authenticated,
+                             quotaWindows: [QuotaWindow(providerID: id, type: .monthly, used: used, limit: 100,
+                                                         resetAt: now.addingTimeInterval(days * 86_400), confidence: .providerReported,
+                                                         source: "fixture", observedAt: now, windowDuration: 30 * 86_400)],
+                             todayUsage: .unavailable, weekUsage: .unavailable)
+        }
+        XCTAssertEqual(RoutePlan.make(snapshots: snapshots, now: now).recommendation?.providerID, .codex)
+        XCTAssertEqual(RouteTargetPolicy.agent.routeTarget(in: UtilizationEngine.utilizations(from: snapshots), now: now)?.providerID, .codex)
+    }
+
+    func testDurationPersistsAndOlderCacheEntriesDecodeWithoutIt() async throws {
+        let utilization = Utilization(providerID: .codex, window: .monthly, usedPercent: 50, confidence: .providerReported,
+                                       windowDuration: 30 * 86_400)
+        let data = try JSONEncoder().encode(utilization)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["windowDuration"] as? Double, 30 * 86_400)
+        object.removeValue(forKey: "windowDuration")
+        let old = try JSONDecoder().decode(Utilization.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(old.windowDuration)
+        XCTAssertEqual(old.providerID, .codex)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let writer = UtilizationCache(directory: directory)
+        await writer.store([utilization], for: .codex)
+        let reader = UtilizationCache(directory: directory)
+        let restored = await reader.lastGood(for: .codex)
+        XCTAssertEqual(restored?.first?.windowDuration, 30 * 86_400)
+    }
 }

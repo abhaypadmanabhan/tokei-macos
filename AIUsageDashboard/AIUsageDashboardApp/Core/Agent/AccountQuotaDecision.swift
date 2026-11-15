@@ -33,7 +33,8 @@ public struct AccountQuotaDecision: Sendable {
                 usedPercent: percent,
                 resetAt: window.resetAt,
                 confidence: window.confidence,
-                observedAt: window.observedAt
+                observedAt: window.observedAt,
+                windowDuration: window.windowDuration
             ))
         }
         guard let peak = candidates.max(by: { lhs, rhs in

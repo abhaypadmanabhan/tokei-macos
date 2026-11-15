@@ -80,7 +80,8 @@ public actor AgentSnapshotWriter {
                     usedPercent: usedPercent,
                     resetAt: window.resetAt,
                     confidence: window.confidence,
-                    observedAt: window.observedAt
+                    observedAt: window.observedAt,
+                    windowDuration: window.windowDuration
                 )
             }
         }
