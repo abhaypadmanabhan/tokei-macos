@@ -54,8 +54,8 @@ enum RouteFormatting {
                                       secondsToReset: row.resetAt.map { max(0, $0.timeIntervalSince(now)) },
                                       paceState: row.paceState.flatMap { ["ahead", "onPace", "behind"].contains($0) ? $0 : nil },
                                       disposition: disposition,
-                                      reason: AgentBurnWindow.isPlainText(row.reason, maximumLength: 160)
-                                        ? row.reason : "Use only the confirmed flat-rate plan capacity.",
+                                      reason: reason(disposition: disposition, remainingPercent: row.remainingPercent,
+                                                     expiringAt: row.expiringAt, paceState: row.paceState, now: now),
                                       validUntil: row.validUntil, expiringAt: row.expiringAt))
         }
         let status: String
@@ -113,6 +113,17 @@ enum RouteFormatting {
         let hours = minutes / 60
         if hours < 48 { return "\(hours) h" }
         return "\(hours / 24) d"
+    }
+
+    private static func reason(disposition: String, remainingPercent: Double, expiringAt: Date?, paceState: String?, now: Date) -> String {
+        if disposition == "avoid" {
+            return "Avoid this plan because only \(Int(remainingPercent.rounded()))% remains in its tightest window."
+        }
+        if let expiringAt {
+            return "Use this plan before unused capacity resets in \(AgentSnapshot.compactDuration(expiringAt.timeIntervalSince(now)))."
+        }
+        if paceState == "behind" { return "This plan has room to spare relative to its pace." }
+        return "This plan has \(Int(remainingPercent.rounded()))% left in its tightest window."
     }
 
     private static func windowName(_ row: AgentRouteRow) -> String {

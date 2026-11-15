@@ -118,6 +118,99 @@ final class RoutePlanTests: XCTestCase {
         XCTAssertEqual(AgentSnapshotWriter.buildSnapshot(from: [value], generatedAt: now).providers.first?.headlineAccountID, "codex:a")
     }
 
+    func testCodexIndividualLimitBindsAccountRoutePolicyAndCLIWithoutRoutingToPaidCredits() throws {
+        for used in [40.0, 90.0] {
+            let limit = QuotaWindow(providerID: .codex, type: .credits, used: used, limit: 100,
+                                    confidence: .providerReported, source: "fixture",
+                                    label: "Monthly credit limit", bucketKey: "spend_control_individual_limit", observedAt: now)
+            let paid = QuotaWindow(providerID: .codex, type: .credits, used: 100, limit: 100,
+                                   confidence: .providerReported, source: "fixture", bucketKey: "credits", observedAt: now)
+            let windows = snapshot(.codex, used: 20).quotaWindows + [limit, paid]
+            let account = ProviderAccountUsage(id: "/fixture", accountID: "codex:fixture", label: "fixture",
+                                               quotaWindows: windows, todayUsage: .unavailable, quotaStatus: .eligible)
+            let value = ProviderSnapshot(providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+                                         quotaWindows: windows, todayUsage: .unavailable, weekUsage: .unavailable, accounts: [account])
+            let input = [value, snapshot(.claudeCode, used: 70)]
+            let plan = RoutePlan.make(snapshots: input, now: now)
+            let row = try XCTUnwrap(plan.rows.first { $0.providerID == .codex })
+            XCTAssertEqual(row.remainingPercent, 100 - used)
+            XCTAssertEqual(row.windowType, .monthly)
+            XCTAssertEqual(row.disposition, used >= 85 ? .avoid : .ready)
+            XCTAssertEqual(AccountQuotaDecision.evaluate(account, providerID: .codex, now: now).headroomPercent, 100 - used)
+            let policy = RouteTargetPolicy.agent.evaluate(UtilizationEngine.utilizations(from: input), now: now)
+            XCTAssertEqual(policy.routeTo?.providerID, plan.recommendation?.providerID)
+            XCTAssertEqual(policy.avoid.map(\.providerID), plan.rows.filter { $0.disposition == .avoid }.map(\.providerID))
+            let exported = AgentSnapshotWriter.buildSnapshot(from: input, generatedAt: now)
+            XCTAssertEqual(exported.recommendation?.routeTo, plan.recommendation?.providerID.rawValue)
+            XCTAssertEqual(exported.recommendation?.avoid, plan.rows.filter { $0.disposition == .avoid }.map { $0.providerID.rawValue })
+            let output = RouteFormatting.output(exported, now: now)
+            XCTAssertEqual(output.rows.first { $0.provider == "codex" }?.remainingPercent, 100 - used)
+            XCTAssertTrue(output.unknown.isEmpty)
+        }
+    }
+
+    func testCodexCapAloneIsNeverPlanCoverageForProviderOrAccount() {
+        let cap = QuotaWindow(providerID: .codex, type: .credits, used: 20, limit: 100,
+                              confidence: .providerReported, source: "fixture",
+                              bucketKey: "spend_control_individual_limit", observedAt: now)
+        let account = ProviderAccountUsage(id: "/fixture", accountID: "codex:fixture", label: "fixture",
+                                           quotaWindows: [cap], todayUsage: .unavailable, quotaStatus: .eligible)
+        let peer = snapshot(.claudeCode, used: 70)
+        for accounts in [nil, [account]] as [[ProviderAccountUsage]?] {
+            let value = ProviderSnapshot(providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+                                         quotaWindows: [cap], todayUsage: .unavailable, weekUsage: .unavailable, accounts: accounts)
+            let plan = RoutePlan.make(snapshots: [value], now: now)
+            XCTAssertTrue(plan.rows.isEmpty)
+            XCTAssertNil(plan.recommendation)
+            XCTAssertNil(AccountQuotaDecision.headline(among: accounts ?? [], providerID: .codex, now: now))
+            XCTAssertNil(AgentSnapshotWriter.buildSnapshot(from: [value], generatedAt: now).recommendation)
+            let utilizations = UtilizationEngine.utilizations(from: [value, peer])
+            XCTAssertFalse(UtilizationEngine.aggregate(from: [value, peer])?.coveredProviders.contains(.codex) ?? true)
+            XCTAssertNil(RouteTargetPolicy.agent.evaluate(utilizations, now: now).routeTo,
+                         "a cap alone cannot count as the second covered provider")
+        }
+    }
+
+    func testCodexCapIdentitySurvivesUtilizationEncoding() throws {
+        let cap = QuotaWindow(providerID: .codex, type: .credits, used: 20, limit: 100,
+                              confidence: .providerReported, source: "fixture",
+                              bucketKey: "spend_control_individual_limit", observedAt: now)
+        let value = ProviderSnapshot(providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+                                     quotaWindows: snapshot(.codex, used: 10).quotaWindows + [cap],
+                                     todayUsage: .unavailable, weekUsage: .unavailable)
+        let utilization = try XCTUnwrap(UtilizationEngine.utilizations(from: [value]).first { $0.window == .monthly })
+        let data = try JSONEncoder().encode(utilization)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["bucketKey"] as? String, "spend_control_individual_limit")
+        let decoded = try JSONDecoder().decode(Utilization.self, from: data)
+        XCTAssertTrue(RouteTargetPolicy.agent.evaluate([decoded], now: now).peaks.isEmpty)
+        object.removeValue(forKey: "bucketKey")
+        XCTAssertNoThrow(try JSONDecoder().decode(Utilization.self, from: JSONSerialization.data(withJSONObject: object)))
+    }
+
+    func testCodexCapResetSoonCannotChangePlanPolicyChipOrExportedOrdering() {
+        for type in [QuotaWindowType.credits, .monthly] {
+            let cap = QuotaWindow(providerID: .codex, type: type, used: 10, limit: 100,
+                                  resetAt: now.addingTimeInterval(2 * 86_400), confidence: .providerReported,
+                                  source: "fixture", bucketKey: "spend_control_individual_limit", observedAt: now)
+            let codex = ProviderSnapshot(providerID: .codex, displayName: "Codex", authStatus: .authenticated,
+                                          quotaWindows: snapshot(.codex, used: 50, reset: 5 * 86_400).quotaWindows + [cap],
+                                          todayUsage: .unavailable, weekUsage: .unavailable)
+            let input = [codex, snapshot(.claudeCode, used: 30, reset: 5 * 86_400)]
+            let plan = RoutePlan.make(snapshots: input, now: now)
+            let utilizations = UtilizationEngine.utilizations(from: input)
+            let exported = AgentSnapshotWriter.buildSnapshot(from: input, generatedAt: now)
+            XCTAssertEqual(plan.recommendation?.providerID, .claudeCode)
+            XCTAssertTrue(plan.rows.allSatisfy { $0.expiringAt == nil })
+            XCTAssertEqual(RouteTargetPolicy.agent.routeTarget(in: utilizations, now: now)?.providerID, .claudeCode)
+            let chipInput = utilizations.filter { $0.window != .credits }
+            XCTAssertEqual(MaxxerMath.routeTarget(in: chipInput, now: now)?.providerID, .claudeCode)
+            XCTAssertEqual(exported.recommendation?.routeTo, "claude_code")
+            XCTAssertEqual(exported.recommendation?.avoid, [])
+            XCTAssertEqual(exported.route?.rows.first?.provider, "claude_code")
+        }
+    }
+
     func testRowsCarryDecidingWindowPaceResetAndOneSentence() throws {
         let plan = RoutePlan.make(snapshots: [snapshot(.codex, used: 40, reset: 600, type: .fiveHour)], now: now)
         let row = try XCTUnwrap(plan.recommendation)

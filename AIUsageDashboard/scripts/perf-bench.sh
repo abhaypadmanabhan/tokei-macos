@@ -6,7 +6,7 @@
 # Requires Python 3 and macOS libproc; no packages, credentials or GUI automation.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 - "$SCRIPT_DIR/perf-budget.json" "${1:?Usage: perf-bench.sh /path/to/Tokei.app}" <<'PY'
+exec python3 -I - "$SCRIPT_DIR/perf-budget.json" "${1:?Usage: perf-bench.sh /path/to/Tokei.app}" <<'PY'
 import ctypes
 import datetime
 import json

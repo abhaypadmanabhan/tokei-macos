@@ -94,7 +94,8 @@ public struct RoutePlan: Sendable, Equatable {
     }
 
     static func isPlanWindow(_ window: QuotaWindow) -> Bool {
-        [.session, .fiveHour, .daily, .weekly, .monthly].contains(window.type) && !window.isInformationalCredits
+        [.session, .fiveHour, .daily, .weekly, .monthly].contains(window.type)
+            && !window.isInformationalCredits && !window.isCodexIndividualLimit
     }
 
     /// Model ceilings constrain an existing flat-rate pool; credit balances do not.
@@ -104,7 +105,7 @@ public struct RoutePlan: Sendable, Equatable {
     }
 
     static func isBindingWindow(_ window: QuotaWindow, providerID: ProviderID) -> Bool {
-        !window.isInformationalCredits && (isPlanWindow(window) || window.type == .perModel)
+        !window.isInformationalCredits && (isPlanWindow(window) || window.type == .perModel || window.isCodexIndividualLimit)
             && (providerID != .codex || window.type == .weekly || UtilizationEngine.usedPercent(from: window) != nil)
     }
 
@@ -126,10 +127,9 @@ public struct RoutePlan: Sendable, Equatable {
         return windows.allSatisfy { window in
             guard let used = window.used ?? window.remaining.map({ (window.limit ?? 0) - $0 }), used.isFinite,
                   let limit = window.limit, limit.isFinite, limit > 0,
-                  let percent = UtilizationEngine.usedPercent(from: window),
+                  let utilization = Utilization(window: window, providerID: providerID),
                   !requiresObservationTime || window.observedAt != nil else { return false }
-            return policy.isRoutable(Utilization(providerID: providerID, window: window.type, usedPercent: percent,
-                                                  confidence: window.confidence, observedAt: window.observedAt), now: now)
+            return policy.isRoutable(utilization, now: now)
                 && (window.resetAt.map { $0 > now } ?? true)
         }
     }
@@ -164,7 +164,7 @@ public struct RoutePlan: Sendable, Equatable {
             reason = "This plan has \(Int(order.remainingPercent.rounded()))% left in its tightest window."
         }
         ranked.append((Row(id: id, providerID: snapshot.providerID, providerName: providerName(snapshot.providerID),
-                           accountLabel: label, windowType: peak.type,
+                           accountLabel: label, windowType: peak.routingWindowType,
                            windowLabel: peak.label.flatMap { AgentBurnWindow.isPlainLabel($0) ? $0 : nil },
                            remainingPercent: order.remainingPercent, resetAt: peak.resetAt,
                            secondsToReset: peak.resetAt.map { max(0, $0.timeIntervalSince(now)) }, paceState: pace?.state,

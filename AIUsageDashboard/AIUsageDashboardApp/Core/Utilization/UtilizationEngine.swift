@@ -13,8 +13,10 @@ public enum UtilizationEngine {
     public static func utilizations(from snapshots: [ProviderSnapshot]) -> [Utilization] {
         snapshots.flatMap { snapshot -> [Utilization] in
             let plan = planLabel(from: snapshot.warnings)
+            let hasPlan = snapshot.quotaWindows.contains(where: RoutePlan.isPlanWindow)
             return snapshot.quotaWindows.compactMap { window in
-                utilization(from: window, plan: plan)
+                guard !window.isCodexIndividualLimit || hasPlan else { return nil }
+                return Utilization(window: window, providerID: snapshot.providerID, plan: plan)
             }
         }
     }
@@ -51,23 +53,6 @@ public enum UtilizationEngine {
             coveredProviders: coveredProviders,
             coverage: hasMissingQuotaProvider ? .partial : .complete,
             confidence: confidence
-        )
-    }
-
-    // MARK: - Per-window mapping
-
-    private static func utilization(from window: QuotaWindow, plan: String?) -> Utilization? {
-        guard !window.isInformationalCredits, let percent = usedPercent(from: window) else { return nil }
-        return Utilization(
-            providerID: window.providerID,
-            window: window.type,
-            usedPercent: percent,
-            resetAt: window.resetAt,
-            plan: plan,
-            confidence: window.confidence,
-            coverage: .complete,
-            observedAt: window.observedAt,
-            windowDuration: window.windowDuration
         )
     }
 
@@ -113,6 +98,14 @@ public enum UtilizationEngine {
 }
 
 extension QuotaWindow {
+    /// Codex's individual spend ceiling limits its plan; purchasable credits do not.
+    /// Preserve the provider's stored credit shape while routing on the monthly cap.
+    var routingWindowType: QuotaWindowType {
+        isCodexIndividualLimit ? .monthly : type
+    }
+
+    var isCodexIndividualLimit: Bool { providerID == .codex && bucketKey == "spend_control_individual_limit" }
+
     /// Claude overage is a monetary balance, not a binding rate limit.
     var isInformationalCredits: Bool { bucketKey == "claude_extra_usage" }
 }

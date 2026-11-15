@@ -27,16 +27,8 @@ public struct AccountQuotaDecision: Sendable {
         let windows = RoutePlan.bindingWindows(in: account.quotaWindows, providerID: providerID)
         let candidates = account.quotaWindows.enumerated().compactMap { index, window -> (Int, Utilization)? in
             guard RoutePlan.isBindingWindow(window, providerID: providerID),
-                  let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
-            return (index, Utilization(
-                providerID: providerID,
-                window: window.type,
-                usedPercent: percent,
-                resetAt: window.resetAt,
-                confidence: window.confidence,
-                observedAt: window.observedAt,
-                windowDuration: window.windowDuration
-            ))
+                  let utilization = Utilization(window: window, providerID: providerID) else { return nil }
+            return (index, utilization)
         }
         guard let peak = candidates.max(by: { lhs, rhs in
             if lhs.1.usedPercent == rhs.1.usedPercent { return lhs.0 > rhs.0 }
