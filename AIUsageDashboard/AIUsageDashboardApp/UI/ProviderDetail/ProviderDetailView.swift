@@ -181,7 +181,7 @@ struct ProviderDetailView: View {
 
     private var routeChip: some View {
         HStack(spacing: 6) {
-            Text("\u{25C6} Route work here")
+            Text("\u{25C6} Send work here next")
                 .font(.sans(size: 11, weight: .semibold))
         }
         .foregroundColor(PadzyTheme.good)

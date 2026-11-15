@@ -132,6 +132,10 @@ struct MenuBarView: View {
                 HairlineDivider()
                 hero
                 HairlineDivider()
+                RouteNextView(suggestion: viewModel.routeSuggestion, compact: true, showsHeading: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                HairlineDivider()
                 summary
                 HairlineDivider()
                 metricToggle

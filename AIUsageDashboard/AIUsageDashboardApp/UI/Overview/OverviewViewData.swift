@@ -242,19 +242,12 @@ extension OverviewView {
         return result
     }
 
-    /// The provider that earns the green "route new work here" dot. Delegates to the
-    /// ONE canonical rule (`RouteTargetPolicy.human` via `MaxxerMath.routeTarget`) — the
-    /// same rule the drill-in chip and the agent snapshot use, so no two surfaces can
-    /// nominate different providers. `nil` until at least two providers have a
-    /// *trusted* live reading with a real spread between them, so the dot can no
-    /// longer land on a stale `local_estimate`.
+    /// The tile that says "Send here next": the plan the "Send work here next" row
+    /// recommends (`RoutePlan`, the same answer `get_route` gives agents), so the tile, the
+    /// row and the drill-in chip can never name different plans. `nil` unless the row
+    /// recommends one (two or more plans with fresh readings, at least one not to avoid).
     var headroomProviderID: ProviderID? {
-        MaxxerMath.routeTarget(in: visibleUtilizations, now: Date())?.providerID
+        viewModel.routeSuggestion.target
     }
 
-    /// Live readings for providers the user hasn't hidden. `RouteTargetPolicy` has no
-    /// opinion on visibility, so the filtering happens here.
-    var visibleUtilizations: [Utilization] {
-        viewModel.gaugeUtilizations.filter { !ProviderVisibility.isHidden($0.providerID) }
-    }
 }

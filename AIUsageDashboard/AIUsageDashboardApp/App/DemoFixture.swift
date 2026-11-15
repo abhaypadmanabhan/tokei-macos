@@ -151,7 +151,36 @@ enum DemoFixture {
             ],
             warnings: []
         )
-        return [claude, codex, cursor, gemini]
+        return routeVariant([claude, codex, cursor, gemini], now: now)
+    }
+
+    /// `-TokeiDemoRoute exhausted|stale|one|none`: the same agents with readings that put
+    /// "Send work here next" in each of its other states, for proof captures.
+    private static func routeVariant(_ snapshots: [ProviderSnapshot], now: Date) -> [ProviderSnapshot] {
+        guard let variant = UserDefaults.standard.string(forKey: "TokeiDemoRoute") else { return snapshots }
+        return snapshots.map { snapshot in
+            let windows: [QuotaWindow] = snapshot.quotaWindows.compactMap { window in
+                switch variant {
+                case "exhausted":
+                    let used = max(window.used ?? 0, 91 + Double(snapshot.providerID.rawValue.count % 7))
+                    return QuotaWindow(providerID: window.providerID, type: window.type, used: used, limit: 100,
+                                       remaining: 100 - used, resetAt: window.resetAt, confidence: window.confidence,
+                                       source: window.source, label: window.label, bucketKey: window.bucketKey,
+                                       observedAt: window.observedAt, windowDuration: window.windowDuration)
+                case "stale": return window.withObservedAt(now.addingTimeInterval(-2 * 3_600))
+                case "one": return snapshot.providerID == .claudeCode ? window : nil
+                case "none": return nil
+                default: return window
+                }
+            }
+            return ProviderSnapshot(
+                providerID: snapshot.providerID, displayName: snapshot.displayName, authStatus: snapshot.authStatus,
+                quotaWindows: windows, todayUsage: snapshot.todayUsage, weekUsage: snapshot.weekUsage,
+                monthUsage: snapshot.monthUsage, lifetimeUsage: snapshot.lifetimeUsage, costUsage: snapshot.costUsage,
+                warnings: snapshot.warnings, lastSyncedAt: snapshot.lastSyncedAt, dailyTotals: snapshot.dailyTotals,
+                hourlyTotals: snapshot.hourlyTotals, dailyModelUsage: snapshot.dailyModelUsage
+            )
+        }
     }
 
     private static func window(
