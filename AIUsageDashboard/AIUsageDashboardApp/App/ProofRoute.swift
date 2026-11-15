@@ -16,7 +16,9 @@ import AIUsageDashboardCore
 /// `provider.<raw>.scrolled`. Burn state flags (`-TokeiBurnSample`, `-TokeiBurnEmpty`,
 /// `-TokeiBurnMoment`) live in `BurnDebug`; `-TokeiShareCardOut <path>` writes the card PNG. `-TokeiProofFixture
 /// extraUsage` adds Claude's extra-usage window (see `injectExtraUsage`); the tour also
-/// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`).
+/// re-keys one Claude model as a fast-tier key (see `injectFastTierModel`). `-TokeiProofFixture demo`
+/// replaces every real source with `DemoFixture` (publishable captures);
+/// `-TokeiProofWindowSize <w>x<h>` fixes the dashboard's size.
 enum ProofRoute {
     static let popoverWindowID = "proof-popover"
     static let metricNotification = Notification.Name("TokeiProof.metric")
@@ -57,6 +59,30 @@ enum ProofRoute {
             return
         }
         if let route { open(route, navigator: navigator, viewModel: viewModel) }
+        if let size = UserDefaults.standard.string(forKey: "TokeiProofWindowSize") { sizeDashboard(size) }
+    }
+
+    /// `-TokeiProofWindowSize 1100x760`: the dashboard's content size for captures, so every
+    /// picture of one screen has the same frame whatever size the window last had.
+    @MainActor
+    private static func sizeDashboard(_ value: String) {
+        let parts = value.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2 else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == DashboardWindow.id }) else { return }
+            window.setContentSize(NSSize(width: parts[0], height: parts[1]))
+            window.center()
+            // A pointer resting over the window would put a hover readout in the capture:
+            // slide the window to whichever side of the screen the pointer is not on.
+            if let screen = window.screen?.visibleFrame, window.frame.contains(NSEvent.mouseLocation) {
+                let x = NSEvent.mouseLocation.x > screen.midX ? screen.minX : screen.maxX - window.frame.width
+                window.setFrameOrigin(NSPoint(x: x, y: window.frame.minY))
+            }
+            // Key and active, so the capture shows live traffic lights and full-strength text.
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
     }
 
     // MARK: Tour

@@ -18,6 +18,10 @@ struct AIUsageDashboardApp: App {
         UserDefaults.standard.register(defaults: [AlertSettings.predictiveWarningsKey: true])
         // Burn nudges are on until turned off (Abhay 2026-11-14; contract `BurnNudgePolicy`).
         UserDefaults.standard.register(defaults: [BurnNudgePolicy.enabledKey: true])
+        #if DEBUG
+        // Before any view reads a preference: the demo's fixed settings win for this run.
+        if DemoFixture.isActive { DemoFixture.installDefaults() }
+        #endif
     }
 
     var body: some Scene {
@@ -76,7 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Owned here, not by a view: syncing starts when the app finishes launching, even
     /// when neither the dashboard window nor the menu-bar popover is ever shown (a hidden
     /// launch, e.g. `open -j` or a login item set to hide). Views only read it.
-    let viewModel = DashboardViewModel()
+    let viewModel: DashboardViewModel = {
+        #if DEBUG
+        if DemoFixture.isActive { return DemoFixture.viewModel() }
+        #endif
+        return DashboardViewModel()
+    }()
     /// The burn surfaces' model: follows `viewModel.burn` and holds the pending celebration.
     private(set) lazy var burnBoard = BurnBoard(viewModel: viewModel)
     /// The status item's label values, narrowed from `viewModel` (see `MenuBarLabelModel`).
@@ -95,6 +104,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = updater // force-instantiate so Sparkle's scheduled background checks start
+        #if DEBUG
+        // The demo data set replaces every real source (`DemoFixture.viewModel()`): no
+        // first-run seed, no saved store; the one sync reads only the demo providers.
+        if DemoFixture.isActive {
+            Task {
+                await viewModel.refresh()
+                ProofRoute.apply(navigator: .shared, viewModel: viewModel)
+            }
+            return
+        }
+        #endif
         // Order matters: the first-run seed treats "no usage store yet" as a fresh install,
         // and the first sync writes that store.
         AddAgentModel.seedOnFirstLaunchIfNeeded()

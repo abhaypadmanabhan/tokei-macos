@@ -126,6 +126,8 @@ targets:
       - path: AIUsageDashboardApp/UI/Burn/ShareCardModel.swift
       # The burn surfaces' @Observable model (celebration queue); Foundation + Combine only.
       - path: AIUsageDashboardApp/UI/Burn/BurnBoard.swift
+      # Debug-only demo data for publishable captures; tested for no home path and no `@`.
+      - path: AIUsageDashboardApp/App/DemoFixture.swift
       # Burn ink roles, measured for contrast by BurnContrastTests.
       - path: AIUsageDashboardApp/UI/Burn/BurnTone.swift
       # The status-item label's narrow model and the two pure helpers it reads.

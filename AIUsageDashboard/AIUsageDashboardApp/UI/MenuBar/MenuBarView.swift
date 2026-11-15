@@ -387,6 +387,9 @@ struct MenuBarView: View {
     /// window-duration ago (the "same point last period"). Requires the sample land
     /// within ±half a window of that instant, else there is no honest baseline.
     private func loadPaceBaselines() async {
+        #if DEBUG
+        if DemoFixture.isActive { paceBaselines = DemoFixture.paceBaselines; return }
+        #endif
         var result: [String: Double] = [:]
         let referenceNow = Date()
         for snapshot in activeSnapshots {
