@@ -1,6 +1,6 @@
 {
   "sample_seconds": 120,
-  "average_cpu_percent": 5.0,
+  "average_cpu_percent": 1.0,
   "physical_footprint_mb": 200.0,
   "cold_launch_to_window_ms": 1500.0
 }

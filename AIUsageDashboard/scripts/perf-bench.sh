@@ -13,6 +13,8 @@ import json
 import os
 import pathlib
 import plistlib
+import pwd
+import re
 import signal
 import subprocess
 import sys
@@ -69,6 +71,23 @@ def claude_record(identifier):
         'model': 'claude-sonnet-4-5', 'role': 'assistant',
         'usage': {'input_tokens': 100, 'output_tokens': 50,
                   'cache_read_input_tokens': 20, 'cache_creation_input_tokens': 10}}}) + '\n'
+
+def cleanup_preferences(identity):
+    # cfprefsd ignores the child's Foundation home. Delete only this run's exact
+    # disposable domain, then verify both daemon state and the real-home plist.
+    if re.fullmatch(r'ai\.padzy\.tokei\.perf\.[0-9a-f]{32}', identity) is None:
+        raise ValueError('refusing to delete a non-benchmark preferences domain')
+    real_home = pathlib.Path(pwd.getpwuid(os.getuid()).pw_dir)
+    defaults_environment = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(real_home),
+                            'CFFIXED_USER_HOME': str(real_home)}
+    subprocess.run(['/usr/bin/defaults', 'delete', identity], env=defaults_environment,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    preferences = real_home / 'Library/Preferences' / (identity + '.plist')
+    preferences.unlink(missing_ok=True)
+    read = subprocess.run(['/usr/bin/defaults', 'read', identity], env=defaults_environment,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    if read.returncode != 1 or preferences.exists():
+        raise RuntimeError('perf-bench: benchmark preferences cleanup failed')
 
 process = None
 def interrupt(signum, frame):
@@ -180,15 +199,6 @@ with tempfile.TemporaryDirectory(prefix='tokei-perf-') as temporary:
         failures = [key for key in ('average_cpu_percent', 'physical_footprint_mb',
                                     'cold_launch_to_window_ms') if result[key] > budget[key]]
         result['budget_passed'] = not failures
-        print(json.dumps(result, sort_keys=True), flush=True)
-        print('Metric                              Measured        Budget')
-        for key, unit in (('average_cpu_percent', '%'), ('physical_footprint_mb', 'MB'),
-                          ('cold_launch_to_window_ms', 'ms')):
-            print(f'{key:34} {result[key]:9.3f} {unit:3} {budget[key]:9.3f} {unit}')
-        print('Provider refreshes (120 seconds, window closed): ' + json.dumps(counts, sort_keys=True))
-        if failures:
-            print('OVER BUDGET: ' + ', '.join(failures), file=sys.stderr)
-            sys.exit(1)
     finally:
         if process is not None and process.poll() is None:
             process.terminate()
@@ -197,4 +207,15 @@ with tempfile.TemporaryDirectory(prefix='tokei-perf-') as temporary:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+        cleanup_preferences(identity)
+    result['preferences_cleaned'] = True
+    print(json.dumps(result, sort_keys=True), flush=True)
+    print('Metric                              Measured        Budget')
+    for key, unit in (('average_cpu_percent', '%'), ('physical_footprint_mb', 'MB'),
+                      ('cold_launch_to_window_ms', 'ms')):
+        print(f'{key:34} {result[key]:9.3f} {unit:3} {budget[key]:9.3f} {unit}')
+    print('Provider refreshes (120 seconds, window closed): ' + json.dumps(counts, sort_keys=True))
+    if failures:
+        print('OVER BUDGET: ' + ', '.join(failures), file=sys.stderr)
+        sys.exit(1)
 PY
