@@ -16,3 +16,12 @@
 - 03:00 A review r2 APPROVE (S10, S11 nits noted); merged to dev 5c18498; lane1 freed. C captures ready (7 screens, demo fixture); C told to merge dev.
 - 03:00 A merged to dev dbdc98e (FEATURES.md conflict: kept both entries); lane1 freed.
 - 03:00 orchestrator checked popover + overview-quota captures (demo data, safe). W round 2b sent (captures, route CLI output, footprint data, demo rule check).
+- 03:09 W round 2b done (e11dfdf). W review r2 (sol) started. WP-D route output polish (sol, lane1) started: raw enum and hour formatting in tokei route.
+- 03:13 D: CLI renderer only, MCP JSON unchanged (agreed). C hit a guard prompt on rm with a variable path; left to auto-decline.
+- 03:17 W review r2 APPROVE. Reviewer closed. Site waits for pass-2 captures and release flip.
+- 03:18 C READY (route row, demo fixture, hidden timers, 11 captures); orchestrator viewed popover-route + overview-tall: good. C review r1 (sol) started. W round 2c sent (pass-2 captures behind the claims flip).
+- 03:19 D READY (c1c2bb4); orchestrator read the diff (Claude reviewing Codex), reran RouteCommand + RouteMCP tests, merged to dev f5b926d; lane1 freed.
+- 03:23 W round 2c done; orchestrator viewed claims-on shots: good; to fix at release round: terminal still shows pre-polish route output, one duplicated sentence in the agents chapter.
+- 03:28 C review r1 CHANGES (S1 should: chips lost the quieting rule). Fix round sent.
+- 03:36 C fix r1 done; review r2 started (t4c).
+- 03:40 C review r2 APPROVE; merged to dev 3a8d463; lane2 freed. Integration starts.

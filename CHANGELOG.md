@@ -3,6 +3,47 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.13.0] — 2026-11-15
+
+Build 13. "Route": Tokei ranks your plans and says where the next task should go, gives coding agents the same
+answer over MCP and the CLI, and refreshes only what changed. Audit trail: `tasks/patch-bibles/2026-11-15.md`
+(Abhay's overnight answers, four work packages plus a polish lane), `tasks/herd/2026-11-15/` (briefs, results,
+every review round, journal), `tasks/reports/release-2026-11-15.md`. Every package was reviewed by a different
+model family than its author; every CHANGES verdict led to a fix round with failing-first tests.
+
+### Added: send work here next
+- **One ranking rule** (`RoutePlan`): capacity about to reset unused comes first (only when the plan's tightest
+  window still has 25% or more left), then the most room relative to pace; 85% used or more is "avoid" and goes
+  last; stale or unconfirmed readings are listed as unknown. Pay-per-token agents are never recommended and
+  nothing points at credits or overage.
+- **Menu bar and Overview**: a "Send work here next" row with the plan, the window and the reason, and the next
+  two on demand. Real copy for one plan, no plans, stale readings and everything nearly used up. The Overview
+  and drill-in chips mark the same plan, and keep their quieting rule for near-equal plans.
+- **MCP `get_route`** (optional `for`) and **`tokei route [--json] [--for <agent>]`**: the same ranked list for
+  agents and scripts; exit 0 with a recommendation, 1 when every plan is used up, 69 when the data is missing or
+  stale. The agent snapshot gains an additive `route` block. Existing tools, inputs, shapes and exit codes are
+  unchanged; the shipped `get_route_recommendation` now follows the same rule.
+
+### Changed: lighter
+- **Targeted refresh**: a file event under one agent's folder refreshes that agent only. With no window or
+  popover visible, a continuously written agent refreshes at most once per 15 s (the menu bar label can lag by
+  that much); showing the popover or window catches up at once, including agents that have no watched folder.
+- Unchanged Cline files and unchanged SQLite databases (and their `-wal`) are not re-read; quota subprocesses are
+  not started by file events more often than their own cadence; a manual Refresh clears a failed sign-in probe.
+- **Measured** with the new `scripts/perf-bench.sh` (Release, synthetic home, one agent writing every second, no
+  window, median of three 120 s runs, one Apple silicon Mac): CPU 1.583% → 0.478%; mean physical footprint
+  66.9 MB (no memory claim: peak footprint was 2.9 MB higher in one diagnostic run). `perf-budget.json` holds the
+  CPU budget at 1.0%.
+- Countdown timers stop while the dashboard is off screen.
+
+### Fixed
+- Plans that report their own window length are ranked by their real pace (`Utilization.windowDuration`, additive).
+- `tokei version` and the MCP server version come from `MARKETING_VERSION` at build time; the staged Release
+  bundle's helper is checked before launch (#61).
+
+### Internal
+- Debug-only demo data for publishable screenshots (`-TokeiProofFixture demo`); compiled out of Release.
+
 ## [0.12.0] — 2026-11-14
 
 Build 12. "Burn": Tokei turns the plans you already pay for into a game, tells you before unused capacity
