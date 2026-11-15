@@ -33,6 +33,9 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
     /// When the underlying reading was taken, propagated from the source `QuotaWindow`.
     /// `nil` when the provider doesn't report one. See `QuotaWindow.observedAt`.
     public let observedAt: Date?
+    /// Provider-reported window length, preserved for the shared routing pace rule.
+    /// Optional so existing initializers and persisted cache entries remain valid.
+    public let windowDuration: TimeInterval?
 
     /// Stable identity: one utilization per provider × window.
     public var id: String { "\(providerID.rawValue)_\(window.rawValue)" }
@@ -45,7 +48,8 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         plan: String? = nil,
         confidence: MetricConfidence,
         coverage: UtilizationCoverage = .complete,
-        observedAt: Date? = nil
+        observedAt: Date? = nil,
+        windowDuration: TimeInterval? = nil
     ) {
         self.providerID = providerID
         self.window = window
@@ -55,6 +59,7 @@ public struct Utilization: Sendable, Identifiable, Equatable, Codable {
         self.confidence = confidence
         self.coverage = coverage
         self.observedAt = observedAt
+        self.windowDuration = windowDuration
     }
 }
 

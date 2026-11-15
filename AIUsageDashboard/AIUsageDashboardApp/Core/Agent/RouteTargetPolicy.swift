@@ -17,11 +17,13 @@ import Foundation
 ///    That single reading represents the provider.
 /// 2. **Then gate on trust.** A peak may be a route target only if its confidence is
 ///    in `routableConfidences` and it is not older than `maxRoutableAge`.
-/// 3. **Route to the least-filled trusted peak**, but only when
+/// 3. **Use RoutePlan's order:** expiring unused plan capacity first, then room
+///    relative to pace. Route to the first trusted peak, but only when
 ///    - at least `minTrustedProviders` distinct providers have a trusted peak
 ///      (least-utilized is only meaningful between numbers we actually have), and
 ///    - that peak is below `avoidThreshold` and within `maxRouteTargetPercent`, and
-///    - it is at least `minSpread` points emptier than the tightest peak anywhere.
+///    - it has expiring capacity or is at least `minSpread` points emptier than
+///      the tightest peak anywhere.
 /// 4. **Avoid every peak at/over `avoidThreshold`**, trusted or not.
 ///
 /// ## Why the rule is shaped this way (the invariants, not preferences)
@@ -148,9 +150,18 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     ///     no opinion on visibility.
     ///   - now: current instant, injected so the age gate is deterministic.
     public func evaluate(_ utilizations: [Utilization], now: Date) -> RouteDecision {
-        let peaks = Self.peaks(in: utilizations.filter {
-            !($0.providerID == .claudeCode && $0.window == .credits)
-        })
+        let grouped = Dictionary(grouping: utilizations, by: \.providerID)
+        let windowsByProvider = grouped.mapValues { readings in
+            RoutePlan.bindingWindows(in: readings.map {
+                QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
+                            resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
+                            observedAt: $0.observedAt, windowDuration: $0.windowDuration)
+            }, providerID: readings[0].providerID)
+        }.filter { $0.value.contains(where: RoutePlan.isPlanWindow) }
+        let considered = utilizations.filter { reading in
+            windowsByProvider[reading.providerID]?.contains { $0.type == reading.window } == true
+        }
+        let peaks = Self.peaks(in: considered)
         guard !peaks.isEmpty else { return .empty }
 
         // Step 4 — computed from EVERY peak, trusted or not (see the asymmetry note).
@@ -159,17 +170,21 @@ public struct RouteTargetPolicy: Sendable, Equatable {
             .sorted { $0.usedPercent > $1.usedPercent }
 
         // Step 2 — the trust gate applies only to routing candidates.
-        let trusted = peaks.filter { isRoutable($0, now: now) }
+        let trusted = peaks.filter { peak in
+            RoutePlan.hasTrustedCoverage(windows: windowsByProvider[peak.providerID] ?? [],
+                                         providerID: peak.providerID, now: now, policy: self)
+        }
 
         // Step 3.
-        let routeTo = routeTarget(trusted: trusted, peaks: peaks)
+        let routeTo = routeTarget(trusted: trusted, peaks: peaks, windowsByProvider: windowsByProvider, now: now)
 
         // Providers held back from routing, minus any already named in `avoid` (naming
         // them twice is noise). Surfaced so the omission is visible — a silently-dropped
         // provider reads as "considered and rejected on the numbers", a different claim.
         let avoidedIDs = Set(avoided.map(\.providerID))
+        let trustedIDs = Set(trusted.map(\.providerID))
         let excluded = peaks.filter {
-            !isRoutable($0, now: now) && !avoidedIDs.contains($0.providerID)
+            !trustedIDs.contains($0.providerID) && !avoidedIDs.contains($0.providerID)
         }
 
         return RouteDecision(routeTo: routeTo, avoid: avoided, excluded: excluded, peaks: peaks)
@@ -204,14 +219,20 @@ public struct RouteTargetPolicy: Sendable, Equatable {
         return ProviderID.allCases.compactMap { byProvider[$0] }
     }
 
-    private func routeTarget(trusted: [Utilization], peaks: [Utilization]) -> Utilization? {
+    private func routeTarget(trusted: [Utilization], peaks: [Utilization], windowsByProvider: [ProviderID: [QuotaWindow]], now: Date) -> Utilization? {
+        let ranked = trusted.map { peak in
+            let windows = windowsByProvider[peak.providerID] ?? []
+            return (peak, RoutePlan.priority(providerID: peak.providerID, windows: windows,
+                                             tie: RoutePlan.tieKey(peak.providerID, ""), now: now))
+        }.sorted { RoutePlan.precedes($0.1, $1.1) }
         guard trusted.count >= minTrustedProviders,
-              let least = trusted.min(by: { $0.usedPercent < $1.usedPercent }),
+              let candidate = ranked.first,
               let tightest = peaks.max(by: { $0.usedPercent < $1.usedPercent }),
-              least.usedPercent < avoidThreshold,
-              tightest.usedPercent - least.usedPercent >= minSpread
+              candidate.0.usedPercent < avoidThreshold,
+              candidate.1.expiringAt != nil || tightest.usedPercent - candidate.0.usedPercent >= minSpread
         else { return nil }
 
+        let least = candidate.0
         if let ceiling = maxRouteTargetPercent, least.usedPercent > ceiling { return nil }
         return least
     }

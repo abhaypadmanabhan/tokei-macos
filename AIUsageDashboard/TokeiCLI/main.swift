@@ -9,11 +9,13 @@ import Darwin
 ///     tokei status --json   raw snapshot JSON
 ///     tokei mcp             stdio MCP server (usage, routing, expiring plan capacity)
 enum TokeiCLI {
-    /// Must equal `MARKETING_VERSION` in AIUsageDashboard/project.yml. Hand-kept, so
-    /// the `cli-version-sync` gate fails the commit when the two drift — this string
-    /// silently reported 0.7.0 from a 0.7.1 build and cost real debugging time, because
-    /// `tokei version` is the first thing you check when diagnosing which binary is live.
-    static let version = "0.12.0"
+    /// Xcode embeds this standalone tool's Info.plist in the executable. Both the
+    /// app and helper get their version from MARKETING_VERSION at build time.
+    static let version: String = {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !value.isEmpty else { preconditionFailure("The build must embed MARKETING_VERSION in the helper.") }
+        return value
+    }()
 }
 
 func printUsage(to handle: FileHandle = .standardOutput) {
@@ -23,8 +25,9 @@ func printUsage(to handle: FileHandle = .standardOutput) {
     USAGE:
       tokei status [--json]   Print the current usage snapshot (table, or raw JSON)
       tokei guard [--provider P] [--min-headroom N]  Exit 0 when fresh headroom meets N (default 15)
+      tokei route [--json] [--for <agent>]  Rank flat-rate plans for the next task
       tokei burn              Show expiring plan windows, today's goal and streak
-      tokei mcp               Run the read-only stdio MCP server (3 tools)
+      tokei mcp               Run the read-only stdio MCP server (4 tools)
       tokei mcp install [--client claude|codex|cursor|all] [--dry-run]
       tokei mcp uninstall [--client claude|codex|cursor|all] [--dry-run]
       tokei install [--force]  Put the bundled command in ~/.local/bin
@@ -32,7 +35,10 @@ func printUsage(to handle: FileHandle = .standardOutput) {
       tokei version           Print the version
 
     MCP tools: get_usage (optional detail: "summary"), get_route_recommendation,
-    get_burn_opportunities. Connect from Settings → Connect agents, or use install.
+    get_burn_opportunities, get_route (optional for: provider ID).
+    Route exits: 0 recommendation; 1 all plans exhausted or nearly exhausted;
+    69 missing, stale or unknown data; 64 invalid arguments. --for uses a provider ID.
+    Connect from Settings → Connect agents, or use install.
     With --client all (the default), only detected clients are changed.
 
     The snapshot is written by the Tokei app after each refresh to
@@ -51,6 +57,8 @@ case "status":
     exit(StatusCommand.run(json: wantsJSON))
 case "guard":
     exit(GuardCommand.run(arguments: Array(arguments.dropFirst())))
+case "route":
+    exit(RouteCommand.run(arguments: Array(arguments.dropFirst())))
 case "install":
     exit(AgentCommands.install(Array(arguments.dropFirst())))
 case "burn":

@@ -66,7 +66,8 @@ public enum UtilizationEngine {
             plan: plan,
             confidence: window.confidence,
             coverage: .complete,
-            observedAt: window.observedAt
+            observedAt: window.observedAt,
+            windowDuration: window.windowDuration
         )
     }
 

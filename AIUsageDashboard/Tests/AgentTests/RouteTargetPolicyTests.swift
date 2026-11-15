@@ -10,6 +10,17 @@ import XCTest
 final class RouteTargetPolicyTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
+    func testExpiringCapacityWinsOverAnEmptierPlan() {
+        let readings = [
+            Utilization(providerID: .codex, window: .fiveHour, usedPercent: 40,
+                        resetAt: now.addingTimeInterval(600), confidence: .providerReported, observedAt: now),
+            Utilization(providerID: .claudeCode, window: .weekly, usedPercent: 10,
+                        resetAt: now.addingTimeInterval(172_800), confidence: .providerReported, observedAt: now)
+        ]
+        XCTAssertEqual(RouteTargetPolicy.agent.routeTarget(in: readings, now: now)?.providerID, .codex)
+        XCTAssertEqual(RouteTargetPolicy.human.routeTarget(in: readings, now: now)?.providerID, .codex)
+    }
+
     private func util(
         _ providerID: ProviderID,
         _ percent: Double,

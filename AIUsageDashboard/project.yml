@@ -154,6 +154,7 @@ targets:
       - path: TokeiCLI/MCPServer+Instructions.swift
       - path: TokeiCLI/SnapshotReader.swift
       - path: TokeiCLI/StatusFormatting.swift
+      - path: TokeiCLI/RouteFormatting.swift
     dependencies:
       - target: AIUsageDashboardCore
       - target: tokei
@@ -176,11 +177,15 @@ targets:
     sources:
       - path: TokeiCLI
       - path: AIUsageDashboardApp/Core/Agent/AgentSnapshot.swift
+      - path: AIUsageDashboardApp/Core/Agent/AgentRoute.swift
       - path: AIUsageDashboardApp/Core/Connect
     settings:
       base:
         PRODUCT_NAME: tokei
         PRODUCT_BUNDLE_IDENTIFIER: ai.padzy.tokei.cli
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        INFOPLIST_KEY_CFBundleShortVersionString: $(MARKETING_VERSION)
+        INFOPLIST_KEY_CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CODE_SIGN_IDENTITY: "-"
       configs:
         Release:

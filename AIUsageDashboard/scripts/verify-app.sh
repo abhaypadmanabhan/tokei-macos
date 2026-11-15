@@ -36,9 +36,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${1:-$ROOT/dist/Tokei.app}"
 [ -d "$APP" ] || { echo "verify-app: no app bundle at $APP" >&2; exit 1; }
+APP="$(cd "$APP" && pwd)"
 
 BIN="$APP/Contents/MacOS/Tokei"
 [ -x "$BIN" ] || { echo "verify-app: no executable at $BIN" >&2; exit 1; }
+
+# build-app.sh invokes this on the staged Release bundle before notarization.
+# Validate the exact bundled helper, even when the GUI launch check is skipped.
+(cd "$ROOT" && TOKEI_CLI_BINARY="$APP/Contents/Helpers/tokei" \
+  bash "$ROOT/../.claude/gates/cli-version-sync.sh")
 
 LAUNCH_SECONDS="${TOKEI_VERIFY_LAUNCH_SECONDS:-6}"
 

@@ -26,8 +26,8 @@ final class MCPAccountContractTests: XCTestCase {
 
     let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
     let tools = try XCTUnwrap(result["tools"] as? [[String: Any]])
-    XCTAssertEqual(tools.count, 3)
-    for tool in tools where tool["name"] as? String != "get_burn_opportunities" {
+    XCTAssertEqual(tools.count, 4)
+    for tool in tools where ["get_usage", "get_route_recommendation"].contains(tool["name"] as? String ?? "") {
       let description = try XCTUnwrap(tool["description"] as? String)
       for phrase in [
         "accountID", "provider-scoped", "stable across machines", "selector.env",

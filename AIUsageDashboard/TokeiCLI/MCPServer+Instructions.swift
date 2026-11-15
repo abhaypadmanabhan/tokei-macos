@@ -3,7 +3,7 @@ import Foundation
 extension MCPServer {
     /// MCP clients surface this to the model once at connect time, so the trigger and
     /// trust rules persist for the session instead of depending on per-tool descriptions.
-    static let instructions = """
+    private static let legacyInstructions = """
         Tokei reports how much quota is left across the AI coding tools on this Mac \
         (Claude Code, Codex, Cursor, Cline, Gemini, Antigravity, Copilot, opencode).
 
@@ -49,6 +49,15 @@ extension MCPServer {
 
         Read-only. No network, no credentials, no other application's data.
         """
+
+    static let routeInstructions = """
+        Before delegating or starting a long task, call get_route for ranked flat-rate plans and one reason. \
+        Use for with a provider ID to check one agent. Follow the ranked list; prefer expiring capacity only \
+        within every other limit. Avoid unknown or stale readings and plans marked avoid. \
+        This never recommends credits or paid overage.
+        """
+
+    static let instructions = legacyInstructions + "\n\n" + routeInstructions
 }
 
 extension MCPServer {
@@ -63,6 +72,8 @@ extension MCPServer {
             "provider": ["type": "string", "enum": SnapshotReader.providerIDs.sorted()],
             "detail": ["type": "string", "enum": ["summary"]]
         ]
+        var routeInput = emptyInput
+        routeInput["properties"] = ["for": ["type": "string", "enum": SnapshotReader.providerIDs.sorted()]]
         var definitions: [[String: Any]] = [
             [
                 "name": ToolName.usage.rawValue,
@@ -94,19 +105,33 @@ extension MCPServer {
                     + "that reset soon with unused capacity. Spend these first, within the account's other limits. "
                     + "Never spend credits or paid overage. Returns expiring windows soonest first and plain advice.",
                 "inputSchema": emptyInput
+            ],
+            [
+                "name": ToolName.route.rawValue,
+                "description": "Which plan should the next task go to. Returns ranked flat-rate plans and one advice line. "
+                    + "Use for with a provider ID to check one agent. Unknown readings are withheld and nearly exhausted plans say avoid. "
+                    + "Only short plain labels are returned; no account paths or selectors.",
+                "inputSchema": routeInput
             ]
         ]
         for index in definitions.indices {
             let usage = index == 0
-            definitions[index]["title"] = ["Usage and quota", "Route recommendation", "Use it or lose it"][index]
+            definitions[index]["title"] = ["Usage and quota", "Route recommendation", "Use it or lose it", "Which plan next"][index]
             definitions[index]["annotations"] = ["readOnlyHint": true, "idempotentHint": true, "openWorldHint": false]
             if negotiatedVersion == Self.protocolVersion {
-                definitions[index]["outputSchema"] = index == 2
+                if index == 3 {
+                    definitions[index]["outputSchema"] = ["type": "object", "required": ["generatedAt", "stale", "status", "rows", "unknown", "advice"],
+                        "properties": ["generatedAt": ["type": "string", "format": "date-time"], "stale": ["type": "boolean"],
+                                       "status": ["type": "string"], "rows": ["type": "array", "items": ["type": "object"]],
+                                       "unknown": ["type": "array", "items": ["type": "object"]], "advice": ["type": "string"]]]
+                } else {
+                    definitions[index]["outputSchema"] = index == 2
                     ? ["type": "object", "required": ["generatedAt", "stale", "expiring"],
                        "properties": ["generatedAt": ["type": "string", "format": "date-time"],
                                       "stale": ["type": "boolean"],
                                       "expiring": ["type": "array", "items": ["type": "object"]]]]
                     : outputSchema(usage: usage)
+                }
             }
         }
         return definitions

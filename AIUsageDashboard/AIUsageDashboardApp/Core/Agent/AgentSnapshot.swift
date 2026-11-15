@@ -115,6 +115,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
     public let recommendation: AgentRecommendation?
     /// Optional additive v1 burn signals. Feature-detect when reading older snapshots.
     public let burn: AgentBurn?
+    /// Additive v1 ranked flat-rate plans. Absent in snapshots from older apps.
+    public let route: AgentRoute?
 
     /// Reader-computed, **omitted on disk** (the writer never sets them). The `tokei`
     /// helper populates these when emitting a response so agents never treat old data
@@ -136,7 +138,8 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         recommendation: AgentRecommendation?,
         stale: Bool? = nil,
         ageSeconds: Int? = nil,
-        burn: AgentBurn? = nil
+        burn: AgentBurn? = nil,
+        route: AgentRoute? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.generatedAt = generatedAt
@@ -146,6 +149,7 @@ public struct AgentSnapshot: Codable, Sendable, Equatable {
         self.stale = stale
         self.ageSeconds = ageSeconds
         self.burn = burn
+        self.route = route
     }
 }
 
@@ -481,7 +485,8 @@ public extension AgentSnapshot {
             recommendation: replacement,
             stale: stale,
             ageSeconds: ageSeconds,
-            burn: burn
+            burn: burn,
+            route: route
         )
     }
 }
@@ -569,9 +574,13 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
     /// Provider-supplied labels reach a terminal and an agent's context through `advice`,
     /// so only short plain text is used; anything else (control codes, newlines, long
     /// prose) falls back to the window type's name.
-    static func isPlainLabel(_ label: String) -> Bool {
+    public static func isPlainLabel(_ label: String) -> Bool {
+        isPlainText(label, maximumLength: 48)
+    }
+
+    public static func isPlainText(_ label: String, maximumLength: Int) -> Bool {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_.,()/%+:'"))
-        return !label.isEmpty && label.count <= 48 && label.unicodeScalars.allSatisfy { allowed.contains($0) }
+        return !label.isEmpty && label.count <= maximumLength && label.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     public func advice(asOf now: Date) -> String {
