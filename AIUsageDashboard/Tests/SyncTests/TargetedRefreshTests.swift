@@ -2,6 +2,95 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class TargetedRefreshTests: XCTestCase {
+    func testOpeningRefreshesUnwatchedProvidersAfterFifteenSeconds() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = CountingRefreshProvider(.cursor)
+        let clock = RefreshClock()
+        let engine = SyncEngine(
+            registry: ProviderRegistry(providers: [provider]), store: UsageStore(directory: root),
+            quotaSeriesStore: QuotaSeriesStore(directory: root), agentSnapshotWriter: AgentSnapshotWriter(directory: root),
+            watcher: FileWatcher(paths: []), evaluateThresholds: { _ in }, now: { clock.now() }
+        )
+        _ = await engine.refreshAll()
+        await engine.visibilityChanged(false)
+        clock.advance(to: 16)
+        await engine.visibilityChanged(true)
+        let opened = await provider.calls
+        XCTAssertEqual(opened, 2, "opening must catch up providers without watched folders")
+        await engine.visibilityChanged(true)
+        let unchanged = await provider.calls
+        XCTAssertEqual(unchanged, 2, "a duplicate visibility notification must not refetch")
+    }
+
+    func testRootReplacementEmitsTheOtherProvidersPendingBatch() async {
+        let home = URL(fileURLWithPath: "/tmp/tokei-root-replacement")
+        let claude = home.appendingPathComponent(".claude/projects")
+        let codex = home.appendingPathComponent(".codex/sessions")
+        let changed = codex.appendingPathComponent("active.jsonl").path
+        let roots = WatcherTestState(paths: [claude, codex])
+        let watcher = FileWatcher(pathsProvider: { roots.paths })
+        let stream = await watcher.events
+        let consumer = Task { for await event in stream { roots.event = event; break } }
+        defer { consumer.cancel() }
+        await watcher.handleEvents(paths: [changed])
+        roots.paths = [claude, codex, home.appendingPathComponent(".claude-new/projects")]
+        await watcher.refreshWatchPaths()
+        await watcher.flushPendingEvents()
+        await eventually { roots.event != nil }
+        XCTAssertEqual(roots.event?.paths, [changed], "changing roots must preserve another provider's pending event")
+        await watcher.stop()
+    }
+
+    func testWatchedRootsAreResolvedOnceForTheWholeEventBatch() async {
+        let home = URL(fileURLWithPath: "/tmp/tokei-root-resolutions")
+        let claude = home.appendingPathComponent(".claude/projects")
+        let codex = home.appendingPathComponent(".codex/sessions")
+        let state = WatcherTestState(paths: [claude, codex])
+        let watcher = FileWatcher(paths: state.paths, resolvePath: { state.resolve($0) })
+        let paths = (0..<12).map { claude.appendingPathComponent("session-\($0).jsonl").path }
+        let affected = await watcher.affectedProviders(for: .init(paths: paths))
+        XCTAssertEqual(affected, [.claudeCode])
+        XCTAssertEqual(state.resolutions(claude), 1, "each root should be resolved once per batch, not once per changed file")
+        XCTAssertEqual(state.resolutions(codex), 1)
+    }
+
+    func testReentrantDrainsKeepOneCancellableFileDeadline() async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let claudeRoot = root.appendingPathComponent(".claude/projects")
+        let codexRoot = root.appendingPathComponent(".codex/sessions")
+        let claude = CountingRefreshProvider(.claudeCode)
+        let codex = CountingRefreshProvider(.codex)
+        let clock = RefreshClock()
+        let engine = SyncEngine(
+            registry: ProviderRegistry(providers: [claude, codex]), store: UsageStore(directory: root),
+            quotaSeriesStore: QuotaSeriesStore(directory: root), agentSnapshotWriter: AgentSnapshotWriter(directory: root),
+            watcher: FileWatcher(paths: [claudeRoot, codexRoot]), evaluateThresholds: { _ in },
+            sleep: { try await clock.sleep($0) }, now: { clock.now() }
+        )
+        await engine.visibilityChanged(false)
+        await engine.handleFileEvent(.init(path: claudeRoot.path))
+        await engine.handleFileEvent(.init(path: codexRoot.path))
+        await claude.hold()
+        clock.advance(to: 15)
+        let first = Task { await engine.handleFileEvent(.init(path: claudeRoot.path)) }
+        await eventually { await claude.calls == 2 }
+        clock.advance(to: 16)
+        let second = Task { await engine.handleFileEvent(.init(path: codexRoot.path)) }
+        for _ in 0..<20 { await Task.yield() }
+        clock.advance(to: 17)
+        await engine.handleFileEvent(.init(path: claudeRoot.path))
+        await eventually { clock.hasDeadline(30) }
+        await claude.release()
+        await first.value
+        await second.value
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(clock.waitCount, 1, "reentrant drains must cancel replaced deadlines")
+        await engine.stopAutoSync()
+        clock.advance(to: 100)
+    }
+
     private func eventually(_ check: () async -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<500 {
             if await check() { return }
@@ -179,12 +268,17 @@ private actor CountingRefreshProvider: UsageProvider {
     nonisolated let capabilities: ProviderCapabilities = [.localLog]
     var calls = 0
     private var value = 1
+    private var held = false
+    private var continuation: CheckedContinuation<Void, Never>?
     init(_ id: ProviderID) { self.id = id }
     func detectAvailability() async -> ProviderAvailability { .installed }
     func authenticate() async throws -> AuthStatus { .unknown }
     func changeValue(_ value: Int) { self.value = value }
+    func hold() { held = true }
+    func release() { held = false; continuation?.resume(); continuation = nil }
     func fetchSnapshot() async throws -> ProviderSnapshot {
         calls += 1
+        if held { await withCheckedContinuation { continuation = $0 } }
         return ProviderSnapshot(providerID: id, displayName: displayName, authStatus: .unknown,
                                 todayUsage: TokenUsage(inputTokens: value, confidence: .localParsed),
                                 weekUsage: .unavailable)
@@ -197,6 +291,7 @@ private final class RefreshClock: @unchecked Sendable {
     private let lock = NSLock()
     private var instant: TimeInterval = 0
     private var waits: [UUID: (TimeInterval, CheckedContinuation<Void, Error>)] = [:]
+    var waitCount: Int { lock.withLock { waits.count } }
     func now() -> Date { lock.withLock { Date(timeIntervalSince1970: instant) } }
     func hasDeadline(_ deadline: TimeInterval) -> Bool { lock.withLock { waits.values.contains { $0.0 == deadline } } }
     func sleep(_ interval: TimeInterval) async throws {
@@ -222,4 +317,25 @@ private final class RefreshClock: @unchecked Sendable {
         }
         for continuation in ready { continuation.resume() }
     }
+}
+
+private final class WatcherTestState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedPaths: [URL]
+    private var storedEvent: FileWatcher.Event?
+    private var counts: [String: Int] = [:]
+    init(paths: [URL]) { storedPaths = paths }
+    var paths: [URL] {
+        get { lock.withLock { storedPaths } }
+        set { lock.withLock { storedPaths = newValue } }
+    }
+    var event: FileWatcher.Event? {
+        get { lock.withLock { storedEvent } }
+        set { lock.withLock { storedEvent = newValue } }
+    }
+    func resolve(_ url: URL) -> String {
+        lock.withLock { counts[url.path, default: 0] += 1 }
+        return url.path
+    }
+    func resolutions(_ url: URL) -> Int { lock.withLock { counts[url.path, default: 0] } }
 }

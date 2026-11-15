@@ -64,6 +64,7 @@ public actor FileWatcher {
     private let debounceInterval: TimeInterval
     private let maximumWait: TimeInterval
     private let sleep: @Sendable (TimeInterval) async throws -> Void
+    private let resolvePath: @Sendable (URL) -> String
     private var stream: FSEventStreamRef?
     private var context: Unmanaged<FileWatcherContext>?
     private var debounceTask: Task<Void, Never>?
@@ -79,13 +80,15 @@ public actor FileWatcher {
         sleep: @escaping @Sendable (TimeInterval) async throws -> Void = { seconds in
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         },
-        pathsProvider: @escaping @Sendable () -> [URL] = { FileWatcher.defaultWatchPaths }
+        pathsProvider: @escaping @Sendable () -> [URL] = { FileWatcher.defaultWatchPaths },
+        resolvePath: @escaping @Sendable (URL) -> String = { $0.resolvingSymlinksInPath().standardized.path }
     ) {
         self.watchedURLs = (paths ?? pathsProvider()).sorted { $0.path < $1.path }
         self.pathsProvider = paths == nil ? pathsProvider : nil
         self.debounceInterval = debounceInterval
         self.maximumWait = maximumWait
         self.sleep = sleep
+        self.resolvePath = resolvePath
         var continuation: AsyncStream<Event>.Continuation!
         self.eventStream = AsyncStream { cont in
             continuation = cont
@@ -166,6 +169,7 @@ public actor FileWatcher {
         let paths = pathsProvider().sorted { $0.path < $1.path }
         guard paths != watchedURLs else { return }
         let wasRunning = stream != nil
+        flushPendingEvents()
         stop()
         watchedURLs = paths
         if wasRunning { start() }
@@ -175,14 +179,18 @@ public actor FileWatcher {
     /// ancestor event includes every matching provider; path components avoid prefix collisions.
     func affectedProviders(for event: Event) -> Set<ProviderID>? {
         guard !event.requiresFullRescan, !event.paths.isEmpty else { return nil }
+        let roots = watchedURLs.map { root in
+            let path = resolvePath(root)
+            return (path: path, provider: Self.provider(for: root, resolvedPath: path, resolvePath: resolvePath))
+        }
         var result: Set<ProviderID> = []
         for path in event.paths {
-            let changed = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardized.path
+            let changed = resolvePath(URL(fileURLWithPath: path))
             var matched = false
-            for root in watchedURLs {
-                let watched = root.resolvingSymlinksInPath().standardized.path
+            for root in roots {
+                let watched = root.path
                 if changed == watched || changed.hasPrefix(watched + "/") || watched.hasPrefix(changed + "/") {
-                    guard let provider = Self.provider(for: root) else { return nil }
+                    guard let provider = root.provider else { return nil }
                     result.insert(provider)
                     matched = true
                 }
@@ -192,7 +200,7 @@ public actor FileWatcher {
         return result
     }
 
-    private static func provider(for root: URL) -> ProviderID? {
+    private static func provider(for root: URL, resolvedPath: String, resolvePath: (URL) -> String) -> ProviderID? {
         let parent = root.deletingLastPathComponent().lastPathComponent
         switch root.lastPathComponent {
         case "projects" where parent == ".claude" || parent.hasPrefix(".claude-"): return .claudeCode
@@ -206,8 +214,7 @@ public actor FileWatcher {
         for (key, child, provider) in [("CLAUDE_CONFIG_DIR", "projects", ProviderID.claudeCode),
                                        ("CODEX_HOME", "sessions", ProviderID.codex)] {
             if let directory = environment[key], !directory.isEmpty,
-               URL(fileURLWithPath: directory).appendingPathComponent(child).resolvingSymlinksInPath()
-                == root.resolvingSymlinksInPath() { return provider }
+               resolvePath(URL(fileURLWithPath: directory).appendingPathComponent(child)) == resolvedPath { return provider }
         }
         return nil
     }

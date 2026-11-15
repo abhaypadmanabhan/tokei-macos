@@ -25,6 +25,7 @@ public actor SyncEngine {
     private var pendingFileRescan = false
     private var lastFileRefresh: [ProviderID: Date] = [:]
     private var lastFullFileRefresh: Date?
+    private var lastRefreshAt: [ProviderID: Date] = [:]
     private var autoSyncTask: Task<Void, Never>?
     private var updatesContinuation: AsyncStream<[ProviderSnapshot]>.Continuation?
     /// The last refresh's snapshots and the view model's latest burn state, so the agent
@@ -84,6 +85,10 @@ public actor SyncEngine {
         await refresh(providers: nil)
     }
 
+    public func refreshFromUser() async -> [ProviderSnapshot] {
+        await refreshAll()
+    }
+
     func refresh(providers: Set<ProviderID>?) async -> [ProviderSnapshot] {
         if let providers { pendingRefreshProviders.formUnion(providers) }
         else { pendingFullRefresh = true }
@@ -109,6 +114,8 @@ public actor SyncEngine {
     private func performRefresh(providers: Set<ProviderID>?) async -> [ProviderSnapshot] {
         await watcher.refreshWatchPaths()
         let refreshed = await registry.snapshots(for: providers)
+        let refreshedAt = now()
+        for snapshot in refreshed { lastRefreshAt[snapshot.providerID] = refreshedAt }
         var snapshots = refreshed
         if providers != nil {
             let previous: [ProviderSnapshot]
@@ -175,11 +182,19 @@ public actor SyncEngine {
     }
 
     func visibilityChanged(_ isVisible: Bool) async {
+        let becameVisible = isVisible && !visible
         visible = isVisible
         if visible {
             // A continuous writer may still be inside the watcher's ten-second batch.
             await watcher.flushPendingEvents()
             await drainFileEvents()
+            if becameVisible {
+                let date = now()
+                let stale = Set(registry.providers.map(\.id).filter {
+                    date.timeIntervalSince(lastRefreshAt[$0] ?? .distantPast) > 15
+                })
+                if !stale.isEmpty { _ = await refresh(providers: stale) }
+            }
         }
     }
 
@@ -213,6 +228,7 @@ public actor SyncEngine {
     }
 
     private func scheduleFileRefresh(after interval: TimeInterval) {
+        fileRefreshTask?.cancel()
         fileRefreshTask = Task { [weak self, sleep] in
             do { try await sleep(interval) } catch { return }
             guard !Task.isCancelled else { return }
