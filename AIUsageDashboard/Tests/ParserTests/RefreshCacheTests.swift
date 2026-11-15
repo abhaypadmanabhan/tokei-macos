@@ -3,6 +3,37 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class RefreshCacheTests: XCTestCase {
+    func testAntigravityStateAliasRemainsRejectedLikeDev() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent("state.vscdb")
+        let alias = root.appendingPathComponent("alias.vscdb")
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(target.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE ItemTable (key TEXT, value BLOB)", nil, nil, nil), SQLITE_OK)
+        sqlite3_close(database)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+        let state = await AntigravityStateDBParser().parse(stateDatabaseURL: alias)
+        XCTAssertTrue(state.warnings.contains { $0.message.contains("could not be read") },
+                      "the state parser must preserve dev's NOFOLLOW boundary")
+    }
+
+    func testWALDisappearingBetweenDiscoveryAndStatIsTreatedAsAbsent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("state.vscdb")
+        let wal = URL(fileURLWithPath: database.path + "-wal")
+        try Data("database fingerprint fixture".utf8).write(to: database)
+        try Data("wal fingerprint fixture".utf8).write(to: wal)
+        let fingerprint = try SQLiteSidecarCopy.fingerprint(database, readFile: { url in
+            if url.lastPathComponent.hasSuffix("-wal") { try FileManager.default.removeItem(at: url) }
+            return try LocalUsageFileFingerprint.read(url)
+        })
+        XCTAssertNil(fingerprint.wal, "a WAL removed by SQLite's last close is no longer part of the fingerprint")
+    }
+
     func testClineSymlinkKeepsItsPreviouslySupportedNumbers() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

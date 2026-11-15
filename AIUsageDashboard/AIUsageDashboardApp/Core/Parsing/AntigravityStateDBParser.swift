@@ -37,7 +37,7 @@ public actor AntigravityStateDBParser {
     private let fileManager: FileManager
     private let protobufReader: MiniProtobufReader
     private let copyDatabase: (@Sendable (URL, URL) throws -> Void)?
-    private var cached: (url: URL, fingerprint: SQLiteSidecarCopy.Fingerprint, state: ParsedState)?
+    private var cached: (url: URL, fingerprint: AntigravityConversationFiles.Fingerprint, state: ParsedState)?
 
     public init(
         fileManager: FileManager = .default,
