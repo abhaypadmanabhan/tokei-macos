@@ -311,6 +311,7 @@ enum CodexFixtures {
 }
 
 enum ClineFixtures {
+  static let cacheSession = #"{"messages":[{"id":"one","ts":1700000000,"metrics":{"inputTokens":7}}]}"#
   static let malformedJSON = """
     {not valid cline json at all
     """
