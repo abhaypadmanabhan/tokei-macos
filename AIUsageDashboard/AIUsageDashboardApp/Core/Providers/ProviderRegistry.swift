@@ -22,8 +22,12 @@ public actor ProviderRegistry {
     }
 
     public func snapshotAll() async -> [ProviderSnapshot] {
+        await snapshots(for: nil)
+    }
+
+    func snapshots(for providerIDs: Set<ProviderID>?) async -> [ProviderSnapshot] {
         await withTaskGroup(of: ProviderSnapshot.self) { group in
-            for provider in providers {
+            for provider in providers where providerIDs?.contains(provider.id) ?? true {
                 group.addTask {
                     PerformanceProbe.emit("provider_refresh", fields: ["provider": provider.id.rawValue])
                     do {
