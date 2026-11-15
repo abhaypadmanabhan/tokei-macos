@@ -24,8 +24,9 @@ public struct AccountQuotaDecision: Sendable {
             return nonEligible(account)
         }
 
+        let windows = RoutePlan.bindingWindows(in: account.quotaWindows, providerID: providerID)
         let candidates = account.quotaWindows.enumerated().compactMap { index, window -> (Int, Utilization)? in
-            guard !window.isInformationalCredits,
+            guard RoutePlan.isBindingWindow(window, providerID: providerID),
                   let percent = UtilizationEngine.usedPercent(from: window) else { return nil }
             return (index, Utilization(
                 providerID: providerID,
@@ -50,13 +51,8 @@ public struct AccountQuotaDecision: Sendable {
         // limit, so an uncomputable session/credits shell is not proof of missing coverage.
         // An explicit missing weekly Codex window, and every emitted window for providers whose
         // contracts require them, still makes coverage incomplete.
-        guard hasCompleteCoverage(
-            candidates: candidates,
-            windows: account.quotaWindows,
-            providerID: providerID,
-            now: now,
-            policy: policy
-        ) else {
+        guard RoutePlan.hasTrustedCoverage(windows: windows, providerID: providerID, now: now,
+                                           policy: policy, requiresObservationTime: true) else {
             return unknown(
                 account,
                 usedPercent: peak.1.usedPercent,
@@ -106,26 +102,6 @@ public struct AccountQuotaDecision: Sendable {
             providerID: providerID,
             canonicalRoot: URL(fileURLWithPath: account.id, isDirectory: true)
         )
-    }
-
-    private static func hasCompleteCoverage(
-        candidates: [(Int, Utilization)],
-        windows: [QuotaWindow],
-        providerID: ProviderID,
-        now: Date,
-        policy: RouteTargetPolicy
-    ) -> Bool {
-        let applicableWindowCount = windows.count { window in
-            guard !window.isInformationalCredits else { return false }
-            return providerID != .codex
-                || window.type == .weekly
-                || UtilizationEngine.usedPercent(from: window) != nil
-        }
-        return candidates.count == applicableWindowCount && candidates.allSatisfy { _, utilization in
-            utilization.observedAt != nil
-                && policy.isRoutable(utilization, now: now)
-                && (utilization.resetAt.map { $0 > now } ?? true)
-        }
     }
 
     private static func nonEligible(_ account: ProviderAccountUsage) -> AccountQuotaDecision {

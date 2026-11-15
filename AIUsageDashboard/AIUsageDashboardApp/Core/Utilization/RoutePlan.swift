@@ -67,8 +67,8 @@ public struct RoutePlan: Sendable, Equatable {
     }
 
     static func priority(providerID: ProviderID, windows: [QuotaWindow], tie: String, now: Date) -> Priority {
-        let limits = windows.filter(isPlanWindow)
-        let peak = limits.max { (UtilizationEngine.usedPercent(from: $0) ?? 100) < (UtilizationEngine.usedPercent(from: $1) ?? 100) }
+        let limits = bindingWindows(in: windows, providerID: providerID)
+        let peak = bindingWindow(in: limits)
         let used = peak.flatMap(UtilizationEngine.usedPercent(from:)) ?? 100
         let projectedPace = peak.flatMap {
             QuotaPace(usedPercent: used, windowType: $0.type, windowDuration: $0.windowDuration, resetAt: $0.resetAt, now: now)
@@ -76,9 +76,10 @@ public struct RoutePlan: Sendable, Equatable {
         let snapshot = ProviderSnapshot(providerID: providerID, displayName: providerID.rawValue,
                                         authStatus: .authenticated, quotaWindows: limits,
                                         todayUsage: .unavailable, weekUsage: .unavailable)
-        let expiring = ExpiringHeadroomFinder.find(in: [snapshot], now: now).first?.resetAt
+        let expiring = 100 - used >= ExpiringHeadroomFinder.Policy.standard.minimumUnusedPercent
+            ? ExpiringHeadroomFinder.find(in: [snapshot], now: now).first?.resetAt : nil
         return Priority(avoid: used >= RouteTargetPolicy.agent.avoidThreshold, expiringAt: expiring,
-                        roomRelativeToPace: projectedPace.map { -$0.delta } ?? (100 - used),
+                        roomRelativeToPace: (projectedPace?.elapsedPercent ?? 0) - used,
                         remainingPercent: 100 - used, tie: tie)
     }
 
@@ -96,29 +97,53 @@ public struct RoutePlan: Sendable, Equatable {
         [.session, .fiveHour, .daily, .weekly, .monthly].contains(window.type) && !window.isInformationalCredits
     }
 
+    /// Model ceilings constrain an existing flat-rate pool; credit balances do not.
+    /// Codex may emit an empty non-weekly shell alongside a real weekly plan.
+    static func bindingWindows(in windows: [QuotaWindow], providerID: ProviderID) -> [QuotaWindow] {
+        windows.filter { isBindingWindow($0, providerID: providerID) }
+    }
+
+    static func isBindingWindow(_ window: QuotaWindow, providerID: ProviderID) -> Bool {
+        !window.isInformationalCredits && (isPlanWindow(window) || window.type == .perModel)
+            && (providerID != .codex || window.type == .weekly || UtilizationEngine.usedPercent(from: window) != nil)
+    }
+
+    static func bindingWindow(in windows: [QuotaWindow]) -> QuotaWindow? {
+        windows.enumerated().max { lhs, rhs in
+            let left = UtilizationEngine.usedPercent(from: lhs.element) ?? 100
+            let right = UtilizationEngine.usedPercent(from: rhs.element) ?? 100
+            return left == right ? lhs.offset > rhs.offset : left < right
+        }?.element
+    }
+
+    /// The common numeric, trust and expiry boundary for rows, policy and accounts.
+    /// The existing account contract additionally requires a known observation time.
+    static func hasTrustedCoverage(
+        windows: [QuotaWindow], providerID: ProviderID, now: Date,
+        policy: RouteTargetPolicy = .agent, requiresObservationTime: Bool = false
+    ) -> Bool {
+        guard windows.contains(where: isPlanWindow) else { return false }
+        return windows.allSatisfy { window in
+            guard let used = window.used ?? window.remaining.map({ (window.limit ?? 0) - $0 }), used.isFinite,
+                  let limit = window.limit, limit.isFinite, limit > 0,
+                  let percent = UtilizationEngine.usedPercent(from: window),
+                  !requiresObservationTime || window.observedAt != nil else { return false }
+            return policy.isRoutable(Utilization(providerID: providerID, window: window.type, usedPercent: percent,
+                                                  confidence: window.confidence, observedAt: window.observedAt), now: now)
+                && (window.resetAt.map { $0 > now } ?? true)
+        }
+    }
+
     private static func append(
         snapshot: ProviderSnapshot, windows: [QuotaWindow], id: String, label: String?, eligible: Bool,
         now: Date, ranked: inout [(Row, Priority)], unknown: inout [Unknown]
     ) {
-        let limits = windows.filter(isPlanWindow).filter {
-            snapshot.providerID != .codex || $0.type == .weekly || UtilizationEngine.usedPercent(from: $0) != nil
-        }
+        let limits = bindingWindows(in: windows, providerID: snapshot.providerID)
         // No plan windows means there is no flat-rate plan to recommend, even if the
         // provider reports tokens or a purchasable credit balance.
-        guard !limits.isEmpty else { return }
-        let trusted = eligible && limits.allSatisfy { window in
-            guard let used = window.used ?? window.remaining.map({ (window.limit ?? 0) - $0 }), used.isFinite,
-                  let limit = window.limit, limit.isFinite, limit > 0,
-                  RouteTargetPolicy.defaultRoutableConfidences.contains(window.confidence) else { return false }
-            if let observed = window.observedAt,
-               !(-RouteTargetPolicy.maxClockSkew...RouteTargetPolicy.agent.maxRoutableAge).contains(now.timeIntervalSince(observed)) { return false }
-            return window.resetAt.map { $0 > now } ?? true
-        }
-        guard trusted, let peak = limits.enumerated().max(by: { lhs, rhs in
-            let left = UtilizationEngine.usedPercent(from: lhs.element) ?? 100
-            let right = UtilizationEngine.usedPercent(from: rhs.element) ?? 100
-            return left == right ? lhs.offset > rhs.offset : left < right
-        })?.element else {
+        guard limits.contains(where: isPlanWindow) else { return }
+        guard eligible, hasTrustedCoverage(windows: limits, providerID: snapshot.providerID, now: now),
+              let peak = bindingWindow(in: limits) else {
             unknown.append(Unknown(id: id, providerID: snapshot.providerID, accountLabel: label,
                                    reason: "A fresh, confirmed plan reading is unavailable."))
             return

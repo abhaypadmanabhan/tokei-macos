@@ -32,7 +32,7 @@ enum RouteFormatting {
             guard SnapshotReader.providerIDs.contains(row.provider), provider == nil || row.provider == provider else { continue }
             guard !stale, row.validUntil > now, row.resetAt.map({ $0 > now }) ?? true,
                   row.expiringAt.map({ $0 > now }) ?? true,
-                  ["session", "fiveHour", "daily", "weekly", "monthly"].contains(row.windowType),
+                  ["session", "fiveHour", "daily", "weekly", "monthly", "perModel"].contains(row.windowType),
                   row.remainingPercent.isFinite, (0...100).contains(row.remainingPercent),
                   ["ready", "avoid"].contains(row.disposition) else {
                 unknown.append(AgentRouteUnknown(id: "\(row.provider):expired:\(index)", provider: row.provider,
@@ -62,8 +62,12 @@ enum RouteFormatting {
             advice = "Avoid these plans until capacity resets."
         } else {
             status = "unavailable"
-            advice = stale ? "Plan readings are out of date. Refresh Tokei before routing work."
-                : "No fresh plan recommendation is available. Refresh Tokei before routing work."
+            if !stale, route != nil, let provider, rows.isEmpty, unknown.isEmpty {
+                advice = "\(providerName(provider)) has no flat-rate plan to route to."
+            } else {
+                advice = stale ? "Plan readings are out of date. Refresh Tokei before routing work."
+                    : "No fresh plan recommendation is available. Refresh Tokei before routing work."
+            }
         }
         return RouteOutput(generatedAt: route?.generatedAt ?? snapshot.generatedAt, stale: stale,
                            status: status, rows: rows, unknown: unknown, advice: advice)

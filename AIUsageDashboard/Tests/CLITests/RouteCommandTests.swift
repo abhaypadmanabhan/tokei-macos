@@ -48,6 +48,18 @@ final class RouteCommandTests: XCTestCase {
         XCTAssertNotNil(try JSONSerialization.jsonObject(with: Data(result.text.utf8)))
     }
 
+    func testS5AgentWithoutAFlatRatePlanExplainsThatRefreshingWillNotHelp() throws {
+        let value = AgentSnapshot(generatedAt: Date(), providers: [], aggregateUtilizationPercent: nil, recommendation: nil,
+                                   route: AgentRoute(generatedAt: Date(), rows: [], unknown: []))
+        let result = try ReviewCLIProbe.run(["route", "--for", "cline"], snapshot: value)
+        XCTAssertEqual(result.status, 69)
+        XCTAssertTrue(result.text.contains("Cline has no flat-rate plan to route to"))
+        XCTAssertFalse(result.text.lowercased().contains("refresh"))
+        let old = AgentSnapshot(generatedAt: Date(), providers: [], aggregateUtilizationPercent: nil, recommendation: nil)
+        let legacy = try ReviewCLIProbe.run(["route", "--for", "cline"], snapshot: old)
+        XCTAssertTrue(legacy.text.contains("No fresh plan recommendation"))
+    }
+
     func testExpiredDecisionAndSanitizationAtReaderBoundary() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let row = AgentRouteRow(id: "/private/profile", provider: "codex", providerName: "bad\nname",

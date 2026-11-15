@@ -150,9 +150,18 @@ public struct RouteTargetPolicy: Sendable, Equatable {
     ///     no opinion on visibility.
     ///   - now: current instant, injected so the age gate is deterministic.
     public func evaluate(_ utilizations: [Utilization], now: Date) -> RouteDecision {
-        let peaks = Self.peaks(in: utilizations.filter {
-            !($0.providerID == .claudeCode && $0.window == .credits)
-        })
+        let grouped = Dictionary(grouping: utilizations, by: \.providerID)
+        let windowsByProvider = grouped.mapValues { readings in
+            RoutePlan.bindingWindows(in: readings.map {
+                QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
+                            resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
+                            observedAt: $0.observedAt, windowDuration: $0.windowDuration)
+            }, providerID: readings[0].providerID)
+        }.filter { $0.value.contains(where: RoutePlan.isPlanWindow) }
+        let considered = utilizations.filter { reading in
+            windowsByProvider[reading.providerID]?.contains { $0.type == reading.window } == true
+        }
+        let peaks = Self.peaks(in: considered)
         guard !peaks.isEmpty else { return .empty }
 
         // Step 4 — computed from EVERY peak, trusted or not (see the asymmetry note).
@@ -162,23 +171,20 @@ public struct RouteTargetPolicy: Sendable, Equatable {
 
         // Step 2 — the trust gate applies only to routing candidates.
         let trusted = peaks.filter { peak in
-            let planReadings = utilizations.filter {
-                $0.providerID == peak.providerID && [.session, .fiveHour, .daily, .weekly, .monthly].contains($0.window)
-            }
-            return isRoutable(peak, now: now) && !planReadings.isEmpty && planReadings.allSatisfy {
-                isRoutable($0, now: now) && ($0.resetAt.map { $0 > now } ?? true)
-            }
+            RoutePlan.hasTrustedCoverage(windows: windowsByProvider[peak.providerID] ?? [],
+                                         providerID: peak.providerID, now: now, policy: self)
         }
 
         // Step 3.
-        let routeTo = routeTarget(trusted: trusted, peaks: peaks, utilizations: utilizations, now: now)
+        let routeTo = routeTarget(trusted: trusted, peaks: peaks, windowsByProvider: windowsByProvider, now: now)
 
         // Providers held back from routing, minus any already named in `avoid` (naming
         // them twice is noise). Surfaced so the omission is visible — a silently-dropped
         // provider reads as "considered and rejected on the numbers", a different claim.
         let avoidedIDs = Set(avoided.map(\.providerID))
+        let trustedIDs = Set(trusted.map(\.providerID))
         let excluded = peaks.filter {
-            !isRoutable($0, now: now) && !avoidedIDs.contains($0.providerID)
+            !trustedIDs.contains($0.providerID) && !avoidedIDs.contains($0.providerID)
         }
 
         return RouteDecision(routeTo: routeTo, avoid: avoided, excluded: excluded, peaks: peaks)
@@ -213,13 +219,9 @@ public struct RouteTargetPolicy: Sendable, Equatable {
         return ProviderID.allCases.compactMap { byProvider[$0] }
     }
 
-    private func routeTarget(trusted: [Utilization], peaks: [Utilization], utilizations: [Utilization], now: Date) -> Utilization? {
+    private func routeTarget(trusted: [Utilization], peaks: [Utilization], windowsByProvider: [ProviderID: [QuotaWindow]], now: Date) -> Utilization? {
         let ranked = trusted.map { peak in
-            let windows = utilizations.filter { $0.providerID == peak.providerID }.map {
-                QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
-                            resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
-                            observedAt: $0.observedAt ?? now, windowDuration: $0.windowDuration)
-            }
+            let windows = windowsByProvider[peak.providerID] ?? []
             return (peak, RoutePlan.priority(providerID: peak.providerID, windows: windows,
                                              tie: RoutePlan.tieKey(peak.providerID, ""), now: now))
         }.sorted { RoutePlan.precedes($0.1, $1.1) }
