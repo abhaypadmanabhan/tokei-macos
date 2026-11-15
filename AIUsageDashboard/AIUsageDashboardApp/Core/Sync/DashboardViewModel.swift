@@ -74,7 +74,7 @@ public final class DashboardViewModel: ObservableObject {
     public func refresh() async {
         isLoading = true
         errorMessage = nil
-        let live = await syncEngine.refreshAll()
+        let live = await syncEngine.refreshFromUser()
         await applyLive(live)
         isLoading = false
     }
