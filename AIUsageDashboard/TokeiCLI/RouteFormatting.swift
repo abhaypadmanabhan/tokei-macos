@@ -120,7 +120,7 @@ enum RouteFormatting {
             return "Avoid this plan because only \(Int(remainingPercent.rounded()))% remains in its tightest window."
         }
         if let expiringAt {
-            return "Use this plan before unused capacity resets in \(countdown(expiringAt.timeIntervalSince(now)))."
+            return "Use this plan before unused capacity resets in \(AgentSnapshot.compactDuration(expiringAt.timeIntervalSince(now)))."
         }
         if paceState == "behind" { return "This plan has room to spare relative to its pace." }
         return "This plan has \(Int(remainingPercent.rounded()))% left in its tightest window."
