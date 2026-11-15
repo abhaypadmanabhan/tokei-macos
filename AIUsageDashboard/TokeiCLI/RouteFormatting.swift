@@ -11,6 +11,12 @@ struct RouteOutput: Encodable {
     let rows: [AgentRouteRow]
     let unknown: [AgentRouteUnknown]
     let advice: String
+    // Keep the render clock out of the machine-readable contract.
+    var evaluatedAt: Date? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, stale, status, rows, unknown, advice
+    }
 
     var exitCode: Int32 { status == "ready" ? 0 : status == "exhausted" ? 1 : 69 }
 }
@@ -70,16 +76,27 @@ enum RouteFormatting {
             }
         }
         return RouteOutput(generatedAt: route?.generatedAt ?? snapshot.generatedAt, stale: stale,
-                           status: status, rows: rows, unknown: unknown, advice: advice)
+                           status: status, rows: rows, unknown: unknown, advice: advice, evaluatedAt: now)
     }
 
     static func render(_ output: RouteOutput) -> String {
-        var lines = [output.advice]
-        for row in output.rows.prefix(8) {
-            let reset = row.secondsToReset.map { "resets in \(AgentSnapshot.compactDuration($0))" } ?? "reset unknown"
-            let window = row.windowLabel ?? row.windowType
-            let pace = row.paceState ?? "pace unknown"
-            lines.append("\(name(row)): \(Int(row.remainingPercent.rounded()))% left · \(window) · \(reset) · \(pace) · \(row.disposition)")
+        let rows = Array(output.rows.prefix(8))
+        let countdowns = rows.map { $0.secondsToReset.map(countdown) }
+        var advice = output.advice
+        if output.status == "ready", let first = rows.first,
+           let expiringAt = first.expiringAt, let now = output.evaluatedAt {
+            // The deciding window and the expiring window can differ. When they
+            // are the same, reuse the row's countdown rather than a saved reason.
+            let remaining = expiringAt == first.resetAt ? countdowns[0] ?? countdown(expiringAt.timeIntervalSince(now))
+                : countdown(expiringAt.timeIntervalSince(now))
+            advice = "Send the next task to \(name(first)). Use this plan before unused capacity resets in \(remaining)."
+        }
+        var lines = [advice]
+        for (row, remaining) in zip(rows, countdowns) {
+            let reset = remaining.map { "resets in \($0)" } ?? "reset unknown"
+            var details = ["\(name(row)): \(Int(row.remainingPercent.rounded()))% left", windowName(row), reset, paceName(row.paceState)]
+            if row.disposition == "avoid" { details.append("avoid") }
+            lines.append(details.joined(separator: " · "))
         }
         for row in output.unknown.prefix(4) {
             let account = row.accountLabel.map { " (\($0))" } ?? ""
@@ -87,6 +104,38 @@ enum RouteFormatting {
         }
         if output.rows.count > 8 || output.unknown.count > 4 { lines.append("Use --json for every plan.") }
         return lines.joined(separator: "\n")
+    }
+
+    private static func countdown(_ seconds: TimeInterval) -> String {
+        guard seconds > 0 else { return "now" }
+        let minutes = Int((seconds / 60).rounded(.up))
+        if minutes < 60 { return "\(minutes) min" }
+        let hours = minutes / 60
+        if hours < 48 { return "\(hours) h" }
+        return "\(hours / 24) d"
+    }
+
+    private static func windowName(_ row: AgentRouteRow) -> String {
+        if let label = row.windowLabel, !["session", "fiveHour", "daily", "weekly", "monthly", "perModel"].contains(label) {
+            return label
+        }
+        switch row.windowType {
+        case "fiveHour": return "5-hour window"
+        case "session": return "session window"
+        case "daily": return "daily window"
+        case "weekly": return "weekly window"
+        case "monthly": return "monthly window"
+        default: return "model window"
+        }
+    }
+
+    private static func paceName(_ state: String?) -> String {
+        switch state {
+        case "behind": return "under pace"
+        case "onPace": return "on pace"
+        case "ahead": return "ahead of pace"
+        default: return "pace unknown"
+        }
     }
 
     private static func name(_ row: AgentRouteRow) -> String {
