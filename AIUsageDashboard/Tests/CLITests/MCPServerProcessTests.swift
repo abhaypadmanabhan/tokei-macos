@@ -150,7 +150,7 @@ final class MCPServerProcessTests: XCTestCase {
     defer { helper.stop() }
     try helper.write(#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"# + "\n")
     let list = try XCTUnwrap(try helper.response(id: 1, timeout: 2)["result"] as? [String: Any])
-    XCTAssertEqual((list["tools"] as? [[String: Any]])?.count, 3)
+    XCTAssertEqual((list["tools"] as? [[String: Any]])?.count, 4)
     try helper.write(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_burn_opportunities"}}"# + "\n")
     let result = try XCTUnwrap(try helper.response(id: 2, timeout: 2)["result"] as? [String: Any])
     let payload = try XCTUnwrap(result["structuredContent"] as? [String: Any])

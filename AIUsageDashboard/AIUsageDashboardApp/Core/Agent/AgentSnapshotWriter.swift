@@ -112,7 +112,8 @@ public actor AgentSnapshotWriter {
                                    goal: $0.today.goal.map { AgentBurnGoal(unit: $0.unit.rawValue, target: $0.target) },
                                    progress: $0.today.progress)
                 }
-            )
+            ),
+            route: RoutePlan.make(snapshots: snapshots, now: generatedAt).agentRoute
         )
     }
 

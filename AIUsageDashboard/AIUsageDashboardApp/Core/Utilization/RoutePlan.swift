@@ -47,7 +47,8 @@ public struct RoutePlan: Sendable, Equatable {
                     let label = accounts.count > 1 ? plainAccountLabel(account.label, index: index) : nil
                     append(snapshot: snapshot, windows: account.quotaWindows,
                            id: "\(snapshot.providerID.rawValue):\(index + 1)", label: label,
-                           eligible: account.quotaStatus == .eligible, now: now, ranked: &ranked, unknown: &unknown)
+                           eligible: AccountQuotaDecision.evaluate(account, providerID: snapshot.providerID, now: now).isEligible,
+                           now: now, ranked: &ranked, unknown: &unknown)
                 }
             }
         }
@@ -100,16 +101,18 @@ public struct RoutePlan: Sendable, Equatable {
         snapshot: ProviderSnapshot, windows: [QuotaWindow], id: String, label: String?, eligible: Bool,
         now: Date, ranked: inout [(Row, Priority)], unknown: inout [Unknown]
     ) {
-        let limits = windows.filter(isPlanWindow)
+        let limits = windows.filter(isPlanWindow).filter {
+            snapshot.providerID != .codex || $0.type == .weekly || UtilizationEngine.usedPercent(from: $0) != nil
+        }
         // No plan windows means there is no flat-rate plan to recommend, even if the
         // provider reports tokens or a purchasable credit balance.
         guard !limits.isEmpty else { return }
         let trusted = eligible && limits.allSatisfy { window in
             guard let used = window.used ?? window.remaining.map({ (window.limit ?? 0) - $0 }), used.isFinite,
                   let limit = window.limit, limit.isFinite, limit > 0,
-                  let observed = window.observedAt,
-                  (-RouteTargetPolicy.maxClockSkew...RouteTargetPolicy.agent.maxRoutableAge).contains(now.timeIntervalSince(observed)),
                   RouteTargetPolicy.defaultRoutableConfidences.contains(window.confidence) else { return false }
+            if let observed = window.observedAt,
+               !(-RouteTargetPolicy.maxClockSkew...RouteTargetPolicy.agent.maxRoutableAge).contains(now.timeIntervalSince(observed)) { return false }
             return window.resetAt.map { $0 > now } ?? true
         }
         guard trusted, let peak = limits.enumerated().max(by: { lhs, rhs in

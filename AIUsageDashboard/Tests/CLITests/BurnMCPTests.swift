@@ -38,7 +38,7 @@ final class BurnMCPTests: XCTestCase {
     func testBurnToolAdvertisesReadOnlyAndExactAdvice() throws {
         let (server, _) = try makeProtocolServer()
         let tool = try XCTUnwrap(server.toolDefinitions().first { $0["name"] as? String == "get_burn_opportunities" })
-        XCTAssertEqual(server.toolDefinitions().count, 3)
+        XCTAssertEqual(server.toolDefinitions().count, 4)
         XCTAssertEqual(tool["title"] as? String, "Use it or lose it")
         XCTAssertEqual((tool["annotations"] as? [String: Bool])?["readOnlyHint"], true)
         XCTAssertTrue(MCPServer.instructions.contains("Never spend credits or paid overage"))

@@ -171,14 +171,14 @@ final class MCPServerTests: XCTestCase {
 
   // MARK: - tools/list
 
-  func testToolsListAdvertisesExactlyTheThreeTools() throws {
+  func testToolsListAdvertisesExactlyTheFourTools() throws {
     let (server, capture) = try makeProtocolServer()
 
     server.handle(line: #"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#)
 
     let result = try XCTUnwrap(try capture.onlyObject()["result"] as? [String: Any])
     let tools = try XCTUnwrap(result["tools"] as? [[String: Any]])
-    XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["get_usage", "get_route_recommendation", "get_burn_opportunities"])
+    XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["get_usage", "get_route_recommendation", "get_burn_opportunities", "get_route"])
   }
 
   /// Every tool needs a non-empty description and a valid JSON Schema, or clients drop
