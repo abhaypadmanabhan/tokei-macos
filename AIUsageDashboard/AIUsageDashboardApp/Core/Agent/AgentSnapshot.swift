@@ -579,8 +579,10 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
     }
 
     public static func isPlainText(_ label: String, maximumLength: Int) -> Bool {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_.,()/%+:'"))
-        return !label.isEmpty && label.count <= maximumLength && label.unicodeScalars.allSatisfy { allowed.contains($0) }
+        let allowed = CharacterSet.alphanumerics.subtracting(.nonBaseCharacters)
+            .union(CharacterSet(charactersIn: " -_.,()/%+:'"))
+        return !label.isEmpty && label.unicodeScalars.count <= maximumLength
+            && label.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     public func advice(asOf now: Date) -> String {
