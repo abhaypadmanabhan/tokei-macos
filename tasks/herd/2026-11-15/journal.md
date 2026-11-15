@@ -1,0 +1,18 @@
+- 01:53 bible + briefs committed on dev; worktrees lane1 (A speed), lane2 (B route), lane3 (W site).
+- 01:53 started t1g (A, sol), t1j (B, sol), t1k (W, opus).
+- 01:56 A and B confirmed briefs (A: harness first, isolated home; B: RoutePlan first, live snapshot predates route block). W told to budget Paper calls (L808).
+- 02:15 B asked to add optional Utilization.windowDuration (monthly-duration ranking bug, red test); approved as additive. W result READY.
+- 02:16 W READY r1 (light clean page, 4 sample captures, demo, claims file all off; film deletion commit blocked by guard-bash large-delete, left for Abhay). Orchestrator looked at 1440 + 390 shots: accepted direction. W review r1 (sol) started.
+- 02:20 B READY (RoutePlan, route block, get_route, tokei route, CLI version from MARKETING_VERSION). B review r1 (opus) started. A interim: CPU 1.583 -> 0.410 %, footprint 80.4 -> 64.6 MB on harness.
+- 02:25 W review r1 CHANGES (S1 unnamed demo buttons at 390). Round 2a sent. Reviewer t2q closed.
+- 02:26 A READY (CPU 1.583 -> 0.439 %, footprint flat). A review r1 (opus) started.
+- 02:27 B review r1 CHANGES (S1 blocker mixed units; S2-S4 should; S5,S6,S9 accepted nits; S7,S8 declined). Fix round sent.
+- 02:28 W round 2a done.
+- 02:32 A review r1 CHANGES (S1 should: perf plist leak into real Preferences; S2-S9 nits, all accepted). Fix round sent.
+- 02:41 A S6: no new symlink following unless dev did it (security boundary, orchestrator's call).
+- 02:42 B fix r1 done; review r2 started (t30).
+- 02:45 B review r2 APPROVE (S10 nit noted); orchestrator reran 8 classes, 0 failures; merged to dev 5c18498. lane2 reused: C (route-ui, opus) started.
+- 02:58 A fix r1 done (b7d841d; median CPU 0.478 %, footprint 66.9 MB, budget 1 %). Review r2 started (t34).
+- 03:00 A review r2 APPROVE (S10, S11 nits noted); merged to dev 5c18498; lane1 freed. C captures ready (7 screens, demo fixture); C told to merge dev.
+- 03:00 A merged to dev dbdc98e (FEATURES.md conflict: kept both entries); lane1 freed.
+- 03:00 orchestrator checked popover + overview-quota captures (demo data, safe). W round 2b sent (captures, route CLI output, footprint data, demo rule check).
