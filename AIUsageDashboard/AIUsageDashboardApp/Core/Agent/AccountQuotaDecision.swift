@@ -90,11 +90,12 @@ public struct AccountQuotaDecision: Sendable {
             .map { evaluate($0, providerID: providerID, now: now, policy: policy) }
             .filter(\.isEligible)
             .sorted { lhs, rhs in
-                if lhs.usedPercent == rhs.usedPercent {
-                    return stableID(for: lhs.account, providerID: providerID)
-                        < stableID(for: rhs.account, providerID: providerID)
-                }
-                return (lhs.usedPercent ?? .infinity) < (rhs.usedPercent ?? .infinity)
+                RoutePlan.precedes(
+                    RoutePlan.priority(providerID: providerID, windows: lhs.account.quotaWindows,
+                                       tie: stableID(for: lhs.account, providerID: providerID), now: now),
+                    RoutePlan.priority(providerID: providerID, windows: rhs.account.quotaWindows,
+                                       tie: stableID(for: rhs.account, providerID: providerID), now: now)
+                )
             }
             .first
     }

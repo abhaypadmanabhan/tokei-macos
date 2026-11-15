@@ -17,11 +17,13 @@ import Foundation
 ///    That single reading represents the provider.
 /// 2. **Then gate on trust.** A peak may be a route target only if its confidence is
 ///    in `routableConfidences` and it is not older than `maxRoutableAge`.
-/// 3. **Route to the least-filled trusted peak**, but only when
+/// 3. **Use RoutePlan's order:** expiring unused plan capacity first, then room
+///    relative to pace. Route to the first trusted peak, but only when
 ///    - at least `minTrustedProviders` distinct providers have a trusted peak
 ///      (least-utilized is only meaningful between numbers we actually have), and
 ///    - that peak is below `avoidThreshold` and within `maxRouteTargetPercent`, and
-///    - it is at least `minSpread` points emptier than the tightest peak anywhere.
+///    - it has expiring capacity or is at least `minSpread` points emptier than
+///      the tightest peak anywhere.
 /// 4. **Avoid every peak at/over `avoidThreshold`**, trusted or not.
 ///
 /// ## Why the rule is shaped this way (the invariants, not preferences)
@@ -159,10 +161,17 @@ public struct RouteTargetPolicy: Sendable, Equatable {
             .sorted { $0.usedPercent > $1.usedPercent }
 
         // Step 2 — the trust gate applies only to routing candidates.
-        let trusted = peaks.filter { isRoutable($0, now: now) }
+        let trusted = peaks.filter { peak in
+            let planReadings = utilizations.filter {
+                $0.providerID == peak.providerID && [.session, .fiveHour, .daily, .weekly, .monthly].contains($0.window)
+            }
+            return isRoutable(peak, now: now) && !planReadings.isEmpty && planReadings.allSatisfy {
+                isRoutable($0, now: now) && ($0.resetAt.map { $0 > now } ?? true)
+            }
+        }
 
         // Step 3.
-        let routeTo = routeTarget(trusted: trusted, peaks: peaks)
+        let routeTo = routeTarget(trusted: trusted, peaks: peaks, utilizations: utilizations, now: now)
 
         // Providers held back from routing, minus any already named in `avoid` (naming
         // them twice is noise). Surfaced so the omission is visible — a silently-dropped
@@ -204,14 +213,24 @@ public struct RouteTargetPolicy: Sendable, Equatable {
         return ProviderID.allCases.compactMap { byProvider[$0] }
     }
 
-    private func routeTarget(trusted: [Utilization], peaks: [Utilization]) -> Utilization? {
+    private func routeTarget(trusted: [Utilization], peaks: [Utilization], utilizations: [Utilization], now: Date) -> Utilization? {
+        let ranked = trusted.map { peak in
+            let windows = utilizations.filter { $0.providerID == peak.providerID }.map {
+                QuotaWindow(providerID: $0.providerID, type: $0.window, used: $0.usedPercent, limit: 100,
+                            resetAt: $0.resetAt, confidence: $0.confidence, source: "utilization",
+                            observedAt: $0.observedAt ?? now)
+            }
+            return (peak, RoutePlan.priority(providerID: peak.providerID, windows: windows,
+                                             tie: RoutePlan.tieKey(peak.providerID, ""), now: now))
+        }.sorted { RoutePlan.precedes($0.1, $1.1) }
         guard trusted.count >= minTrustedProviders,
-              let least = trusted.min(by: { $0.usedPercent < $1.usedPercent }),
+              let candidate = ranked.first,
               let tightest = peaks.max(by: { $0.usedPercent < $1.usedPercent }),
-              least.usedPercent < avoidThreshold,
-              tightest.usedPercent - least.usedPercent >= minSpread
+              candidate.0.usedPercent < avoidThreshold,
+              candidate.1.expiringAt != nil || tightest.usedPercent - candidate.0.usedPercent >= minSpread
         else { return nil }
 
+        let least = candidate.0
         if let ceiling = maxRouteTargetPercent, least.usedPercent > ceiling { return nil }
         return least
     }
