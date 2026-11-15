@@ -110,9 +110,15 @@ enum ProofRoute {
             window.center()
             // A pointer resting over the window would put a hover readout in the capture:
             // slide the window to whichever side of the screen the pointer is not on.
+            // Tries the four corners of the screen for one the pointer is not over.
             if let screen = window.screen?.visibleFrame, window.frame.contains(NSEvent.mouseLocation) {
-                let x = NSEvent.mouseLocation.x > screen.midX ? screen.minX : screen.maxX - window.frame.width
-                window.setFrameOrigin(NSPoint(x: x, y: window.frame.minY))
+                let size = window.frame.size
+                let corners = [NSPoint(x: screen.minX, y: screen.maxY - size.height),
+                               NSPoint(x: screen.maxX - size.width, y: screen.maxY - size.height),
+                               NSPoint(x: screen.minX, y: screen.minY), NSPoint(x: screen.maxX - size.width, y: screen.minY)]
+                if let clear = corners.first(where: { !NSRect(origin: $0, size: size).contains(NSEvent.mouseLocation) }) {
+                    window.setFrameOrigin(clear)
+                }
             }
             // Key and active, so the capture shows live traffic lights and full-strength text.
             NSApp.activate(ignoringOtherApps: true)
