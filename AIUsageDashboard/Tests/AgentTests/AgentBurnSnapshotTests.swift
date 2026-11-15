@@ -61,16 +61,18 @@ final class AgentBurnSnapshotTests: XCTestCase {
         }
     }
 
-    func testPlainTextRejectsCombiningMarksAndBoundsUnicodeScalars() {
+    func testPlainTextPreservesCombiningMarksAndBoundsUnicodeScalars() {
         let oversized = "a" + String(repeating: "\u{0301}", count: 100_000)
         XCTAssertEqual(oversized.count, 1)
-        for text in ["e\u{0301}", "a\u{034F}", oversized] {
-            XCTAssertFalse(AgentBurnWindow.isPlainLabel(text))
-            XCTAssertFalse(AgentBurnWindow.isPlainText(text, maximumLength: 160))
+        for text in ["e\u{0301}", "a\u{034F}", "साप्ताहिक सीमा", "പ്രതിവാരം", "สัปดาห์", "أُسْبُوعِيّ"] {
+            XCTAssertTrue(AgentBurnWindow.isPlainLabel(text))
+            XCTAssertTrue(AgentBurnWindow.isPlainText(text, maximumLength: 160))
             let window = AgentBurnWindow(provider: "codex", providerName: "Codex", type: "fiveHour", label: text,
                                          usedPercent: 38, unusedPercent: 62, resetAt: now.addingTimeInterval(60))
-            XCTAssertEqual(window.windowName, "5-hour window")
+            XCTAssertEqual(window.windowName, text)
         }
+        XCTAssertFalse(AgentBurnWindow.isPlainLabel(oversized))
+        XCTAssertFalse(AgentBurnWindow.isPlainText(oversized, maximumLength: 160))
         XCTAssertTrue(AgentBurnWindow.isPlainLabel("Café weekly"))
         XCTAssertTrue(AgentBurnWindow.isPlainLabel(String(repeating: "a", count: 48)))
         XCTAssertFalse(AgentBurnWindow.isPlainLabel(String(repeating: "a", count: 49)))

@@ -237,6 +237,10 @@ public struct AgentAccountQuota: Codable, Sendable, Equatable {
     /// Kept optional for the original additive-v1 fixture; no arbitrary diagnostics enter it.
     public let reasonCode: String?
 
+    public var plainReasonCode: String? {
+        reasonCode.map { ["no_quota_reading", "untrusted_reading"].contains($0) ? $0 : "untrusted_reading" }
+    }
+
     public init(
         status: String,
         usedPercent: Double? = nil,
@@ -343,6 +347,13 @@ public struct AgentRecommendation: Codable, Sendable, Equatable {
     public let target: AgentRecommendationTarget?
     public let avoidAccounts: [AgentAccountReference]?
     public let validUntil: Date?
+
+    public var plainReason: String {
+        // Generated recommendations separate their plain-text clauses with semicolons.
+        let checked = reason.replacingOccurrences(of: ";", with: ",")
+        return AgentBurnWindow.isPlainText(checked, maximumLength: 160) ? reason
+            : "Routing details are unavailable. Refresh Tokei before choosing work."
+    }
 
     public init(
         routeTo: String?,
@@ -579,7 +590,7 @@ public struct AgentBurnWindow: Codable, Sendable, Equatable {
     }
 
     public static func isPlainText(_ label: String, maximumLength: Int) -> Bool {
-        let allowed = CharacterSet.alphanumerics.subtracting(.nonBaseCharacters)
+        let allowed = CharacterSet.alphanumerics.union(.nonBaseCharacters)
             .union(CharacterSet(charactersIn: " -_.,()/%+:'"))
         return !label.isEmpty && label.unicodeScalars.count <= maximumLength
             && label.unicodeScalars.allSatisfy { allowed.contains($0) }

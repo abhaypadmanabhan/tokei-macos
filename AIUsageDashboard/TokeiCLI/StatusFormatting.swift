@@ -82,7 +82,7 @@ enum StatusFormatting {
         if !recommendation.avoid.isEmpty {
             summary += "; avoid \(recommendation.avoid.joined(separator: ", "))"
         }
-        return [summary, "  \(recommendation.reason)"]
+        return [summary, "  \(recommendation.plainReason)"]
     }
 
     private static func tokensNote(_ provider: AgentProvider) -> String {
@@ -125,7 +125,7 @@ enum StatusFormatting {
         guard let quota = account.quota else {
             return noQuotaNote(tokensToday: account.tokensToday)
         }
-        let reason = quota.reasonCode.map { " (\($0))" } ?? ""
+        let reason = quota.plainReasonCode.map { " (\($0))" } ?? ""
         return "quota \(quota.status)\(reason) · \(tokensNote(tokensToday: account.tokensToday))"
     }
 

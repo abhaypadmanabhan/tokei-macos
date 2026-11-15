@@ -384,7 +384,7 @@ private extension MCPServer {
             stale: snapshot.stale == true || decisionExpired,
             routeTo: recommendation?.routeTo,
             avoid: recommendation?.avoid ?? [],
-            reason: recommendation?.reason
+            reason: recommendation?.plainReason
                 ?? "No routing recommendation available (not enough providers reported live quota).",
             target: recommendation?.target,
             avoidAccounts: recommendation?.avoidAccounts,
