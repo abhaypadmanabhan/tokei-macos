@@ -19,6 +19,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     private let inheritedDirectory: URL?
     private let accountMetadataCache = ClaudeAccountMetadataCache()
     private let usageClientFactory: @Sendable (ClaudeAccount) -> ClaudeUsageClient
+    private let now: @Sendable () -> Date
+    private var failedQuotaAttempts: [ClaudeAccount: (date: Date, error: Error)] = [:]
     private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     /// Multi-account init. Claude Code supports several signed-in accounts on one machine
@@ -34,7 +36,8 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         usageClientFactory: @escaping @Sendable (ClaudeAccount) -> ClaudeUsageClient = {
             ClaudeUsageClientImpl(account: $0)
         },
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.fileManager = fileManager
         self.parser = parser
@@ -48,6 +51,7 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
         }
         self.usageClientFactory = usageClientFactory
         self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
+        self.now = now
     }
 
     /// Single-account init, kept for callers (and tests) that address one directory and
@@ -93,7 +97,9 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {
         let accounts = currentAccounts()
-        let fetchedAt = Date()
+        let fetchedAt = now()
+        let profiles = Set(accounts.flatMap(\.credentialCandidates))
+        failedQuotaAttempts = failedQuotaAttempts.filter { profiles.contains($0.key) }
         let networkEnabled = userDefaultsReader.bool(forKey: "claudeNetworkUsageEnabled")
         // Only label warnings by account when there is more than one — a single-account
         // setup shouldn't grow noise it never had.
@@ -348,10 +354,22 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     ) async throws -> (windows: [QuotaWindow], profile: ClaudeAccount?) {
         var firstFailure: Error?
         for candidate in account.credentialCandidates {
+            if let failed = failedQuotaAttempts[candidate],
+               now().timeIntervalSince(failed.date) >= 0,
+               now().timeIntervalSince(failed.date) < ClaudeUsageClientImpl.freshCacheInterval {
+                if firstFailure == nil { firstFailure = failed.error }
+                continue
+            }
+            // Stamp before suspending: even a failed/missing Keychain lookup has
+            // the quota cadence, and concurrent refreshes cannot spawn it twice.
+            let attemptedAt = now()
+            failedQuotaAttempts[candidate] = (attemptedAt, ClaudeUsageError.cooldownActive)
             do {
                 let windows = try await usageClientFactory(candidate).fetchQuotaWindows()
+                failedQuotaAttempts.removeValue(forKey: candidate)
                 if !windows.isEmpty { return (windows, candidate) }
             } catch {
+                failedQuotaAttempts[candidate] = (attemptedAt, error)
                 // Report the canonical's failure, not the last sibling's: the fallback is an
                 // internal retry, and naming a directory the user never pointed Tokei at
                 // would make the warning harder to act on, not easier.
