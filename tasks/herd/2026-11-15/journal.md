@@ -31,3 +31,6 @@
 - 04:22 E fix r1 done; review r2 started.
 - 04:25 E review r2 CHANGES (S7 blocker: cap treated as expiring capacity in policy path; S8 160-scalar limit drops genuine long reasons). Fix round 2 sent.
 - 04:33 E fix r2 done (782a67b, d002dc2); review r3 (final) started.
+- 04:34 E review r3 APPROVE; merged; version 0.13.0 build 13 (8e54239). Full gates rerun.
+- 04:41 Full gates on 8e54239: all PASS except no-uncommitted (5 deleted PNGs that predate this session). secscan VERDICT PASS (base 713cf93, 41 commits). Release build signed, verify-app PASS.
+- 04:41 Live proof on dist/Tokei.app 0.13.0 (13): perf-bench CPU 0.481 % (budget 1 %), footprint 65.1 MB, cold window 650 ms, only claude_code refreshed (8 in 120 s); real data: tokei route -> Codex (86% left) over Claude Code (61%), exit 0, --json valid; MCP 2025-06-18 lists 4 tools, get_route ready with the same advice; Overview shows "Send work here next: Codex, Weekly"; idle CPU 0.5 %. Installed 0.12.0 relaunched.
