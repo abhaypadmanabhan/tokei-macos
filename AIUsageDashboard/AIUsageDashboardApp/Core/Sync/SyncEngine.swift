@@ -15,6 +15,7 @@ public actor SyncEngine {
     private var periodicSyncTask: Task<Void, Never>?
     private var refreshTask: Task<[ProviderSnapshot], Never>?
     private var pendingFullRefresh = false
+    private var pendingUserRefresh = false
     private var pendingRefreshProviders: Set<ProviderID> = []
     private let now: @Sendable () -> Date
     private let isVisible: @Sendable () async -> Bool
@@ -86,10 +87,11 @@ public actor SyncEngine {
     }
 
     public func refreshFromUser() async -> [ProviderSnapshot] {
-        await refreshAll()
+        await refresh(providers: nil, userInitiated: true)
     }
 
-    func refresh(providers: Set<ProviderID>?) async -> [ProviderSnapshot] {
+    func refresh(providers: Set<ProviderID>?, userInitiated: Bool = false) async -> [ProviderSnapshot] {
+        pendingUserRefresh = pendingUserRefresh || userInitiated
         if let providers { pendingRefreshProviders.formUnion(providers) }
         else { pendingFullRefresh = true }
         if let refreshTask {
@@ -99,9 +101,11 @@ public actor SyncEngine {
             var snapshots: [ProviderSnapshot]
             repeat {
                 let providers = self.pendingFullRefresh ? nil : self.pendingRefreshProviders
+                let userInitiated = self.pendingUserRefresh
                 self.pendingFullRefresh = false
+                self.pendingUserRefresh = false
                 self.pendingRefreshProviders.removeAll()
-                snapshots = await self.performRefresh(providers: providers)
+                snapshots = await self.performRefresh(providers: providers, userInitiated: userInitiated)
             } while self.pendingFullRefresh || !self.pendingRefreshProviders.isEmpty
             // Clear before publishing completion so a later caller starts a new run.
             self.refreshTask = nil
@@ -111,9 +115,9 @@ public actor SyncEngine {
         return await task.value
     }
 
-    private func performRefresh(providers: Set<ProviderID>?) async -> [ProviderSnapshot] {
+    private func performRefresh(providers: Set<ProviderID>?, userInitiated: Bool) async -> [ProviderSnapshot] {
         await watcher.refreshWatchPaths()
-        let refreshed = await registry.snapshots(for: providers)
+        let refreshed = await registry.snapshots(for: providers, userInitiated: userInitiated)
         let refreshedAt = now()
         for snapshot in refreshed { lastRefreshAt[snapshot.providerID] = refreshedAt }
         var snapshots = refreshed

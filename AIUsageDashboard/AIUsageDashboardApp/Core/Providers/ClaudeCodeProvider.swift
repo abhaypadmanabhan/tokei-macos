@@ -1,6 +1,6 @@
 import Foundation
 
-public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
+public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider, UserRefreshAwareProvider {
     public let id: ProviderID = .claudeCode
     public let displayName: String = "Claude Code"
 
@@ -93,6 +93,10 @@ public actor ClaudeCodeProvider: UsageProvider, LocalLogProvider {
     public func authenticate() async throws -> AuthStatus {
         // Claude Code local logs do not require app-level authentication.
         .unknown
+    }
+
+    public func prepareForUserRefresh() {
+        failedQuotaAttempts.removeAll()
     }
 
     public func fetchSnapshot() async throws -> ProviderSnapshot {

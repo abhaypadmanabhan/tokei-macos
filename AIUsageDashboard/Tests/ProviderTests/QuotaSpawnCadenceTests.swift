@@ -2,6 +2,50 @@ import XCTest
 @testable import AIUsageDashboardCore
 
 final class QuotaSpawnCadenceTests: XCTestCase {
+    @MainActor
+    func testManualRefreshRetriesClaudeImmediatelyAfterSignInIsFixed() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "tokei.manual.cadence." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "claudeNetworkUsageEnabled")
+        let client = MissingClaudeQuota()
+        let provider = ClaudeCodeProvider(
+            accounts: [ClaudeAccount(configDirectory: root.appendingPathComponent(".claude"), home: root)],
+            usageClientFactory: { _ in client }, userDefaults: defaults
+        )
+        let store = UsageStore(directory: root)
+        let series = QuotaSeriesStore(directory: root)
+        let engine = SyncEngine(registry: ProviderRegistry(providers: [provider]), store: store,
+                                quotaSeriesStore: series, agentSnapshotWriter: AgentSnapshotWriter(directory: root),
+                                watcher: FileWatcher(paths: []), evaluateThresholds: { _ in })
+        let model = DashboardViewModel(syncEngine: engine, store: store,
+                                       burnStateStore: BurnStateStore(directory: root), quotaSeriesStore: series,
+                                       burnDefaults: defaults, notifyBurn: { _, _ in })
+        await model.refresh()
+        await client.recover()
+        _ = await engine.refreshAll()
+        let automatic = await client.calls
+        XCTAssertEqual(automatic, 1, "automatic refresh must retain the failed-probe cadence")
+        await model.refresh()
+        let manual = await client.calls
+        XCTAssertEqual(manual, 2, "manual Refresh must retry immediately after sign-in is fixed")
+        XCTAssertEqual(model.snapshots.first?.authStatus, .authenticated)
+    }
+
+    func testAntigravityLiveReadingWithoutResetTimeCanStayLiveBetweenAttempts() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        func window(_ reset: Date?) -> QuotaWindow {
+            QuotaWindow(providerID: .antigravity, type: .weekly, used: 10, limit: 100,
+                        remaining: 90, resetAt: reset, confidence: .providerReported, source: "fixture")
+        }
+        XCTAssertTrue(AntigravityQuotaClientImpl.liveWindowsAreCurrent([window(nil)], at: now),
+                      "an absent reset time must not downgrade a still-live reading")
+        XCTAssertTrue(AntigravityQuotaClientImpl.liveWindowsAreCurrent([window(now.addingTimeInterval(1))], at: now))
+        XCTAssertFalse(AntigravityQuotaClientImpl.liveWindowsAreCurrent([window(now)], at: now))
+    }
+
     func testClaudeMissingCredentialsDoNotProbeAgainBeforeTenMinutes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -50,9 +94,14 @@ final class QuotaSpawnCadenceTests: XCTestCase {
 
 private actor MissingClaudeQuota: ClaudeUsageClient {
     var calls = 0
+    private var missing = true
+    func recover() { missing = false }
     func fetchQuotaWindows() async throws -> [QuotaWindow] {
         calls += 1
-        throw ClaudeUsageError.missingCredentials
+        if missing { throw ClaudeUsageError.missingCredentials }
+        return [QuotaWindow(providerID: .claudeCode, type: .weekly, used: 10, limit: 100,
+                            remaining: 90, resetAt: Date(timeIntervalSince1970: 1_900_000_000),
+                            confidence: .providerReported, source: "fixture")]
     }
 }
 

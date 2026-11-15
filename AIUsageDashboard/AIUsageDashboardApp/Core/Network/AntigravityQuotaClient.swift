@@ -92,7 +92,7 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
         let reference = now()
         if let nextAttemptAt, reference < nextAttemptAt {
             if let windows = lastLiveWindows,
-               windows.allSatisfy({ ($0.resetAt ?? .distantPast) > reference }) { return windows }
+               Self.liveWindowsAreCurrent(windows, at: reference) { return windows }
             if let cached = loadStaleCache() { return cached }
             throw lastFailure ?? AntigravityQuotaError.discoveryUnavailable
         }
@@ -125,6 +125,10 @@ public actor AntigravityQuotaClientImpl: AntigravityQuotaClient {
             }
             throw error
         }
+    }
+
+    static func liveWindowsAreCurrent(_ windows: [QuotaWindow], at reference: Date) -> Bool {
+        windows.allSatisfy { $0.resetAt.map { $0 > reference } ?? true }
     }
 
     private func fetchQuotaWindows(port: Int, csrfToken: String) async throws -> [QuotaWindow] {
