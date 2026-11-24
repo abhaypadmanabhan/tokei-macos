@@ -93,19 +93,21 @@ final class OpencodeStoreParserTests: XCTestCase {
         XCTAssertFalse(warning.message.contains(root.path))
     }
 
-    func testBrokenJSONWarningNamesOnlyTheFile() async throws {
+    func testBrokenJSONWarningReportsOnlyTheCount() async throws {
         let root = try makeRoot()
         let messageDirectory = root.appendingPathComponent("storage/message/session", isDirectory: true)
         try FileManager.default.createDirectory(at: messageDirectory, withIntermediateDirectories: true)
-        let message = messageDirectory.appendingPathComponent("corrupt-message.json")
-        try Data("{invalid".utf8).write(to: message)
+        for index in 1...5 {
+            let message = messageDirectory.appendingPathComponent("corrupt-message-\(index).json")
+            try Data("{invalid".utf8).write(to: message)
+        }
 
         let usage = await makeParser().parse(rootDirectory: root)
 
         XCTAssertEqual(usage.warnings.count, 1)
         let warning = try XCTUnwrap(usage.warnings.first)
-        XCTAssertTrue(warning.message.contains("corrupt-message.json"))
-        XCTAssertFalse(warning.message.contains(messageDirectory.path))
+        XCTAssertEqual(warning.message, "opencode JSON message file(s): 5 malformed opencode message(s) skipped")
+        XCTAssertEqual(warning.level, .warning)
     }
 
     func testBothSourcesPreferDatabaseRowsWithoutDoubleCounting() async throws {

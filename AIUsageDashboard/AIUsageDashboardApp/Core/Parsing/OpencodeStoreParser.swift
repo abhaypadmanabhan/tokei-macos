@@ -35,7 +35,7 @@ public actor OpencodeStoreParser {
 
     private struct JSONRead: Sendable {
         let fileCount: Int
-        let malformedFilenames: [String]
+        let malformedCount: Int
         let messages: [ParsedMessage]
     }
 
@@ -102,10 +102,9 @@ public actor OpencodeStoreParser {
         }
 
         let jsonRead = readJSONMessages(rootDirectory: rootDirectory)
-        let filenames = jsonRead.malformedFilenames.joined(separator: ", ")
         warnings.append(contentsOf: malformedWarnings(
-            count: jsonRead.malformedFilenames.count,
-            source: "opencode JSON message file(s) (\(filenames))"
+            count: jsonRead.malformedCount,
+            source: "opencode JSON message file(s)"
         ))
         let sourceKind: SourceKind = jsonRead.fileCount > 0 ? .jsonFiles : .none
         return aggregate(
@@ -303,7 +302,7 @@ public actor OpencodeStoreParser {
 
     private func readJSONMessages(rootDirectory: URL) -> JSONRead {
         let sources = discoverJSONSources(rootDirectory: rootDirectory)
-        var malformedFilenames: [String] = []
+        var malformedCount = 0
         var messages: [ParsedMessage] = []
 
         for source in sources {
@@ -315,11 +314,11 @@ public actor OpencodeStoreParser {
             case .skipped:
                 break
             case .malformed:
-                malformedFilenames.append(source.url.lastPathComponent)
+                malformedCount += 1
             }
         }
 
-        return JSONRead(fileCount: sources.count, malformedFilenames: malformedFilenames, messages: messages)
+        return JSONRead(fileCount: sources.count, malformedCount: malformedCount, messages: messages)
     }
 
     private func discoverJSONSources(rootDirectory: URL) -> [LogSource] {
