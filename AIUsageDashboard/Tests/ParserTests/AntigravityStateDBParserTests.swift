@@ -36,6 +36,18 @@ final class AntigravityStateDBParserTests: XCTestCase {
         XCTAssertTrue(parsed.warnings.isEmpty)
     }
 
+    func testBrokenDatabaseWarningNamesOnlyTheFile() async throws {
+        let database = tempDirectory.appendingPathComponent("corrupt-state.vscdb")
+        try Data("not a SQLite database".utf8).write(to: database)
+
+        let parsed = await AntigravityStateDBParser().parse(stateDatabaseURL: database)
+
+        XCTAssertEqual(parsed.warnings.count, 1)
+        let warning = try XCTUnwrap(parsed.warnings.first)
+        XCTAssertEqual(warning.message, "Antigravity local state database could not be read: corrupt-state.vscdb")
+        XCTAssertFalse(warning.message.contains(tempDirectory.path))
+    }
+
     func testR0602ExclusiveLockFailsClosedWithoutMutatingOriginalDatabase() async throws {
         let stateDB = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: stateDB, rows: fixtureRows())

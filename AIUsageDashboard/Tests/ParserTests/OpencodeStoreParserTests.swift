@@ -80,6 +80,34 @@ final class OpencodeStoreParserTests: XCTestCase {
         XCTAssertEqual(usage.totalCost, 0.02, accuracy: 0.0001)
     }
 
+    func testBrokenDatabaseWarningNamesOnlyTheFile() async throws {
+        let root = try makeRoot()
+        let database = root.appendingPathComponent("opencode.db")
+        try Data("not a SQLite database".utf8).write(to: database)
+
+        let usage = await makeParser().parse(rootDirectory: root)
+
+        XCTAssertEqual(usage.warnings.count, 1)
+        let warning = try XCTUnwrap(usage.warnings.first)
+        XCTAssertEqual(warning.message, "opencode database could not be read: opencode.db")
+        XCTAssertFalse(warning.message.contains(root.path))
+    }
+
+    func testBrokenJSONWarningNamesOnlyTheFile() async throws {
+        let root = try makeRoot()
+        let messageDirectory = root.appendingPathComponent("storage/message/session", isDirectory: true)
+        try FileManager.default.createDirectory(at: messageDirectory, withIntermediateDirectories: true)
+        let message = messageDirectory.appendingPathComponent("corrupt-message.json")
+        try Data("{invalid".utf8).write(to: message)
+
+        let usage = await makeParser().parse(rootDirectory: root)
+
+        XCTAssertEqual(usage.warnings.count, 1)
+        let warning = try XCTUnwrap(usage.warnings.first)
+        XCTAssertTrue(warning.message.contains("corrupt-message.json"))
+        XCTAssertFalse(warning.message.contains(messageDirectory.path))
+    }
+
     func testBothSourcesPreferDatabaseRowsWithoutDoubleCounting() async throws {
         let root = try makeRoot()
         try createOpencodeDatabase(at: root.appendingPathComponent("opencode.db"), rows: [

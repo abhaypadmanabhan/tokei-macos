@@ -495,6 +495,33 @@ final class CodexJSONLParserTests: XCTestCase {
         XCTAssertNil(usage.quotaWindows[0].resetAt)
     }
 
+    func testUnreadableLogWarningNamesOnlyTheFile() async throws {
+        let directory = tempDirectory.appendingPathComponent("not-a-file.jsonl", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: directory)])
+
+        XCTAssertEqual(usage.warnings.count, 1)
+        let warning = try XCTUnwrap(usage.warnings.first)
+        XCTAssertEqual(warning.message, "Failed to parse not-a-file.jsonl")
+        XCTAssertFalse(warning.message.contains(tempDirectory.path))
+        XCTAssertFalse(warning.message.contains(tempDirectory.lastPathComponent))
+    }
+
+    func testUnreadableCompressedLogWarningNamesOnlyTheFile() async throws {
+        let directory = tempDirectory.appendingPathComponent("not-a-file.jsonl.zst", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+
+        let usage = await makeParser().parse(logSources: [makeSource(url: directory)])
+
+        XCTAssertEqual(usage.warnings.count, 1)
+        let warning = try XCTUnwrap(usage.warnings.first)
+        XCTAssertEqual(warning.level, .info)
+        XCTAssertEqual(warning.message, "Skipped compressed Codex rollout not-a-file.jsonl.zst: File could not be read")
+        XCTAssertFalse(warning.message.contains(tempDirectory.path))
+        XCTAssertFalse(warning.message.contains(tempDirectory.lastPathComponent))
+    }
+
     func testMalformedLinesProduceWarnings() async {
         let content = """
         \(CodexFixtures.twoTokenCountEvents())

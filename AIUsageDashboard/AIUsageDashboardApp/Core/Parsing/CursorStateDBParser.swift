@@ -99,11 +99,12 @@ public actor CursorStateDBParser {
             }
             return state
         } catch {
+            let detail = SQLiteSidecarCopy.readFailureDetail(for: stateDatabaseURL, error: error)
             return OfflineState(
                 isAuthenticated: false,
                 warnings: [
                     ProviderWarning(
-                        message: "Cursor local state database could not be read: \(error.localizedDescription)",
+                        message: "Cursor local state database could not be read: \(detail)",
                         level: .warning
                     )
                 ]
