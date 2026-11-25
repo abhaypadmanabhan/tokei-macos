@@ -129,6 +129,8 @@ public actor SyncEngine {
             snapshots += previous.filter { !changed.contains($0.providerID) }
         }
         snapshots.sort { $0.providerID.rawValue < $1.providerID.rawValue }
+        // One pool read by two providers (SuperGrok via Grok and Cursor Super) counts once.
+        snapshots = SharedQuotaPool.deduplicated(snapshots)
         await store.save(snapshots: snapshots)
         await quotaSeriesStore.append(from: snapshots)
         await evaluateThresholds(snapshots)

@@ -17,7 +17,8 @@ public actor ProviderRegistry {
             AntigravityProvider(),
             OpencodeProvider(),
             GeminiProvider(),
-            CopilotProvider()
+            CopilotProvider(),
+            GrokProvider()
         ])
     }
 

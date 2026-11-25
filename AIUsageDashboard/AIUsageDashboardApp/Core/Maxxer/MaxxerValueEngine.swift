@@ -164,7 +164,7 @@ public enum MaxxerValueEngine {
             return "gpt-5"
         case .cursor:
             return "cursor-composer"
-        case .antigravity, .cline, .opencode, .gemini, .copilot:
+        case .antigravity, .cline, .opencode, .gemini, .copilot, .grok:
             return nil
         }
     }
