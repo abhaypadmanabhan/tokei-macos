@@ -67,9 +67,10 @@ public actor AntigravityStateDBParser {
             return state
         } catch {
             cached = nil
+            let detail = SQLiteSidecarCopy.readFailureDetail(for: stateDatabaseURL, error: error)
             return ParsedState(warnings: [
                 ProviderWarning(
-                    message: "Antigravity local state database could not be read: \(error.localizedDescription)",
+                    message: "Antigravity local state database could not be read: \(detail)",
                     level: .warning
                 )
             ])

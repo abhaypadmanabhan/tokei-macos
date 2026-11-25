@@ -91,8 +91,9 @@ public actor OpencodeStoreParser {
                 databaseCache.removeValue(forKey: databaseURL.path)
             } catch {
                 databaseCache.removeValue(forKey: databaseURL.path)
+                let detail = SQLiteSidecarCopy.readFailureDetail(for: databaseURL, error: error)
                 warnings.append(ProviderWarning(
-                    message: "opencode database could not be read: \(error.localizedDescription)",
+                    message: "opencode database could not be read: \(detail)",
                     level: .warning
                 ))
             }
@@ -100,31 +101,18 @@ public actor OpencodeStoreParser {
             databaseCache.removeValue(forKey: databaseURL.path)
         }
 
-        do {
-            let jsonRead = try readJSONMessages(rootDirectory: rootDirectory)
-            warnings.append(contentsOf: malformedWarnings(
-                count: jsonRead.malformedCount,
-                source: "opencode JSON message file(s)"
-            ))
-            let sourceKind: SourceKind = jsonRead.fileCount > 0 ? .jsonFiles : .none
-            return aggregate(
-                messages: jsonRead.messages,
-                sourceKind: sourceKind,
-                warnings: warnings,
-                referenceDate: referenceDate
-            )
-        } catch {
-            warnings.append(ProviderWarning(
-                message: "opencode JSON messages could not be read: \(error.localizedDescription)",
-                level: .warning
-            ))
-            return aggregate(
-                messages: [],
-                sourceKind: .none,
-                warnings: warnings,
-                referenceDate: referenceDate
-            )
-        }
+        let jsonRead = readJSONMessages(rootDirectory: rootDirectory)
+        warnings.append(contentsOf: malformedWarnings(
+            count: jsonRead.malformedCount,
+            source: "opencode JSON message file(s)"
+        ))
+        let sourceKind: SourceKind = jsonRead.fileCount > 0 ? .jsonFiles : .none
+        return aggregate(
+            messages: jsonRead.messages,
+            sourceKind: sourceKind,
+            warnings: warnings,
+            referenceDate: referenceDate
+        )
     }
 
     public func discoverLogSources(rootDirectory: URL) async throws -> [LogSource] {
@@ -134,7 +122,7 @@ public actor OpencodeStoreParser {
             return [LogSource(providerID: .opencode, url: databaseURL)]
         }
 
-        return try discoverJSONSources(rootDirectory: rootDirectory)
+        return discoverJSONSources(rootDirectory: rootDirectory)
     }
 
     private func aggregate(
@@ -312,23 +300,20 @@ public actor OpencodeStoreParser {
 
     // MARK: - JSON fallback
 
-    private func readJSONMessages(rootDirectory: URL) throws -> JSONRead {
-        let sources = try discoverJSONSources(rootDirectory: rootDirectory)
+    private func readJSONMessages(rootDirectory: URL) -> JSONRead {
+        let sources = discoverJSONSources(rootDirectory: rootDirectory)
         var malformedCount = 0
         var messages: [ParsedMessage] = []
 
         for source in sources {
-            do {
-                let dataText = try String(contentsOf: source.url, encoding: .utf8)
-                switch parseMessage(dataText, fallbackCreatedMillis: nil) {
-                case .message(let message):
-                    messages.append(message)
-                case .skipped:
-                    break
-                case .malformed:
-                    malformedCount += 1
-                }
-            } catch {
+            let dataText = try? String(contentsOf: source.url, encoding: .utf8)
+            let outcome = dataText.map { parseMessage($0, fallbackCreatedMillis: nil) } ?? .malformed
+            switch outcome {
+            case .message(let message):
+                messages.append(message)
+            case .skipped:
+                break
+            case .malformed:
                 malformedCount += 1
             }
         }
@@ -336,7 +321,7 @@ public actor OpencodeStoreParser {
         return JSONRead(fileCount: sources.count, malformedCount: malformedCount, messages: messages)
     }
 
-    private func discoverJSONSources(rootDirectory: URL) throws -> [LogSource] {
+    private func discoverJSONSources(rootDirectory: URL) -> [LogSource] {
         let messageRoot = rootDirectory.appendingPathComponent("storage/message", isDirectory: true)
         guard fileManager.fileExists(atPath: messageRoot.path) else { return [] }
         guard let enumerator = fileManager.enumerator(

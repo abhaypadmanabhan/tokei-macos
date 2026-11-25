@@ -103,16 +103,17 @@ final class ClineMessagesParserTests: XCTestCase {
         XCTAssertEqual(usage.totalCost, 0.001, accuracy: 0.0001)
     }
 
-    func testMalformedJSONProducesWarning() async {
+    func testMalformedJSONWarningNamesOnlyTheFile() async throws {
         let sessionID = "1783325327533_bad"
         let url = writeFixture(ClineFixtures.malformedJSON, sessionID: sessionID)
         let usage = await makeParser().parse(logSources: [makeSource(url: url, sessionID: sessionID)])
 
         XCTAssertEqual(usage.lifetime.totalTokens, 0)
         XCTAssertEqual(usage.warnings.count, 1)
-        XCTAssertEqual(usage.warnings.first?.level, .warning)
-        XCTAssertTrue(usage.warnings.first?.message.contains("malformed") == true
-            || usage.warnings.first?.message.contains("Failed to parse") == true)
+        let warning = try XCTUnwrap(usage.warnings.first)
+        XCTAssertEqual(warning.level, .warning)
+        XCTAssertEqual(warning.message, "Failed to parse \(url.lastPathComponent)")
+        XCTAssertFalse(warning.message.contains(url.deletingLastPathComponent().path))
     }
 
     func testBucketsDailyTotalsByMessageTimestamp() async {

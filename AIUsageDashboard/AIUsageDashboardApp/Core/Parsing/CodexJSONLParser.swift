@@ -94,7 +94,7 @@ public actor CodexJSONLParser {
                 }
             } catch {
                 warnings.append(ProviderWarning(
-                    message: "Failed to parse \(source.url.lastPathComponent): \(error.localizedDescription)",
+                    message: "Failed to parse \(source.url.lastPathComponent)",
                     level: .warning
                 ))
             }

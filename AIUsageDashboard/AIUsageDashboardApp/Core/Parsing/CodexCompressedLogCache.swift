@@ -76,11 +76,12 @@ actor CodexCompressedLogCache {
             let decoded = try decode(url, parseLine: parseLine)
             guard Fingerprint.read(url) == fingerprint else { throw CacheError.changedDuringRead }
             outcome = .decoded(decoded)
-        } catch {
+        } catch let error as ZstdDecoder.DecodeError {
             outcome = .failed(error.localizedDescription)
-            guard error is ZstdDecoder.DecodeError || error is CacheError else {
-                return Lookup(outcome: outcome, readFromDisk: true, cacheable: false)
-            }
+        } catch let error as CacheError {
+            outcome = .failed(error.localizedDescription)
+        } catch {
+            return Lookup(outcome: .failed("File could not be read"), readFromDisk: true, cacheable: false)
         }
         entries[fingerprint] = Entry(outcome: outcome, paths: [url])
         return Lookup(outcome: outcome, readFromDisk: true, cacheable: true)
