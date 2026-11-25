@@ -106,6 +106,11 @@ extension QuotaWindow {
 
     var isCodexIndividualLimit: Bool { providerID == .codex && bucketKey == "spend_control_individual_limit" }
 
-    /// Claude overage is a monetary balance, not a binding rate limit.
-    var isInformationalCredits: Bool { bucketKey == "claude_extra_usage" }
+    /// Claude overage is a monetary balance, not a binding rate limit. Copilot's GitHub
+    /// billing meters are monthly counts with no allowance reported, so never a ceiling either.
+    var isInformationalCredits: Bool {
+        guard let bucketKey else { return false }
+        return bucketKey == "claude_extra_usage"
+            || CopilotBillingMeter.Kind.allCases.contains { CopilotBillingParser.bucketKey($0) == bucketKey }
+    }
 }

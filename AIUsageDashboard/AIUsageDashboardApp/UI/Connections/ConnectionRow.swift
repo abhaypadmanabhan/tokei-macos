@@ -66,6 +66,10 @@ struct ConnectionRow: View {
 
     private var hasLiveData: Bool {
         viewModel.gaugeUtilizations.contains { $0.providerID == providerID }
+            // Copilot's billing meters are counts, never a gauge; a provider-reported one is live.
+            || (snapshot?.quotaWindows.contains {
+                $0.confidence == .providerReported && $0.observedAt != nil
+            } ?? false)
     }
 
     private var show: Bool { !hiddenFlag }
@@ -250,6 +254,12 @@ struct ConnectionRow: View {
         case .gemini:
             return "Asks Google for your Gemini quota with the Gemini CLI's sign-in on this Mac."
                 + " Run `gemini` once to sign in."
+        case .copilot:
+            return "Asks GitHub's official billing API for your own Copilot usage this month, with the token"
+                + " you paste in Settings. Org- or enterprise-paid seats are not included."
+        case .opencode:
+            return "Asks OpenCode's official Go usage endpoint for your Go limits,"
+                + " with the API key you paste in Settings."
         default:
             return ""
         }

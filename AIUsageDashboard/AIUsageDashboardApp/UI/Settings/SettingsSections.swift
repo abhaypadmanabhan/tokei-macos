@@ -11,6 +11,8 @@ import AIUsageDashboardCore
 struct LiveQuotaSettingsSection: View {
     let providers: [ProviderID]
     let displayName: (ProviderID) -> String
+    /// The provider's latest warning for an official sign-in, for the row under its switch.
+    var signInProblem: (OfficialSignIn) -> String? = { _ in nil }
     let onChange: () -> Void
 
     var body: some View {
@@ -24,6 +26,9 @@ struct LiveQuotaSettingsSection: View {
                 ForEach(providers, id: \.self) { id in
                     if let key = ProviderMetadata.liveQuotaEnabledKey(for: id) {
                         LiveQuotaToggleRow(providerID: id, name: displayName(id), key: key, onChange: onChange)
+                    }
+                    if let signIn = OfficialSignIn(providerID: id) {
+                        OfficialSignInRow(signIn: signIn, lastProblem: signInProblem(signIn), onChange: onChange)
                     }
                 }
             }
