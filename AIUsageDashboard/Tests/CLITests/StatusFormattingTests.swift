@@ -39,17 +39,18 @@ final class StatusFormattingTests: XCTestCase {
       #"{"ageSeconds":60,"avoid":["cursor"],"generatedAt":"2023-11-14T22:13:20Z","reason":"Cursor weekly 90% used; route to Codex (tightest window 20%)","routeTo":"codex","stale":false}"#)
   }
 
-  func testEightProviderGeneratedReasonStaysByteIdenticalAndTamperedClauseFallsBack() throws {
+  func testEveryProviderGeneratedReasonStaysByteIdenticalAndTamperedClauseFallsBack() throws {
     let now = Date()
     let names: [ProviderID: String] = [.claudeCode: "Claude Code", .codex: "Codex", .cursor: "Cursor",
-      .antigravity: "Antigravity", .cline: "Cline", .opencode: "opencode", .gemini: "Gemini", .copilot: "Copilot"]
+      .antigravity: "Antigravity", .cline: "Cline", .opencode: "opencode", .gemini: "Gemini", .copilot: "Copilot",
+      .grok: "Grok"]
     let utilizations = ProviderID.allCases.map { id in
       Utilization(providerID: id, window: .weekly, usedPercent: id == .codex ? 20 : 90,
         resetAt: now.addingTimeInterval(5 * 86_400), confidence: .providerReported, observedAt: now)
     }
     let generated = try XCTUnwrap(AgentRecommendationEngine.recommend(from: utilizations, displayNames: names, now: now))
-    XCTAssertEqual(names.count, 8)
-    XCTAssertEqual(generated.reason.components(separatedBy: "; ").count, 8)
+    XCTAssertEqual(names.count, ProviderID.allCases.count)
+    XCTAssertEqual(generated.reason.components(separatedBy: "; ").count, ProviderID.allCases.count)
     XCTAssertGreaterThan(generated.reason.unicodeScalars.count, 160)
     XCTAssertEqual(Data(generated.plainReason.utf8), Data(generated.reason.utf8))
 

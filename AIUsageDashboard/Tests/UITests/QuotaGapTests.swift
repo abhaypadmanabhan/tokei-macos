@@ -26,7 +26,7 @@ final class QuotaGapTests: XCTestCase {
 
     func testProvidersWithoutAConnectorHaveNoSource() {
         XCTAssertEqual(gap(.cline, enabled: true), .noSource)
-        XCTAssertEqual(gap(.opencode, enabled: true), .noSource)
+        // Copilot's GitHub billing is counts, never a gauge: no pending reading either.
         XCTAssertEqual(gap(.copilot, enabled: true, syncing: true), .noSource)
         // Codex reads local logs when its probe has nothing: not a pending reading.
         XCTAssertEqual(gap(.codex, enabled: true, syncing: true), .noSource)

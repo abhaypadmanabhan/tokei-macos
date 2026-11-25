@@ -64,6 +64,11 @@ struct ProviderDetailView: View {
         activeWindows.first { $0.type == .credits }
     }
 
+    var copilotBillingWindows: [QuotaWindow] {
+        guard snapshot.providerID == .copilot else { return [] }
+        return activeWindows.filter { $0.type == .credits && $0.used != nil }
+    }
+
     /// Whether ANY local token metric was measured — the honest divider between the
     /// full-metrics surface and the plan-only one (mirrors `ProviderCapabilityTier`).
     var hasLocalTokenData: Bool {
@@ -126,7 +131,11 @@ struct ProviderDetailView: View {
                 if let insight = insightSentence { insightBox(insight) }
                 gaugeStatsRow
                 if accounts.count > 1 { accountScopeNote }
-                if isPlanOnly { planCreditsSection }
+                if !copilotBillingWindows.isEmpty {
+                    copilotBillingSection
+                } else if isPlanOnly {
+                    planCreditsSection
+                }
                 bottomRegion
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -177,7 +186,7 @@ struct ProviderDetailView: View {
     private var headerConfidence: MetricConfidence {
         snapshot.todayUsage.confidence != .unavailable
             ? snapshot.todayUsage.confidence
-            : (value?.confidence ?? .unavailable)
+            : (copilotBillingWindows.first?.confidence ?? value?.confidence ?? .unavailable)
     }
 
     private var routeChip: some View {
@@ -237,7 +246,7 @@ struct ProviderDetailView: View {
         }
 
         // 2 — pay-as-you-go: has tokens, no quota ceiling.
-        if nonCreditsWindows.isEmpty, hasLocalTokenData, todayTotal != nil {
+        if nonCreditsWindows.isEmpty, copilotBillingWindows.isEmpty, hasLocalTokenData, todayTotal != nil {
             return "Pay-as-you-go, no quota ceiling — spend is metered locally, so there's nothing to run out of."
         }
 

@@ -207,7 +207,15 @@ public struct CursorUsageSummary: Sendable, Equatable {
     }
 
     /// Prefer the two independent allowances; the combined percentage is not a third pool.
-    public func quotaWindows(observedAt: Date?, fallbackLabel: String? = nil) -> [QuotaWindow] {
+    /// A Super plan draws on the SuperGrok pool, so its one overall figure is tagged as that
+    /// shared pool (`SharedQuotaPool`) and counted once alongside Grok's own reading.
+    public func quotaWindows(
+        observedAt: Date?, fallbackLabel: String? = nil, planMembership: String? = nil
+    ) -> [QuotaWindow] {
+        if Self.isSuperGrokPlan(membershipType ?? planMembership), let usedPercent {
+            return [quotaWindow(percent: usedPercent, label: SharedQuotaPool.superGrokLabel,
+                                bucket: SharedQuotaPool.superGrokBucketKey, at: observedAt)]
+        }
         if let autoPercentUsed, let apiPercentUsed {
             return [
                 quotaWindow(percent: autoPercentUsed, label: "Cursor models", bucket: "cursor_auto", at: observedAt),
@@ -222,6 +230,11 @@ public struct CursorUsageSummary: Sendable, Equatable {
         QuotaWindow(providerID: .cursor, type: .monthly, used: percent, limit: 100,
                     remaining: 100 - percent, resetAt: resetAt, confidence: .providerReported,
                     source: "cursor.com/api/usage-summary", label: label, bucketKey: bucket, observedAt: observedAt)
+    }
+
+    /// Cursor's `stripeMembershipType` for the plan billed through SuperGrok.
+    static func isSuperGrokPlan(_ membership: String?) -> Bool {
+        membership?.trimmingCharacters(in: .whitespaces).lowercased() == "super"
     }
 
     private static func percentUsed(plan: [String: Any]?) -> Double? {

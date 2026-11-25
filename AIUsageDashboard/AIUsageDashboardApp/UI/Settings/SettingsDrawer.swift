@@ -115,9 +115,13 @@ struct SettingsDrawer: View {
             LiveQuotaSettingsSection(
                 providers: quotaProviders,
                 displayName: displayName,
+                signInProblem: signInProblem,
                 onChange: { Task { await viewModel.refresh() } }
             )
-            QuotaAlertsSection(providers: quotaProviders, displayName: displayName)
+            QuotaAlertsSection(
+                providers: quotaProviders.filter { !ProviderMetadata.billingOnlyProviders.contains($0) },
+                displayName: displayName
+            )
             BurnNudgesSection()
             appearanceSection
             LaunchAtLoginSection()
@@ -129,6 +133,12 @@ struct SettingsDrawer: View {
     /// a quota to alert on.
     private var quotaProviders: [ProviderID] {
         activeProviders.filter { ProviderMetadata.liveQuotaProviders.contains($0) }
+    }
+
+    /// The latest warning an official sign-in produced on the last sync (401, 403, no usage).
+    private func signInProblem(_ signIn: OfficialSignIn) -> String? {
+        viewModel.snapshot(for: signIn.providerID)?.warnings
+            .last(where: { $0.message.hasPrefix(signIn.warningPrefix) })?.message
     }
 
     private func displayName(_ id: ProviderID) -> String {

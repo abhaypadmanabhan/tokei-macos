@@ -2,11 +2,19 @@ import Foundation
 
 /// Reads Copilot CLI shutdown usage from session-state without accessing credentials.
 /// Extension-only installs remain visible with unavailable metrics until CLI logs exist.
+///
+/// Live billing is opt-in: only with `copilotLiveBillingEnabled` on AND a GitHub token saved
+/// in Settings (Tokei's own Keychain) does it ask GitHub's official billing API for the
+/// person's own premium-request and AI-credit usage this month.
 public actor CopilotProvider: UsageProvider {
     public let id: ProviderID = .copilot
     public let displayName: String = "GitHub Copilot"
 
-    public nonisolated var capabilities: ProviderCapabilities { [.localLog] }
+    public nonisolated var capabilities: ProviderCapabilities {
+        userDefaultsReader.bool(forKey: OfficialSignIn.githubBilling.liveEnabledKey)
+            ? [.localLog, .cost, .providerEndpoint]
+            : [.localLog]
+    }
 
     private let sessionParser: CopilotSessionParser
     private let fileManager: FileManager
@@ -14,6 +22,9 @@ public actor CopilotProvider: UsageProvider {
     private let now: @Sendable () -> Date
     private let installationMarkers: [URL]
     private let extensionDirectories: [URL]
+    private let billingClient: any CopilotBillingFetching
+    private let secretStore: any SecretStore
+    private nonisolated let userDefaultsReader: ProviderUserDefaultsReader
 
     /// Install status doesn't flip mid-session — compute once instead of re-stat'ing
     /// up to 8 marker paths plus scanning 3 extension directories on every sync cycle.
@@ -25,9 +36,15 @@ public actor CopilotProvider: UsageProvider {
         extensionDirectories: [URL]? = nil,
         sessionParser: CopilotSessionParser = .init(),
         calendar: Calendar = .current,
-        now: @escaping @Sendable () -> Date = Date.init
+        now: @escaping @Sendable () -> Date = Date.init,
+        billingClient: (any CopilotBillingFetching)? = nil,
+        secretStore: (any SecretStore)? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.fileManager = fileManager
+        self.billingClient = billingClient ?? CopilotBillingClient()
+        self.secretStore = secretStore ?? Keychain.shared
+        self.userDefaultsReader = ProviderUserDefaultsReader(userDefaults)
         self.calendar = calendar
         self.now = now
         self.sessionParser = sessionParser
@@ -116,18 +133,22 @@ public actor CopilotProvider: UsageProvider {
                 level: .info
             )
 
+        let billing = await liveBilling(at: fetchedAt)
+        let hasLocalUsage = history.shutdownCount > 0
+
         return ProviderSnapshot(
             providerID: id,
             displayName: displayName,
-            authStatus: isInstalled ? .unknown : .unauthenticated,
-            quotaWindows: [],
+            authStatus: billing.authenticated ? .authenticated : (isInstalled ? .unknown : .unauthenticated),
+            quotaWindows: billing.windows,
             todayUsage: history.today,
             weekUsage: history.week,
             monthUsage: history.month,
             lifetimeUsage: history.lifetime,
-            costUsage: costUsage(history, at: fetchedAt),
-            warnings: history.warnings + (history.shutdownCount == 0 ? [warning] : []),
-            lastSyncedAt: history.shutdownCount == 0 ? nil : fetchedAt,
+            // GitHub's billed amount, when it answered, is the real cost; else the local estimate.
+            costUsage: billing.cost ?? costUsage(history, at: fetchedAt),
+            warnings: history.warnings + (hasLocalUsage || billing.authenticated ? [] : [warning]) + billing.warnings,
+            lastSyncedAt: hasLocalUsage || billing.authenticated ? fetchedAt : nil,
             dailyTotals: history.dailyTotals,
             dailyModelUsage: history.lifetime.totalTokens == nil ? nil : history.dailyModelUsage
         )
@@ -143,6 +164,80 @@ public actor CopilotProvider: UsageProvider {
         let amounts = models.compactMap { pricing.cost(model: $0.key, tokens: $0.value) }
         guard !amounts.isEmpty else { return nil }
         return CostUsage(amount: amounts.reduce(0, +), currency: "USD", confidence: .estimated)
+    }
+
+    // MARK: - GitHub billing (official, opt-in)
+
+    private struct LiveBilling {
+        var windows: [QuotaWindow] = []
+        var cost: CostUsage?
+        var warnings: [ProviderWarning] = []
+        var authenticated = false
+    }
+
+    private func liveBilling(at fetchedAt: Date) async -> LiveBilling {
+        let signIn = OfficialSignIn.githubBilling
+        guard userDefaultsReader.bool(forKey: signIn.liveEnabledKey) else { return LiveBilling() }
+        do {
+            guard let token = try await secretStore.secret(for: signIn.keychainAccount) else {
+                throw OfficialUsageError.missingCredential
+            }
+            let usage = try await billingClient.fetchUsage(token: token)
+            var result = LiveBilling(
+                windows: CopilotBillingParser.quotaWindows(from: usage, observedAt: fetchedAt),
+                cost: CopilotBillingParser.billedCost(from: usage),
+                authenticated: true
+            )
+            if usage.isEmpty {
+                result.warnings.append(ProviderWarning(
+                    message: "\(signIn.warningPrefix) GitHub shows no personal Copilot usage this month."
+                        + " Seats paid for by an organization or enterprise do not appear in personal billing.",
+                    level: .warning
+                ))
+            }
+            return result
+        } catch {
+            return LiveBilling(warnings: [Self.billingWarning(for: error)])
+        }
+    }
+
+    static func billingWarning(for error: Error) -> ProviderWarning {
+        let prefix = OfficialSignIn.githubBilling.warningPrefix
+        switch error {
+        case OfficialUsageError.missingCredential:
+            return ProviderWarning(
+                message: "\(prefix) live billing is on but no GitHub token is saved."
+                    + " Paste one in Settings › Live quota.",
+                level: .info
+            )
+        case OfficialUsageError.unauthorized:
+            return ProviderWarning(
+                message: "\(prefix) GitHub rejected the saved token (401): it is wrong, revoked or expired."
+                    + " Make a new one.",
+                level: .warning
+            )
+        case OfficialUsageError.forbidden:
+            return ProviderWarning(
+                message: "\(prefix) GitHub refused billing access (403). Either the token lacks the"
+                    + " Plan: Read permission, or your Copilot seat is managed by an organization or"
+                    + " enterprise. Those seats need an org admin's billing access; a personal token"
+                    + " cannot read them.",
+                level: .warning
+            )
+        case OfficialUsageError.cooldownActive, OfficialUsageError.rateLimited:
+            return ProviderWarning(
+                message: "\(prefix) GitHub rate limited the request, will retry later.", level: .info
+            )
+        case is KeychainError:
+            return ProviderWarning(
+                message: "\(prefix) could not read the saved token from the Keychain.", level: .warning
+            )
+        default:
+            return ProviderWarning(
+                message: "\(prefix) could not read billing right now.",
+                level: .warning
+            )
+        }
     }
 
     private nonisolated static func isCopilotExtension(_ url: URL) -> Bool {

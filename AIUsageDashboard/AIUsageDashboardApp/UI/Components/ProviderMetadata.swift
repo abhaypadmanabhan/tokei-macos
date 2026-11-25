@@ -43,7 +43,13 @@ enum ProviderCapabilityTier {
 /// Static, UI-only facts about each provider that never need Core access: local
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
-    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity, .gemini]
+    static let liveQuotaProviders: Set<ProviderID> = [
+        .claudeCode, .codex, .cursor, .antigravity, .gemini, .grok, .copilot, .opencode
+    ]
+
+    /// Live sources that report counts and dollars, never a percent of a limit (Copilot's
+    /// GitHub billing). They get a live switch but no pending gauge and no alert thresholds.
+    static let billingOnlyProviders: Set<ProviderID> = [.copilot]
 
     /// Network toggles that are on until the user turns them off (registered at launch, so
     /// `UserDefaults.bool(forKey:)` and `@AppStorage` read `true` when the key is unset).
@@ -51,7 +57,7 @@ enum ProviderMetadata {
 
     static func showsPendingQuota(for providerID: ProviderID) -> Bool {
         // Codex still reads local logs when its optional CLI probe has no window.
-        providerID != .codex && liveQuotaProviders.contains(providerID)
+        providerID != .codex && !billingOnlyProviders.contains(providerID) && liveQuotaProviders.contains(providerID)
     }
 
     static func liveQuotaEnabledKey(for providerID: ProviderID) -> String? {
@@ -61,6 +67,9 @@ enum ProviderMetadata {
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         case .gemini: return "geminiNetworkUsageEnabled"
+        case .grok: return GrokProvider.networkUsageEnabledKey
+        case .copilot: return OfficialSignIn.githubBilling.liveEnabledKey
+        case .opencode: return OfficialSignIn.opencodeGo.liveEnabledKey
         default: return nil
         }
     }
@@ -91,6 +100,8 @@ enum ProviderMetadata {
                 "~/.vscode/extensions",
                 "~/Library/Application Support/Code/User/globalStorage/github.copilot-chat"
             ]
+        case .grok:
+            return ["~/.grok/auth.json"]
         }
     }
 

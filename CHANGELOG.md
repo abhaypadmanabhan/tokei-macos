@@ -3,6 +3,43 @@
 All notable changes to Tokei (`ai.padzy.tokei`). Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/). Dates are ISO-8601.
 
+## [0.14.0] — 2026-11-24
+
+Build 14. "Sign-ins": the SuperGrok pool shows up once, Copilot and OpenCode Go can be read from their official
+APIs with a key you paste, and parser warnings stop carrying folder paths. Merged on `dev` as PRs #72, #73 and #74;
+release record `tasks/reports/release-2026-11-24.md`.
+
+### Added
+- **Grok provider: the SuperGrok pool.** Opt-in (Settings › Live quota › Grok). Reads the Grok CLI's own billing
+  call (`cli-chat-proxy.grok.com/v1/billing?format=credits`) with the login the CLI already saved in
+  `~/.grok/auth.json`, and shows one weekly "SuperGrok pool" window. Tokei never writes, refreshes or copies that
+  login; an expired one (about 6 hours) says "run `grok` once" and sends no request. A 429 records a cooldown.
+- **Shared pools counted once** (`SharedQuotaPool`): when Grok and a Cursor Super plan report the same pool, totals,
+  route, burn, alerts and the agent snapshot count it once (Grok's reading wins, else the freshest).
+- **Copilot via GitHub billing (opt-in).** Paste a fine-grained token with Plan: Read-only in Settings › Live quota ›
+  Copilot. Shows premium-request and AI-credit counts and billed dollars for the month; no invented percent, so
+  alerts, pace and routing ignore these meters. 401, 403 (missing permission or an org/enterprise seat), empty
+  personal billing and GitHub's rate limit are each said plainly.
+- **OpenCode Go usage (opt-in).** Paste your OpenCode Go API key; Tokei reads the 5-hour, weekly and monthly windows
+  from `opencode.ai/inference/go/v1/usage`.
+
+### Changed
+- Cursor 3.x encrypts its sign-in at rest. Tokei does not read other apps' keychain items, so it now makes no request
+  and says why, and on a Super plan points to the Grok row. A readable Super plan is tagged as the SuperGrok pool.
+- `Keychain.save` updates an existing item instead of failing on a duplicate.
+
+### Security
+- Pasted keys live only in Tokei's own Keychain (`github.billing.token`, `opencode.go.apiKey`), are never shown
+  again, logged, or written to preferences, files or the agent snapshot; Remove deletes them. Requests use the
+  no-cache, same-host-redirect-only session and log status codes only. Server error text is shown only when short
+  and free of anything key- or email-shaped.
+- Parser warnings (Antigravity, Cline, Codex, Cursor, OpenCode, SQLite copies) no longer include directory paths;
+  OpenCode malformed-JSON warnings are counts only (#72).
+
+### Internal
+- `make-dmg.sh` falls back to the saved window layout and `hdiutil` when Finder does not answer (a locked screen
+  stopped the unattended 0.13.0 disk image step).
+
 ## [0.13.0] — 2026-11-15
 
 Build 13. "Route": Tokei ranks your plans and says where the next task should go, gives coding agents the same

@@ -12,7 +12,7 @@ final class LowPowerSyncTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
-        try FileManager.default.removeItem(at: directory)
+        try? FileManager.default.removeItem(at: directory)
     }
 
     private func engine(power: PowerState, sleeper: SyncTestSleeper, watcher: FileWatcher) -> SyncEngine {

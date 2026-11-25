@@ -55,6 +55,18 @@ final class CursorStateDBParserTests: XCTestCase {
         XCTAssertEqual(state.acceptedLinesByDate[date("2026-07-05")], 15)
     }
 
+    func testBrokenDatabaseWarningNamesOnlyTheFile() async throws {
+        let database = tempDirectory.appendingPathComponent("corrupt-state.vscdb")
+        try Data("not a SQLite database".utf8).write(to: database)
+
+        let state = await CursorStateDBParser(calendar: calendar).parse(stateDatabaseURL: database)
+
+        XCTAssertEqual(state.warnings.count, 1)
+        let warning = try XCTUnwrap(state.warnings.first)
+        XCTAssertEqual(warning.message, "Cursor local state database could not be read: corrupt-state.vscdb")
+        XCTAssertFalse(warning.message.contains(tempDirectory.path))
+    }
+
     func testNoAccessTokenMeansUnauthenticated() async throws {
         let db = tempDirectory.appendingPathComponent("state.vscdb")
         try createStateDatabase(at: db, rows: [

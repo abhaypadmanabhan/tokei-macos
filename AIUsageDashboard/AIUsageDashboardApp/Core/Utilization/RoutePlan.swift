@@ -190,6 +190,7 @@ public struct RoutePlan: Sendable, Equatable {
         case .opencode: return "opencode"
         case .gemini: return "Gemini"
         case .copilot: return "Copilot"
+        case .grok: return "Grok"
         }
     }
 }

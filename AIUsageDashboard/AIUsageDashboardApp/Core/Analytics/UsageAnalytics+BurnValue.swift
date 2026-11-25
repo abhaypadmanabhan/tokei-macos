@@ -38,7 +38,7 @@ extension UsageAnalytics {
         case .claudeCode: model = "claude-sonnet-4-6"
         case .codex: model = "gpt-5"
         case .cursor: model = "cursor-composer"
-        case .antigravity, .cline, .opencode, .gemini, .copilot: return nil
+        case .antigravity, .cline, .opencode, .gemini, .copilot, .grok: return nil
         }
         guard let amount = pricing.cost(model: model, tokens: usage) else { return nil }
         guard let days = snapshot.dailyTotals else { return amount }

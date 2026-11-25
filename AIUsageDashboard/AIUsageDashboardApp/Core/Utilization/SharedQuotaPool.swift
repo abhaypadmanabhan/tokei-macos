@@ -1,0 +1,94 @@
+import Foundation
+
+/// One allowance that more than one provider draws on, such as the SuperGrok pool that
+/// both Grok (CLI, chat) and Cursor's Super plan spend from.
+///
+/// Each provider that can read the pool tags its window with the pool's `bucketKey`.
+/// `deduplicated(_:)` then keeps exactly one copy, so totals, burn, route, alerts and the
+/// agent snapshot count the pool once rather than once per provider. Keep the underlying
+/// provider readings so a targeted refresh can still fall back to another provider.
+public enum SharedQuotaPool {
+    public static let superGrokBucketKey = "supergrok_pool"
+    public static let superGrokLabel = "SuperGrok pool"
+
+    /// The provider whose row shows each pool when several report it.
+    static let owners: [String: ProviderID] = [superGrokBucketKey: .grok]
+
+    static func isShared(_ window: QuotaWindow) -> Bool {
+        window.bucketKey.map { owners[$0] != nil } ?? false
+    }
+
+    /// Keeps one reading of each shared pool: the owner's when it has a usable one, else
+    /// the most recently observed. Every other provider loses that window and gains an
+    /// info line naming where the pool is shown. Idempotent; order-preserving.
+    public static func deduplicated(_ snapshots: [ProviderSnapshot], now: Date = Date()) -> [ProviderSnapshot] {
+        var keeper: [String: ProviderID] = [:]
+        for (key, owner) in owners {
+            let holders = snapshots.compactMap { snapshot -> (ProviderID, QuotaWindow)? in
+                guard let window = snapshot.quotaWindows.first(where: { $0.bucketKey == key }) else { return nil }
+                return (snapshot.providerID, window)
+            }
+            guard holders.count > 1 else { continue }
+            let current = holders.filter { _, window in
+                !hasReset(window, now: now) && UtilizationEngine.usedPercent(from: window) != nil
+            }
+            let candidates = current.isEmpty ? holders : current
+            if candidates.contains(where: { $0.0 == owner }) {
+                keeper[key] = owner
+            } else {
+                keeper[key] = candidates.max {
+                    ($0.1.observedAt ?? .distantPast) < ($1.1.observedAt ?? .distantPast)
+                }?.0
+            }
+        }
+
+        return snapshots.map { snapshot in
+            let dropped = Set(keeper.compactMap { key, provider in
+                provider != snapshot.providerID && snapshot.quotaWindows.contains { $0.bucketKey == key } ? key : nil
+            })
+            let hasExpiredReading = snapshot.quotaWindows.contains { isShared($0) && hasReset($0, now: now) }
+            guard !dropped.isEmpty || hasExpiredReading else { return snapshot }
+            let names = dropped.sorted().map { key in
+                "Quota: \(key == superGrokBucketKey ? superGrokLabel : key), shared with "
+                    + "\(displayName(keeper[key])); counted once there."
+            }
+            return snapshot.replacingQuota(
+                windows: snapshot.quotaWindows.compactMap { window in
+                    guard let key = window.bucketKey, owners[key] != nil else { return window }
+                    guard !dropped.contains(key) else { return nil }
+                    return SavedSnapshotAging.expiring(window, now: now)
+                },
+                extraWarnings: names.map { ProviderWarning(message: $0, level: .info) }
+            )
+        }
+    }
+
+    private static func hasReset(_ window: QuotaWindow, now: Date) -> Bool {
+        window.resetAt.map { $0 <= now } ?? false
+    }
+
+    private static func displayName(_ id: ProviderID?) -> String {
+        switch id {
+        case .grok: return "Grok"
+        case .cursor: return "Cursor"
+        case let other?: return other.rawValue
+        case nil: return "another provider"
+        }
+    }
+}
+
+extension ProviderSnapshot {
+    /// A copy with a different set of quota windows and extra warnings; everything else kept.
+    func replacingQuota(windows: [QuotaWindow], extraWarnings: [ProviderWarning]) -> ProviderSnapshot {
+        let existing = Set(warnings.map(\.message))
+        return ProviderSnapshot(
+            providerID: providerID, displayName: displayName, authStatus: authStatus,
+            quotaWindows: windows, todayUsage: todayUsage, weekUsage: weekUsage,
+            monthUsage: monthUsage, lifetimeUsage: lifetimeUsage, costUsage: costUsage,
+            warnings: warnings + extraWarnings.filter { !existing.contains($0.message) },
+            lastSyncedAt: lastSyncedAt, dailyTotals: dailyTotals, hourlyTotals: hourlyTotals,
+            dailyModelUsage: dailyModelUsage,
+            accounts: accounts, headlineAccountID: headlineAccountID
+        )
+    }
+}

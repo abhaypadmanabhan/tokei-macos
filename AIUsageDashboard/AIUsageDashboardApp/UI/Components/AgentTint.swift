@@ -21,6 +21,7 @@ public enum AgentTint {
         case .gemini:      return Color(hex: "6D93DB")
         case .opencode:    return Color(hex: "B98BD0")
         case .copilot:     return Color(hex: "9AA0AA")
+        case .grok:        return Color(hex: "8E9BB0")
         }
     }
 }
