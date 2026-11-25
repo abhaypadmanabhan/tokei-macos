@@ -281,3 +281,71 @@ Proof: `~/Library/Developer/TokeiWork/proof/site-1115/shots-r2c/`, `page-check-r
      `claims-on-full-390.png`.
    - `test:gates`: `# tests 44 # pass 44 # fail 0`; `tsc --noEmit` exit 0; prove-red: red on old code.
 4. Server on :3517 stopped (lsof count 0). The three large deletions stay uncommitted for Abhay's yes.
+
+## Round 2d (release flip)
+
+STATUS: READY. Commit `58f6c74` on `redesign/2026-11-15` (worktree `~/wt/lane3`). No deploy, no push.
+
+1. `routeCli.output`: `node scripts/cli-sample.mjs <dist/Tokei.app/Contents/Helpers/tokei> route` (signed, team
+   A47GG9FV27, `tokei 0.13.0`), exit 0, four lines copied verbatim ("… resets in 42 min.", "5-hour window",
+   "under pace"). The demo's reasons now use the CLI's own countdown (`RouteFormatting.countdown`, main 878f043:
+   minutes rounded up, "42 min" / "19 h" / "12 d"); the RoutePlan sentences are unchanged since 1f452de. Note: the
+   app's own route row still says "40m" (RoutePlan `compactDuration`), so the popover crop and the demo use
+   different duration styles; the demo follows the CLI as the brief asked. Unused `countdown` (BurnCopy) and
+   `compactDuration` ports deleted. Tests updated and red on the old code (prove-red: "red on old code").
+2. All three claims shipped. Hero and route section use the pass-2 captures; footprint 0.478% / 1.583% before /
+   66.9 MB (median of three); the one-run 0.481% / 65.1 MB noted in the claims file.
+3. `lib/site.ts`: version 0.13.0, `…/releases/download/v0.13.0/Tokei-0.13.0-arm64.dmg`, `downloadMB: "10.5"` from
+   the real DMG: waited until `stapler validate` passed and the size held (unsigned 10,511,756 → signed 10,521,270
+   → stapled 10,523,275 bytes); `spctl` "accepted, source=Notarized Developer ID".
+4. Copy: the agents line is one sentence ("Agents call get_route over MCP, and tokei route prints the same ranked
+   list in a terminal."), then "Either way, Tokei points agents at capacity your plans already include …". Also:
+   "which plan to spend" → "to use"; "Tokei notices" → "Tokei shows a new record" (BurnCopy "New record: best day");
+   "same rig" → "same Mac and workload"; memory note "Physical footprint, median of the same runs" (it is a
+   median, not a mean); route caption no longer says "the same answer" (the crop shows different demo plans).
+   Fallback agents line also made true and single ("… and tokei burn lists the windows to use first.").
+   Layout fix found in the screenshots: at 390 px a fact value that wrapped under its label sat left/centred; it
+   now stays on the right edge (`margin-left: auto`).
+5. Build exit 0: check-claims PASS (shipped: route, routeCli, footprint; 6 + 3 captures), check-copy PASS (128
+   nodes, 848 words), initial JS 137.1 of 150 KB, first load 603.0 KB; tsc clean; `test:gates` 44/44. page-check
+   PASS at 1440, 720 and 390 (15 px min, fonts loaded, 3 accent pairings clear). Screens:
+   `~/Library/Developer/TokeiWork/proof/site-1115/shots-r2d/` (full-1440, full-390, agents-1440, facts-1440,
+   facts-390, route-390, page-check.txt) and `page-check-r2d/`. Server on :3517 stopped (lsof 0).
+   secscan: INCOMPLETE, one GAP (its `pnpm audit` call returned no JSON, as in earlier rounds); no FLAG.
+
+Not checked: the download URL resolves only once the v0.13.0 GitHub release has the DMG; the OG/twitter images
+still show the round-1 hero; Safari. Still uncommitted: the three large deletions, waiting on Abhay's yes.
+
+## Round 2e (link previews)
+
+STATUS: READY. Commit `227e845` on `redesign/2026-11-15`. No deploy, no push.
+
+1. Cause: `app/layout.tsx` built the origin from `NEXT_PUBLIC_SITE_URL` / `VERCEL_URL`, falling back to
+   `http://localhost:3000`; the deployed build had neither, so og:url, og:image and twitter:image were on
+   localhost. Fix: `site.origin = "https://tokei-website.vercel.app"` in `lib/site.ts` is the one canonical
+   origin; the layout uses `metadataBase: new URL(site.origin)` and `openGraph.url: "/"` (Next 16
+   `generate-metadata.md`, metadataBase and URL composition). No env var involved any more.
+   Built head now: `og:url` https://tokei-website.vercel.app, `og:image` / `twitter:image`
+   https://tokei-website.vercel.app/opengraph-image.png?… (and twitter-image.png), 1200x630, with `og:image:alt`.
+2. Gate: `scripts/check-meta.mjs`, in `pnpm build` after check-copy. Fails on localhost / 127.0.0.1 / 0.0.0.0 /
+   [::1] in any `meta` or `link` tag, and unless og:image (required), twitter:image and og:url are absolute https
+   on `site.origin`. Red on the previous build's real HTML: "check-meta: FAIL, 9 problem(s)" (the three localhost
+   tags, not https, not on the origin). Four tests in `gates.test.mjs` (origin in one place; the layout reads
+   it and has no localhost/VERCEL_URL fallback; the served head is rejected; https/origin/relative/missing/
+   127.0.0.1 cases), plus check-meta added to the "no prerendered page" test. prove-red with the gate laid
+   over the old commit: "red on old code" (the two code tests fail there).
+3. `app/opengraph-image.png` and `app/twitter-image.png` replaced (92 KB, was 246 KB): the headline in Apfel
+   Grotezk, a short line in Switzer, the page's ground and window frame, and the pass-2 Overview capture
+   (`overview-route.webp`, DemoFixture data, with the "Send work here next" row). Rendered in headless Chrome,
+   fonts confirmed loaded. Alt text in `opengraph-image.alt.txt` / `twitter-image.alt.txt`. Proof:
+   `~/Library/Developer/TokeiWork/proof/site-1115/shots-r2e/` (card PNG and its HTML source). `next start`
+   served the image at the og:image path (200, image/png, byte-identical to the file).
+4. Build exit 0 (check-claims, check-copy, check-meta "PASS (previews on https://tokei-website.vercel.app)",
+   check-budget: initial JS 137.1 KB, first load 603.1 KB); `test:gates` 48/48; tsc clean; secscan INCOMPLETE
+   with the same single GAP (its `pnpm audit` returned no JSON), no FLAG. Server stopped (lsof 0).
+   Note: the first two builds this round hit a Turbopack panic ("ModuleGraph::from_graphs_inner was canceled",
+   in NFT tracing) from a stale `.next` cache; with `.next` moved aside the build passed every time after. A
+   Vercel build cache could in principle hit the same; a clean redeploy clears it.
+
+Not checked: a real Slack / X / iMessage unfurl (needs the deploy); the live page until it is redeployed.
+Still uncommitted: the three large deletions, waiting on Abhay's yes.

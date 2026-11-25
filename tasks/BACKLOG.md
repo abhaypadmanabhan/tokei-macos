@@ -49,6 +49,11 @@ move finished items to DONE with date + commit.
       distribution already works?]
 
 ## DONE
+- 2026-11-15 — **0.13.0 "Route"** (main `878f043`): one ranking rule for "send work here next" (menu bar,
+  Overview, MCP `get_route`, `tokei route`), targeted refresh with `scripts/perf-bench.sh` and a 1% CPU budget,
+  Debug demo data for publishable captures, website rebuilt. The P1 item "Per-provider alert thresholds" above
+  had already shipped before this run and can be removed. Next candidates from rival research: several
+  accounts per provider; a prompt-cache warm/cold timer.
 - 2026-07-27 — **Release build launchability** (patch `patch/2026-07-27/release-signing`,
   `2ddec45` + `23897fd`): hardened runtime is now stated explicitly on
   `AIUsageDashboardCore`'s Release config instead of arriving as a side effect of the app's
