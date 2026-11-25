@@ -79,9 +79,19 @@ public actor CursorProvider: UsageProvider {
                 if let summary = online.summary {
                     quotaWindows = summary.quotaWindows(
                         observedAt: online.summaryObservedAt,
-                        fallbackLabel: state.planLabel
+                        fallbackLabel: state.planLabel,
+                        planMembership: state.membershipType
                     )
                 }
+            case .encryptedSession:
+                let pool = CursorUsageSummary.isSuperGrokPlan(state.membershipType)
+                    ? " Your Super plan uses the shared SuperGrok pool; turn on Grok usage to see it."
+                    : ""
+                warnings.append(ProviderWarning(
+                    message: "Cursor keeps its sign-in encrypted in the macOS keychain, so Tokei "
+                        + "can't read Cursor usage online." + pool,
+                    level: .warning
+                ))
             case .missingSession:
                 warnings.append(ProviderWarning(
                     message: "Cursor online usage is enabled but no Cursor session could be read.",
@@ -116,6 +126,7 @@ public actor CursorProvider: UsageProvider {
 
     private enum OnlineFetch {
         case success(OnlineUsage)
+        case encryptedSession
         case missingSession
         case failure(String)
     }
@@ -132,6 +143,7 @@ public actor CursorProvider: UsageProvider {
     }
 
     private func fetchOnlineUsage(accessToken: String?) async -> OnlineFetch {
+        if let accessToken, CursorSession.isEncryptedAtRest(accessToken) { return .encryptedSession }
         guard let token = accessToken,
               let cookie = CursorSession.cookie(jwt: token) else {
             return .missingSession

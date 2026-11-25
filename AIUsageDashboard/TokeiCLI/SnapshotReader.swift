@@ -91,7 +91,7 @@ struct SnapshotReader {
 extension SnapshotReader {
     /// Foundation-only companion to ProviderID; a contract test prevents drift.
     static let providerIDs: Set<String> = [
-        "claude_code", "codex", "cursor", "antigravity", "cline", "opencode", "gemini", "copilot"
+        "claude_code", "codex", "cursor", "antigravity", "cline", "opencode", "gemini", "copilot", "grok"
     ]
 }
 

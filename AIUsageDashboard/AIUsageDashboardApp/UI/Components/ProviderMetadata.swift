@@ -44,7 +44,7 @@ enum ProviderCapabilityTier {
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
     static let liveQuotaProviders: Set<ProviderID> = [
-        .claudeCode, .codex, .cursor, .antigravity, .gemini, .copilot, .opencode
+        .claudeCode, .codex, .cursor, .antigravity, .gemini, .grok, .copilot, .opencode
     ]
 
     /// Live sources that report counts and dollars, never a percent of a limit (Copilot's
@@ -67,6 +67,7 @@ enum ProviderMetadata {
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         case .gemini: return "geminiNetworkUsageEnabled"
+        case .grok: return GrokProvider.networkUsageEnabledKey
         case .copilot: return OfficialSignIn.githubBilling.liveEnabledKey
         case .opencode: return OfficialSignIn.opencodeGo.liveEnabledKey
         default: return nil
@@ -99,6 +100,8 @@ enum ProviderMetadata {
                 "~/.vscode/extensions",
                 "~/Library/Application Support/Code/User/globalStorage/github.copilot-chat"
             ]
+        case .grok:
+            return ["~/.grok/auth.json"]
         }
     }
 
