@@ -8,9 +8,8 @@ public enum OfficialUsageError: LocalizedError, Equatable, Sendable {
     case missingCredential
     /// 401: the credential is missing, wrong, revoked or expired.
     case unauthorized
-    /// 403: the credential is valid but not allowed. `message` is the server's own
-    /// explanation when it is short and carries nothing secret-shaped.
-    case forbidden(message: String?)
+    /// 403: access was refused. The response body may contain credentials.
+    case forbidden
     case notFound
     case cooldownActive
     case rateLimited(retryAfter: TimeInterval?)
@@ -21,7 +20,7 @@ public enum OfficialUsageError: LocalizedError, Equatable, Sendable {
         switch self {
         case .missingCredential: return "No key is saved."
         case .unauthorized: return "The saved key was rejected (HTTP 401)."
-        case .forbidden(let message): return message ?? "Access was refused (HTTP 403)."
+        case .forbidden: return "Access was refused (HTTP 403)."
         case .notFound: return "The usage endpoint returned HTTP 404."
         case .cooldownActive: return "Cooling down after a rate limit; will retry later."
         case .rateLimited: return "Rate limited; will retry later."
@@ -46,13 +45,8 @@ struct BearerUsageTransport: Sendable {
     let now: @Sendable () -> Date
     var maxAttempts = 3
 
-    /// Returns the body of a 2xx response. `forbiddenMessage` extracts a displayable reason
-    /// from a 403 body; it must return `nil` for anything it cannot vouch for.
-    func get(
-        _ url: URL,
-        token: String,
-        forbiddenMessage: (Data) -> String? = { _ in nil }
-    ) async throws -> Data {
+    /// Returns the body of a 2xx response. Errors carry only status and retry information.
+    func get(_ url: URL, token: String) async throws -> Data {
         if cooldown.isActive(at: now()) {
             throw OfficialUsageError.cooldownActive
         }
@@ -67,24 +61,23 @@ struct BearerUsageTransport: Sendable {
             guard let http = response as? HTTPURLResponse else {
                 throw OfficialUsageError.unexpectedResponse
             }
-            let path = url.path
             switch http.statusCode {
             case 200..<300:
                 return data
             case 401:
-                logger.warning("\(path, privacy: .public) returned 401")
+                logger.warning("Usage request returned 401")
                 throw OfficialUsageError.unauthorized
             case 404:
-                logger.warning("\(path, privacy: .public) returned 404")
+                logger.warning("Usage request returned 404")
                 throw OfficialUsageError.notFound
             case 403 where !Self.isRateLimited(http):
-                logger.warning("\(path, privacy: .public) returned 403")
-                throw OfficialUsageError.forbidden(message: forbiddenMessage(data))
+                logger.warning("Usage request returned 403")
+                throw OfficialUsageError.forbidden
             case 403, 429:
                 // GitHub signals its primary rate limit as 403 with `x-ratelimit-remaining: 0`.
                 lastRetryAfter = try await waitOutRateLimit(http, attempt: attempt)
             default:
-                logger.warning("\(path, privacy: .public) returned \(http.statusCode, privacy: .public)")
+                logger.warning("Usage request returned \(http.statusCode, privacy: .public)")
                 throw OfficialUsageError.httpStatus(http.statusCode)
             }
         }
@@ -96,11 +89,11 @@ struct BearerUsageTransport: Sendable {
     /// Sleeps and returns the `Retry-After` when the policy allows one more attempt; else
     /// records the cooldown and throws `.rateLimited`.
     private func waitOutRateLimit(_ http: HTTPURLResponse, attempt: Int) async throws -> TimeInterval? {
-        let retryAfter = cooldown.retryAfter(from: http) ?? Self.rateLimitReset(http, now: now())
-        let path = http.url?.path ?? ""
-        let wait = retryAfter.map { String(Int($0)) } ?? "unset"
+        let retryAfter = (cooldown.retryAfter(from: http) ?? Self.rateLimitReset(http, now: now()))
+            .flatMap { $0.isFinite ? $0 : nil }
+        let wait = retryAfter.map { String($0) } ?? "unset"
         let detail = "HTTP \(http.statusCode), retry-after \(wait)s, attempt \(attempt)"
-        logger.warning("\(path, privacy: .public) rate limited, \(detail, privacy: .public)")
+        logger.warning("Usage request rate limited, \(detail, privacy: .public)")
         switch UsageClientPolicy.rateLimitAction(
             retryAfter: retryAfter,
             attempt: attempt,
@@ -126,17 +119,6 @@ struct BearerUsageTransport: Sendable {
         guard let raw = response.value(forHTTPHeaderField: "x-ratelimit-reset"),
               let epoch = TimeInterval(raw) else { return nil }
         return max(0, epoch - now.timeIntervalSince1970)
-    }
-
-    /// A server-supplied refusal reason fit to show: short, one line, and nothing that looks
-    /// like a key, token or email address. Anything else reads as `nil`.
-    static func displayableMessage(_ message: String?) -> String? {
-        guard let trimmed = message?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty, trimmed.count <= 200,
-              !trimmed.contains("\n"), !trimmed.contains("@"),
-              trimmed.range(of: "[A-Za-z0-9_\\-]{24,}", options: .regularExpression) == nil
-        else { return nil }
-        return trimmed
     }
 
     static func defaultStorageDirectory() -> URL {

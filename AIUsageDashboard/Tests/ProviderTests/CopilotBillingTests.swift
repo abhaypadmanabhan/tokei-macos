@@ -42,6 +42,33 @@ final class CopilotBillingTests: XCTestCase {
         XCTAssertEqual(cost.confidence, .providerReported)
     }
 
+    func testBothPersonalReportsKeepTheirOwnUnitsAndStayOutOfRouting() async throws {
+        let aiCredits = Data("""
+        {"timePeriod":{"year":2026,"month":11},"user":"octo-test","usageItems":[
+          {"product":"Copilot AI Credits","sku":"AI Credit","model":"GPT-5","unitType":"ai-credits",
+           "pricePerUnit":0.01,"grossQuantity":125.5,"grossAmount":1.255,"discountQuantity":0,
+           "discountAmount":0,"netQuantity":125.5,"netAmount":1.255}
+        ]}
+        """.utf8)
+        OfficialStubProtocol.stubs[userPath] = .init(status: 200, body: OfficialFixtures.githubUser)
+        OfficialStubProtocol.stubs[premiumPath] = .init(status: 200, body: OfficialFixtures.premiumRequests)
+        OfficialStubProtocol.stubs[creditPath] = .init(status: 200, body: aiCredits)
+        let client = CopilotBillingClient(urlSession: officialStubSession(), cooldownURL: officialCooldownURL())
+        let usage = try await client.fetchUsage(token: officialFakeGitHubToken)
+        let windows = CopilotBillingParser.quotaWindows(from: usage, observedAt: officialFixedNow)
+        XCTAssertEqual(windows.compactMap(\.label), ["Premium requests", "AI credits"])
+        XCTAssertEqual(windows.compactMap(\.used), [312, 125.5])
+        XCTAssertEqual(CopilotBillingParser.billedCost(from: usage)?.amount ?? -1, 1.735, accuracy: 0.0001)
+        XCTAssertTrue(windows.allSatisfy { QuotaPace(window: $0, now: officialFixedNow) == nil })
+
+        let snapshot = ProviderSnapshot(
+            providerID: .copilot, displayName: "GitHub Copilot", authStatus: .authenticated,
+            quotaWindows: windows, todayUsage: .unavailable, weekUsage: .unavailable
+        )
+        XCTAssertTrue(UtilizationEngine.utilizations(from: [snapshot]).isEmpty)
+        XCTAssertTrue(RoutePlan.make(snapshots: [snapshot], now: officialFixedNow).rows.isEmpty)
+    }
+
     func testClientResolvesLoginAndUsesOfficialHeaders() async throws {
         OfficialStubProtocol.stubs[userPath] = .init(status: 200, body: OfficialFixtures.githubUser)
         OfficialStubProtocol.stubs[premiumPath] = .init(status: 200, body: OfficialFixtures.premiumRequests)
@@ -72,7 +99,7 @@ final class CopilotBillingTests: XCTestCase {
         let refusal = Data(#"{"message":"Resource not accessible"}"#.utf8)
         OfficialStubProtocol.stubs[premiumPath] = .init(status: 403, body: refusal)
         let client = CopilotBillingClient(urlSession: officialStubSession(), cooldownURL: officialCooldownURL())
-        await assertOfficialError(.forbidden(message: nil)) {
+        await assertOfficialError(.forbidden) {
             _ = try await client.fetchUsage(token: officialFakeGitHubToken)
         }
     }
@@ -169,12 +196,14 @@ final class CopilotBillingTests: XCTestCase {
         )
         let snapshot = try await provider.fetchSnapshot()
         XCTAssertTrue(snapshot.quotaWindows.isEmpty)
-        XCTAssertTrue(snapshot.warnings.contains { $0.message.contains("organization or enterprise") })
+        XCTAssertTrue(snapshot.warnings.contains {
+            $0.level == .warning && $0.message.contains("organization or enterprise")
+        })
     }
 
     func testProviderWords401And403() {
         XCTAssertTrue(CopilotProvider.billingWarning(for: OfficialUsageError.unauthorized).message.contains("(401)"))
-        let forbidden = CopilotProvider.billingWarning(for: OfficialUsageError.forbidden(message: nil)).message
+        let forbidden = CopilotProvider.billingWarning(for: OfficialUsageError.forbidden).message
         XCTAssertTrue(forbidden.contains("Plan: Read"))
         XCTAssertTrue(forbidden.contains("organization or enterprise"))
     }

@@ -50,22 +50,27 @@ final class OpencodeGoUsageTests: XCTestCase {
         await assertOfficialError(.unauthorized) { _ = try await client.fetchMeters(apiKey: officialFakeGoKey) }
     }
 
-    func testForbiddenCarriesTheEntitlementMessage() async {
+    func testForbiddenIs403() async {
         OfficialStubProtocol.stubs["/inference/go/v1/usage"] = .init(status: 403, body: OfficialFixtures.goEntitlement)
         let client = OpencodeGoUsageClient(urlSession: officialStubSession(), cooldownURL: officialCooldownURL())
-        await assertOfficialError(.forbidden(message: "OpenCode Go subscription required.")) {
+        await assertOfficialError(.forbidden) {
             _ = try await client.fetchMeters(apiKey: officialFakeGoKey)
         }
     }
 
-    func testForbiddenMessageThatLooksSecretIsDropped() async {
-        let echoed = Data(#"{ "error": { "message": "Key \#(officialFakeGoKey) has no plan" } }"#.utf8)
-        OfficialStubProtocol.stubs["/inference/go/v1/usage"] = .init(status: 403, body: echoed)
+    func testForbiddenDoesNotExposeAnEchoedKey() async {
+        let fakeShortKey = UUID().uuidString.prefix(12)
+        let body = Data(#"{"error":{"message":"Key \#(fakeShortKey) has no plan"}}"#.utf8)
+        OfficialStubProtocol.stubs["/inference/go/v1/usage"] = .init(status: 403, body: body)
         let client = OpencodeGoUsageClient(urlSession: officialStubSession(), cooldownURL: officialCooldownURL())
-        await assertOfficialError(.forbidden(message: nil)) {
-            _ = try await client.fetchMeters(apiKey: officialFakeGoKey)
+        do {
+            _ = try await client.fetchMeters(apiKey: String(fakeShortKey))
+            XCTFail("Expected a 403 error")
+        } catch {
+            let warning = OpencodeProvider.goWarning(for: error).message
+            XCTAssertFalse(warning.contains(fakeShortKey))
+            XCTAssertTrue(warning.contains("no active Go subscription"))
         }
-        XCTAssertNil(BearerUsageTransport.displayableMessage("Contact someone@example.com"))
     }
 
     func testRateLimitRecordsCooldownAndThenSkipsTheNetwork() async {
@@ -130,11 +135,8 @@ final class OpencodeGoUsageTests: XCTestCase {
     func testProviderWords401And403() {
         let unauthorized = OpencodeProvider.goWarning(for: OfficialUsageError.unauthorized)
         XCTAssertTrue(unauthorized.message.contains("rejected (401)"))
-        let entitlement = OfficialUsageError.forbidden(message: "OpenCode Go subscription required.")
-        let forbidden = OpencodeProvider.goWarning(for: entitlement)
-        XCTAssertEqual(forbidden.message, "OpenCode Go: OpenCode Go subscription required. (403).")
-        XCTAssertTrue(OpencodeProvider.goWarning(for: OfficialUsageError.forbidden(message: nil)).message
-            .contains("no active Go subscription"))
+        let forbidden = OpencodeProvider.goWarning(for: OfficialUsageError.forbidden)
+        XCTAssertEqual(forbidden.message, "OpenCode Go: this key has no active Go subscription (403).")
     }
 
     private func makeProvider(

@@ -15,10 +15,10 @@ struct OfficialSignInRow: View {
         case checking
         case connected
         case notConnected
-        case failed(String)
     }
 
     @State private var status: Status = .checking
+    @State private var keychainProblem: String?
     @State private var draft = ""
     @State private var busy = false
     @FocusState private var fieldFocused: Bool
@@ -86,15 +86,15 @@ struct OfficialSignInRow: View {
                 .buttonStyle(.plain)
                 .font(.sans(size: 11, weight: .semibold))
                 .foregroundColor(PadzyTheme.ink)
-                .disabled(busy || Self.cleaned(draft) == nil)
+                .disabled(busy || status == .checking || Self.cleaned(draft) == nil)
         }
     }
 
     private var statusLine: String? {
+        if let keychainProblem { return keychainProblem }
         switch status {
         case .checking: return nil
         case .notConnected: return "Not connected"
-        case .failed(let message): return message
         case .connected: return lastProblem
         }
     }
@@ -105,13 +105,15 @@ struct OfficialSignInRow: View {
         do {
             status = try await store.hasSecret(for: signIn.keychainAccount) ? .connected : .notConnected
         } catch {
-            status = .failed("Couldn't check the Keychain. Try again.")
+            status = .notConnected
+            keychainProblem = "Couldn't check the Keychain. Reopen Settings to try again."
         }
     }
 
     private func save() async {
-        guard let key = Self.cleaned(draft), !busy else { return }
+        guard status != .checking, let key = Self.cleaned(draft), !busy else { return }
         busy = true
+        keychainProblem = nil
         defer { busy = false }
         do {
             try await store.setSecret(key, for: signIn.keychainAccount)
@@ -119,19 +121,21 @@ struct OfficialSignInRow: View {
             status = .connected
             onChange()
         } catch {
-            status = .failed("Couldn't save to the Keychain. Nothing was stored.")
+            keychainProblem = "Couldn't save to the Keychain. Try again."
         }
     }
 
     private func remove() async {
+        guard !busy else { return }
         busy = true
+        keychainProblem = nil
         defer { busy = false }
         do {
             try await store.removeSecret(for: signIn.keychainAccount)
             status = .notConnected
             onChange()
         } catch {
-            status = .failed("Couldn't remove it from the Keychain. Try again.")
+            keychainProblem = "Couldn't remove it from the Keychain. Try again."
         }
     }
 

@@ -126,9 +126,9 @@ public actor OpencodeProvider: UsageProvider, LocalLogProvider {
                     + " Copy a fresh key from the OpenCode Console.",
                 level: .warning
             )
-        case OfficialUsageError.forbidden(let message):
+        case OfficialUsageError.forbidden:
             return ProviderWarning(
-                message: "\(prefix) \(message ?? "this key has no active Go subscription") (403).",
+                message: "\(prefix) this key has no active Go subscription (403).",
                 level: .warning
             )
         case OfficialUsageError.cooldownActive, OfficialUsageError.rateLimited:
@@ -139,7 +139,7 @@ public actor OpencodeProvider: UsageProvider, LocalLogProvider {
             )
         default:
             return ProviderWarning(
-                message: "\(prefix) could not read usage right now (\(error.localizedDescription)).",
+                message: "\(prefix) could not read usage right now.",
                 level: .warning
             )
         }

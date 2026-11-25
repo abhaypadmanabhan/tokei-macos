@@ -191,9 +191,8 @@ public actor CopilotProvider: UsageProvider {
             if usage.isEmpty {
                 result.warnings.append(ProviderWarning(
                     message: "\(signIn.warningPrefix) GitHub shows no personal Copilot usage this month."
-                        + " A seat paid for by an organization or enterprise is not in personal billing;"
-                        + " that needs an org admin's billing access, not this token.",
-                    level: .info
+                        + " Seats paid for by an organization or enterprise do not appear in personal billing.",
+                    level: .warning
                 ))
             }
             return result
@@ -235,7 +234,7 @@ public actor CopilotProvider: UsageProvider {
             )
         default:
             return ProviderWarning(
-                message: "\(prefix) could not read billing right now (\(error.localizedDescription)).",
+                message: "\(prefix) could not read billing right now.",
                 level: .warning
             )
         }

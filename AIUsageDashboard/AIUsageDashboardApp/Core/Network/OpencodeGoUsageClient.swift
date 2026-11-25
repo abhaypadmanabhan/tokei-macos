@@ -60,14 +60,6 @@ public enum OpencodeGoUsageParser {
         }
     }
 
-    /// The 403 body's `error.message` (e.g. "OpenCode Go subscription required."), only when
-    /// it is safe to show.
-    static func entitlementMessage(from data: Data) -> String? {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let error = root["error"] as? [String: Any] else { return nil }
-        return BearerUsageTransport.displayableMessage(error["message"] as? String)
-    }
-
     static func label(_ kind: OpencodeGoMeter.Kind) -> String {
         switch kind {
         case .rolling: return "Go 5-hour"
@@ -128,11 +120,7 @@ public struct OpencodeGoUsageClient: OpencodeGoUsageFetching {
     }
 
     public func fetchMeters(apiKey: String) async throws -> [OpencodeGoMeter] {
-        let data = try await transport.get(
-            Self.usageURL,
-            token: apiKey,
-            forbiddenMessage: OpencodeGoUsageParser.entitlementMessage(from:)
-        )
+        let data = try await transport.get(Self.usageURL, token: apiKey)
         return try OpencodeGoUsageParser.meters(from: data)
     }
 }

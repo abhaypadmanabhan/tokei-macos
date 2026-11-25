@@ -67,9 +67,9 @@ struct ConnectionRow: View {
     private var hasLiveData: Bool {
         viewModel.gaugeUtilizations.contains { $0.providerID == providerID }
             // Copilot's billing meters are counts, never a gauge; a provider-reported one is live.
-            || (snapshot?.quotaWindows.contains {
-                $0.confidence == .providerReported && $0.observedAt != nil
-            } ?? false)
+            || (providerID == .copilot && snapshot?.quotaWindows.contains {
+                $0.type == .credits && $0.confidence == .providerReported && $0.observedAt != nil
+            } == true)
     }
 
     private var show: Bool { !hiddenFlag }
