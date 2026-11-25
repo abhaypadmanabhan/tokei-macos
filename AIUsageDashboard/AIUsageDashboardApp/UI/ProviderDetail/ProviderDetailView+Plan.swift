@@ -6,6 +6,27 @@ import AIUsageDashboardCore
 // Accounts and Metrics sections have theirs — `ProviderDetailView.swift` is the surface.
 
 extension ProviderDetailView {
+    var copilotBillingSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            SectionHeading("GitHub billing this month")
+            FlowLayout(hSpacing: 40, vSpacing: 20) {
+                ForEach(copilotBillingWindows) { window in
+                    if let count = window.used, let label = window.label {
+                        planStatBlock(caption: label, value: count.formatted(), numeric: count)
+                    }
+                }
+                if let cost = snapshot.costUsage, cost.confidence == .providerReported,
+                   let amount = cost.amount, let currency = cost.currency {
+                    planStatBlock(
+                        caption: "Billed",
+                        value: amount.formatted(.currency(code: currency)),
+                        numeric: amount
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: - 5 · Plan & credits (plan-only)
 
     var planCreditsSection: some View {
