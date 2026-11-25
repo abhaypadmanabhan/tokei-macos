@@ -43,7 +43,7 @@ enum ProviderCapabilityTier {
 /// Static, UI-only facts about each provider that never need Core access: local
 /// paths, live-quota settings, and plan/tier display text.
 enum ProviderMetadata {
-    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity, .gemini]
+    static let liveQuotaProviders: Set<ProviderID> = [.claudeCode, .codex, .cursor, .antigravity, .gemini, .grok]
 
     /// Network toggles that are on until the user turns them off (registered at launch, so
     /// `UserDefaults.bool(forKey:)` and `@AppStorage` read `true` when the key is unset).
@@ -61,6 +61,7 @@ enum ProviderMetadata {
         case .cursor: return "cursorNetworkUsageEnabled"
         case .antigravity: return "antigravityOnlineQuotaEnabled"
         case .gemini: return "geminiNetworkUsageEnabled"
+        case .grok: return GrokProvider.networkUsageEnabledKey
         default: return nil
         }
     }
@@ -91,6 +92,8 @@ enum ProviderMetadata {
                 "~/.vscode/extensions",
                 "~/Library/Application Support/Code/User/globalStorage/github.copilot-chat"
             ]
+        case .grok:
+            return ["~/.grok/auth.json"]
         }
     }
 

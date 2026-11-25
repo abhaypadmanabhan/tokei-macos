@@ -12,6 +12,15 @@ import CryptoKit
 /// (`CursorUsageClientImpl`). Decoding reads only the `sub` claim — never the
 /// signature, never the raw token into any log line.
 enum CursorSession {
+    /// Cursor 3.x keeps `cursorAuth/accessToken` encrypted at rest with Electron
+    /// safeStorage (the macOS keychain item "Cursor Safe Storage"), behind this prefix.
+    /// Tokei does not read other apps' keychain items, so such a token is never a session.
+    static let encryptedTokenPrefix = "cursor-safe-storage:"
+
+    static func isEncryptedAtRest(_ token: String) -> Bool {
+        token.hasPrefix(encryptedTokenPrefix)
+    }
+
     /// The full cookie value, or `nil` when a `userId` cannot be derived. Returning
     /// `nil` (no request) is deliberately preferred over sending a malformed cookie
     /// that Cursor would reject.

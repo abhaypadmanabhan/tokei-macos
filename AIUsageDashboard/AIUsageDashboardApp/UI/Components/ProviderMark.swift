@@ -31,6 +31,7 @@ struct ProviderMark: View {
         case .opencode: return "mark_opencode"
         case .gemini: return "mark_gemini"
         case .copilot: return "mark_copilot"
+        case .grok: return "mark_grok"
         }
     }
 
@@ -47,6 +48,7 @@ struct ProviderMark: View {
         case .opencode: return "curlybraces"
         case .gemini: return "sparkle"
         case .copilot: return "chevron.left.forwardslash.chevron.right"
+        case .grok: return "circle.slash"
         }
     }
 

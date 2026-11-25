@@ -9,4 +9,5 @@ public enum ProviderID: String, CaseIterable, Sendable {
     case opencode = "opencode"
     case gemini = "gemini"
     case copilot = "copilot"
+    case grok = "grok"
 }
