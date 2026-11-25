@@ -66,6 +66,22 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(summary.usedPercent, 25)
         XCTAssertEqual(summary.periodType, .monthly)
         XCTAssertEqual(summary.periodEnd, ISO8601DateFormatter().date(from: "2025-05-01T00:00:00Z"))
+        XCTAssertEqual(summary.quotaWindows(observedAt: now).first?.label, "Grok Build credits")
+        XCTAssertNotEqual(summary.quotaWindows(observedAt: now).first?.bucketKey, SharedQuotaPool.superGrokBucketKey)
+    }
+
+    func testNonUnifiedCreditsDoNotReplaceCursorSuperUsage() throws {
+        let body = #"{"config":{"creditUsagePercent":25,"isUnifiedBillingUser":false}}"#
+        let summary = try XCTUnwrap(GrokBillingSummary.decode(Data(body.utf8)))
+        let grokWindows = summary.quotaWindows(observedAt: now)
+        let cursor = CursorUsageSummary(usedPercent: 7, resetAt: nil, membershipType: "super")
+        let cursorWindows = cursor.quotaWindows(observedAt: now)
+        let snapshots = [(ProviderID.grok, grokWindows), (.cursor, cursorWindows)].map { provider, windows in
+            ProviderSnapshot(providerID: provider, displayName: provider.rawValue, authStatus: .authenticated,
+                             quotaWindows: windows, todayUsage: .unavailable, weekUsage: .unavailable)
+        }
+        XCTAssertEqual(cursorWindows.first?.bucketKey, SharedQuotaPool.superGrokBucketKey)
+        XCTAssertEqual(SharedQuotaPool.deduplicated(snapshots).flatMap(\.quotaWindows).compactMap(\.used), [25, 7])
     }
 
     func testCreditsShapeWithOmittedZeroPercentReadsAsZero() throws {
@@ -141,6 +157,24 @@ final class GrokProviderTests: XCTestCase {
             XCTFail("expected loginExpired")
         } catch let error as GrokBillingError {
             XCTAssertEqual(error, .loginExpired)
+        }
+        XCTAssertTrue(GrokStubProtocol.requests.isEmpty)
+    }
+
+    func testForeignIssuerLoginNeverSendsARequest() async throws {
+        let entry = #"""
+        {"key":"fixture-key","user_id":"fixture-user","auth_mode":"oidc","oidc_issuer":"https://login.example.invalid"}
+        """#
+        let stores = ["https://login.example.invalid::example", GrokLogin.preferredScope]
+        for scope in stores {
+            try Data("{\"\(scope)\":\(entry)}".utf8).write(to: home.appendingPathComponent("auth.json"))
+            GrokStubProtocol.response = (Data(Self.creditsBody.utf8), 200)
+            do {
+                _ = try await makeClient().fetchBilling()
+                XCTFail("expected notSignedIn")
+            } catch let error as GrokBillingError {
+                XCTAssertEqual(error, .notSignedIn)
+            }
         }
         XCTAssertTrue(GrokStubProtocol.requests.isEmpty)
     }

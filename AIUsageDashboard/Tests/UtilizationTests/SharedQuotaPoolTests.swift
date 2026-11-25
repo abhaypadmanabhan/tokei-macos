@@ -7,9 +7,12 @@ final class SharedQuotaPoolTests: XCTestCase {
     // Real clock: the agent snapshot judges freshness against the wall clock.
     private let now = Date()
 
-    private func pool(_ provider: ProviderID, used: Double, observedAt: Date? = nil) -> QuotaWindow {
+    private func pool(
+        _ provider: ProviderID, used: Double, observedAt: Date? = nil, resetAt: Date? = nil
+    ) -> QuotaWindow {
         QuotaWindow(providerID: provider, type: .weekly, used: used, limit: 100, remaining: 100 - used,
-                    resetAt: now.addingTimeInterval(3 * 86_400), confidence: .providerReported, source: "fixture",
+                    resetAt: resetAt ?? now.addingTimeInterval(3 * 86_400),
+                    confidence: .providerReported, source: "fixture",
                     label: SharedQuotaPool.superGrokLabel, bucketKey: SharedQuotaPool.superGrokBucketKey,
                     observedAt: observedAt ?? now, windowDuration: 7 * 86_400)
     }
@@ -63,6 +66,14 @@ final class SharedQuotaPoolTests: XCTestCase {
         XCTAssertTrue(result.allSatisfy { $0.warnings.isEmpty })
     }
 
+    func testCursorKeepsThePoolWhenGroksReadingHasReset() {
+        let cursor = snapshot(.cursor, [pool(.cursor, used: 7)])
+        let grok = snapshot(.grok, [pool(.grok, used: 95, resetAt: now.addingTimeInterval(-60))])
+        let windows = SharedQuotaPool.deduplicated([cursor, grok]).flatMap(\.quotaWindows)
+        XCTAssertEqual(windows.map(\.providerID), [.cursor])
+        XCTAssertEqual(windows.compactMap(\.used), [7])
+    }
+
     func testWithoutTheOwnerTheFreshestReadingWins() {
         let older = snapshot(.cursor, [pool(.cursor, used: 6, observedAt: now.addingTimeInterval(-600))])
         let newer = snapshot(.codex, [pool(.codex, used: 7, observedAt: now)])
@@ -83,12 +94,7 @@ final class SharedQuotaPoolTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let fixtures = bothReportThePool
-        let engine = SyncEngine(
-            registry: ProviderRegistry(providers: fixtures.map(FixedSnapshotProvider.init)),
-            store: UsageStore(directory: directory), quotaSeriesStore: QuotaSeriesStore(directory: directory),
-            agentSnapshotWriter: AgentSnapshotWriter(directory: directory),
-            watcher: FileWatcher(paths: [directory]), evaluateThresholds: { _ in }, sleep: { _ in }
-        )
+        let engine = makeEngine(directory: directory, snapshots: fixtures)
         let snapshots = await engine.refreshAll()
         XCTAssertEqual(snapshots.flatMap(\.quotaWindows).filter { $0.bucketKey == "supergrok_pool" }.count, 1)
 
@@ -96,6 +102,36 @@ final class SharedQuotaPoolTests: XCTestCase {
         let agent = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: data)
         XCTAssertEqual(agent.providers.flatMap(\.windows).filter { $0.bucketKey == "supergrok_pool" }.count, 1)
         XCTAssertEqual(try XCTUnwrap(agent.aggregateUtilizationPercent), 28.5, accuracy: 0.001)
+    }
+
+    func testTargetedGrokRefreshFallsBackToCursorAfterRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cursor = snapshot(.cursor, [pool(.cursor, used: 6)])
+        let grok = snapshot(.grok, [pool(.grok, used: 7)])
+        let engine = makeEngine(directory: directory, snapshots: [cursor, grok])
+        let initial = await engine.refreshAll()
+        XCTAssertEqual(initial.flatMap(\.quotaWindows).map(\.providerID), [.grok])
+
+        let restarted = makeEngine(directory: directory, snapshots: [snapshot(.grok, [])])
+        let refreshed = await restarted.refresh(providers: [.grok])
+        XCTAssertEqual(refreshed.flatMap(\.quotaWindows).map(\.providerID), [.cursor])
+        XCTAssertEqual(refreshed.flatMap(\.quotaWindows).map(\.used), [6])
+        XCTAssertTrue(refreshed.allSatisfy { $0.warnings.isEmpty })
+
+        let data = try Data(contentsOf: directory.appendingPathComponent("agent-snapshot.json"))
+        let agent = try AgentSnapshot.makeDecoder().decode(AgentSnapshot.self, from: data)
+        XCTAssertEqual(agent.providers.flatMap(\.windows).map(\.bucketKey), [SharedQuotaPool.superGrokBucketKey])
+        XCTAssertEqual(agent.aggregateUtilizationPercent, 6)
+    }
+
+    private func makeEngine(directory: URL, snapshots: [ProviderSnapshot]) -> SyncEngine {
+        SyncEngine(
+            registry: ProviderRegistry(providers: snapshots.map(FixedSnapshotProvider.init)),
+            store: UsageStore(directory: directory), quotaSeriesStore: QuotaSeriesStore(directory: directory),
+            agentSnapshotWriter: AgentSnapshotWriter(directory: directory),
+            watcher: FileWatcher(paths: [directory]), evaluateThresholds: { _ in }, sleep: { _ in }
+        )
     }
 }
 

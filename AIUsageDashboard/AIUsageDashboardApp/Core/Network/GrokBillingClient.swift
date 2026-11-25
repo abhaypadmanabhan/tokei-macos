@@ -47,7 +47,8 @@ struct GrokLogin: Sendable, Equatable, CustomStringConvertible {
     /// The CLI's default OAuth2 scope (`GrokComConfig::default().auth_scope()`), then any other
     /// xAI OAuth2 scope, then the pre-OIDC legacy scope. API-key and legacy web logins are
     /// skipped: the CLI itself refuses `web_login`, and a plain API key carries no plan pool.
-    static let preferredScope = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"
+    private static let xAIIssuer = "https://auth.x.ai"
+    static let preferredScope = "\(xAIIssuer)::b1a00492-073a-47ea-816f-4c329264a828"
     static let legacyScope = "https://accounts.x.ai/sign-in"
 
     /// Picks the login the CLI would use from the `auth.json` body, or `nil` when none is usable.
@@ -57,9 +58,12 @@ struct GrokLogin: Sendable, Equatable, CustomStringConvertible {
         for scope in ranked where rank(scope) < Int.max {
             guard let entry = store[scope] as? [String: Any],
                   let key = entry["key"] as? String, !key.isEmpty,
-                  let userID = entry["user_id"] as? String, !userID.isEmpty else { continue }
-            let mode = entry["auth_mode"] as? String
-            if mode == "web_login" || mode == "grok" || mode == "api_key" { continue }
+                  let userID = entry["user_id"] as? String, !userID.isEmpty,
+                  let mode = entry["auth_mode"] as? String, mode == "oidc" || mode == "external" else { continue }
+            // Older OIDC entries can rely on the xAI scope. Other entries need an explicit xAI issuer.
+            let issuer = entry["oidc_issuer"] as? String
+            let issuerRequired = entry["oidc_issuer"] != nil || mode == "external" || scope == legacyScope
+            if issuerRequired, issuer != xAIIssuer { continue }
             let expiresAt = (entry["expires_at"] as? String).flatMap(parseInstant)
             return GrokLogin(key: key, userID: userID, expiresAt: expiresAt)
         }
@@ -74,10 +78,9 @@ struct GrokLogin: Sendable, Equatable, CustomStringConvertible {
 
     private static func rank(_ scope: String) -> Int {
         if scope == preferredScope { return 0 }
-        if scope.hasPrefix("https://auth.x.ai::") { return 1 }
+        if scope.hasPrefix("\(xAIIssuer)::") { return 1 }
         if scope == legacyScope { return 2 }
-        if scope == "xai::api_key" { return Int.max }
-        return 3
+        return Int.max
     }
 }
 
@@ -243,14 +246,16 @@ public struct GrokBillingSummary: Sendable, Equatable {
         )
     }
 
-    /// The one shared-pool window, or none when no figure is usable (never fabricated).
+    /// Only unified billing represents a shared pool. Legacy Build credits have their own allowance.
     public func quotaWindows(observedAt: Date?) -> [QuotaWindow] {
         guard let usedPercent else { return [] }
+        let shared = isUnifiedPool == true
         let duration = periodStart.flatMap { start in periodEnd.map { $0.timeIntervalSince(start) } }
         return [QuotaWindow(
             providerID: .grok, type: periodType, used: usedPercent, limit: 100, remaining: 100 - usedPercent,
             resetAt: periodEnd, confidence: .providerReported, source: "cli-chat-proxy.grok.com/v1/billing",
-            label: SharedQuotaPool.superGrokLabel, bucketKey: SharedQuotaPool.superGrokBucketKey,
+            label: shared ? SharedQuotaPool.superGrokLabel : "Grok Build credits",
+            bucketKey: shared ? SharedQuotaPool.superGrokBucketKey : "grok_build_credits",
             observedAt: observedAt, windowDuration: duration.flatMap { $0 > 0 ? $0 : nil }
         )]
     }

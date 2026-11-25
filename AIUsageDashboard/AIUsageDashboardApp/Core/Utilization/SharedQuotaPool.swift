@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Each provider that can read the pool tags its window with the pool's `bucketKey`.
 /// `deduplicated(_:)` then keeps exactly one copy, so totals, burn, route, alerts and the
-/// agent snapshot count the pool once rather than once per provider. It runs on the
-/// merged refresh in `SyncEngine`, the single point every consumer reads from.
+/// agent snapshot count the pool once rather than once per provider. Keep the underlying
+/// provider readings so a targeted refresh can still fall back to another provider.
 public enum SharedQuotaPool {
     public static let superGrokBucketKey = "supergrok_pool"
     public static let superGrokLabel = "SuperGrok pool"
@@ -21,39 +21,50 @@ public enum SharedQuotaPool {
     /// Keeps one reading of each shared pool: the owner's when it has a usable one, else
     /// the most recently observed. Every other provider loses that window and gains an
     /// info line naming where the pool is shown. Idempotent; order-preserving.
-    public static func deduplicated(_ snapshots: [ProviderSnapshot]) -> [ProviderSnapshot] {
+    public static func deduplicated(_ snapshots: [ProviderSnapshot], now: Date = Date()) -> [ProviderSnapshot] {
         var keeper: [String: ProviderID] = [:]
         for (key, owner) in owners {
             let holders = snapshots.compactMap { snapshot -> (ProviderID, QuotaWindow)? in
-                guard let window = snapshot.quotaWindows.first(where: { $0.bucketKey == key }),
-                      UtilizationEngine.usedPercent(from: window) != nil else { return nil }
+                guard let window = snapshot.quotaWindows.first(where: { $0.bucketKey == key }) else { return nil }
                 return (snapshot.providerID, window)
             }
             guard holders.count > 1 else { continue }
-            if holders.contains(where: { $0.0 == owner }) {
+            let current = holders.filter { _, window in
+                !hasReset(window, now: now) && UtilizationEngine.usedPercent(from: window) != nil
+            }
+            let candidates = current.isEmpty ? holders : current
+            if candidates.contains(where: { $0.0 == owner }) {
                 keeper[key] = owner
             } else {
-                keeper[key] = holders.max { ($0.1.observedAt ?? .distantPast) < ($1.1.observedAt ?? .distantPast) }?.0
+                keeper[key] = candidates.max {
+                    ($0.1.observedAt ?? .distantPast) < ($1.1.observedAt ?? .distantPast)
+                }?.0
             }
         }
-        guard !keeper.isEmpty else { return snapshots }
 
         return snapshots.map { snapshot in
             let dropped = Set(keeper.compactMap { key, provider in
                 provider != snapshot.providerID && snapshot.quotaWindows.contains { $0.bucketKey == key } ? key : nil
             })
-            guard !dropped.isEmpty else { return snapshot }
+            let hasExpiredReading = snapshot.quotaWindows.contains { isShared($0) && hasReset($0, now: now) }
+            guard !dropped.isEmpty || hasExpiredReading else { return snapshot }
             let names = dropped.sorted().map { key in
                 "Quota: \(key == superGrokBucketKey ? superGrokLabel : key), shared with "
                     + "\(displayName(keeper[key])); counted once there."
             }
             return snapshot.replacingQuota(
-                windows: snapshot.quotaWindows.filter { window in
-                    window.bucketKey.map { !dropped.contains($0) } ?? true
+                windows: snapshot.quotaWindows.compactMap { window in
+                    guard let key = window.bucketKey, owners[key] != nil else { return window }
+                    guard !dropped.contains(key) else { return nil }
+                    return SavedSnapshotAging.expiring(window, now: now)
                 },
                 extraWarnings: names.map { ProviderWarning(message: $0, level: .info) }
             )
         }
+    }
+
+    private static func hasReset(_ window: QuotaWindow, now: Date) -> Bool {
+        window.resetAt.map { $0 <= now } ?? false
     }
 
     private static func displayName(_ id: ProviderID?) -> String {

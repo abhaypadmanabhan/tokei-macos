@@ -79,7 +79,7 @@ public actor GrokProvider: UsageProvider {
         }
     }
 
-    private static let noReading = "Grok usage returned no SuperGrok pool reading."
+    private static let noReading = "Grok usage returned no credit usage reading."
 
     private static let notSignedIn = ProviderWarning(
         message: "Grok CLI isn't signed in on this Mac. Run `grok login` to show the SuperGrok pool.", level: .info

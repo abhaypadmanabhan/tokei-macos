@@ -89,7 +89,7 @@ public final class DashboardViewModel: ObservableObject {
         guard snapshots.isEmpty, !saved.isEmpty else { return }
         let now = now()
         let order = Dictionary(uniqueKeysWithValues: ProviderID.allCases.enumerated().map { ($1, $0) })
-        snapshots = saved
+        snapshots = SharedQuotaPool.deduplicated(saved, now: now)
             .map { SavedSnapshotAging.expiringPastResets($0, now: now) }
             .sorted { (order[$0.providerID] ?? 0) < (order[$1.providerID] ?? 0) }
         savedSnapshotsDate = saved.compactMap(\.lastSyncedAt).max()
