@@ -9,6 +9,18 @@ import SQLite3
 /// consistent snapshot. Busy/locked sources are retried briefly; a raw main-file copy
 /// is never used because rollback-journal pages may contain uncommitted writes.
 enum SQLiteSidecarCopy {
+    private struct BusySnapshotError: LocalizedError {
+        static let summary = "database remained busy or locked while creating a coherent snapshot"
+        var errorDescription: String? { Self.summary }
+    }
+
+    static func readFailureDetail(for source: URL, error: Error) -> String {
+        // Raw Foundation and SQLite error messages can include filesystem paths.
+        let filename = source.lastPathComponent
+        guard error is BusySnapshotError else { return filename }
+        return "\(filename): \(BusySnapshotError.summary)"
+    }
+
     static func fingerprint(_ url: URL,
                             readFile: (URL) throws -> LocalUsageFileFingerprint = { try .read($0) }) throws -> AntigravityConversationFiles.Fingerprint {
         func sidecar(_ suffix: String) throws -> LocalUsageFileFingerprint? {
@@ -119,12 +131,12 @@ enum SQLiteSidecarCopy {
             return
         }
 
-        let message = (stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED)
-            ? "database remained busy or locked while creating a coherent snapshot"
-            : sqliteMessage(destinationDatabase)
+        let error: Error = (stepResult == SQLITE_BUSY || stepResult == SQLITE_LOCKED)
+            ? BusySnapshotError()
+            : SQLiteSnapshotError(message: sqliteMessage(destinationDatabase))
         sqlite3_close(destinationDatabase)
         sqlite3_close(sourceDatabase)
-        throw SQLiteSnapshotError(message: message)
+        throw error
     }
 
     private static func noFollowSourcePath(_ url: URL) throws -> String {
